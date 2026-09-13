@@ -246,6 +246,82 @@ def main() -> int:
         corpus.translate("void", "en").target_text,
     )
 
+    # The assertions above were all about what the *engine* can read, and they passed
+    # while the editor could not read its own file back. Two answers for one source are
+    # written as a list (JSON cannot hold one key twice), and the loader that reads this
+    # file only understood objects -- so the table showed nothing for that term, and the
+    # next save wrote the empty table over the file. Nothing here had noticed, because
+    # nothing here asked the editor what it could see.
+    check.check(
+        "and the editor itself still holds both rows after its own save and reload",
+        {(e.source, e.lang) for e in store.for_source("void")} == {("void", "ja"), ("void", "zh-CN")},
+        f"{sorted(store.entries)}",
+    )
+    check.check(
+        "a table read back from the file shows both, not the empty table it used to",
+        {(row["source"], row["lang"]) for row in store.describe() if row["source"] == "void"}
+        == {("void", "ja"), ("void", "zh-CN")},
+        f"{[row for row in store.describe() if row['source'] == 'void']}",
+    )
+    reopened = lib.Library(store.path)
+    check.check(
+        "and a fresh reader of that file agrees, so the rows are really on disk",
+        {(e.source, e.lang) for e in reopened.for_source("void")}
+        == {("void", "ja"), ("void", "zh-CN")},
+        f"{sorted(reopened.entries)} after reopening {store.path.name}",
+    )
+    reopened.save()
+    check.check(
+        "a save right after that reload does not erase them",
+        len(lib.Library(store.path).for_source("void")) == 2,
+        "the old bug destroyed the file on the very next write",
+    )
+
+    # The same gap one dimension further in, found by a probe rather than by a user: the
+    # row identity used to be (source, language, scene) while the *engine* keys on
+    # (language, source, scene, conditions). Two meanings of one term in one scene, told
+    # apart only by their conditions -- the case conditions exist for -- were one row here.
+    check.section("two meanings told apart only by their conditions are two rows")
+    conditional = lib.Library(root / "user" / "conditional.json")
+    conditional.put("bank", "银行", lang="zh-CN", domain="finance", when_near="account")
+    conditional.put("bank", "岸", lang="zh-CN", domain="finance", when_line="river")
+    check.check(
+        "the editor keeps both rows instead of the second replacing the first",
+        len(conditional.for_source("bank")) == 2,
+        f"{sorted(conditional.entries)}",
+    )
+    check.check(
+        "each row is findable by the conditions the user typed",
+        conditional.find("bank", "zh-CN", "finance", when_near="account").target == "银行"
+        and conditional.find("bank", "zh-CN", "finance", when_line="river").target == "岸",
+        f"{[e.to_dict() for e in conditional.for_source('bank')]}",
+    )
+    check.check(
+        "asking for the scene alone is ambiguous, and says so rather than picking one",
+        conditional.find("bank", "zh-CN", "finance") is None,
+        "two rows share that term and scene; guessing is how the wrong meaning disappears",
+    )
+    check.check(
+        "and a fresh reader sees both, with their conditions intact",
+        {
+            (e.target, e.when_line or "", e.when_near)
+            for e in lib.Library(conditional.path).for_source("bank")
+        }
+        == {("银行", "", ("account",)), ("岸", "river", ())},
+        f"{[e.to_dict() for e in lib.Library(conditional.path).for_source('bank')]}",
+    )
+    check.check(
+        "the conditions reach the file in the corpus's own field names",
+        all(
+            "when_line" in row or "when_near" in row
+            for row in json.loads(conditional.path.read_text(encoding="utf-8"))["entries"]["bank"]
+        ),
+        json.dumps(
+            json.loads(conditional.path.read_text(encoding="utf-8"))["entries"]["bank"],
+            ensure_ascii=False,
+        )[:200],
+    )
+
     # ---------------------------------------------------------------- #
     check.section("import: the corpus's own JSON shapes")
 
@@ -331,7 +407,7 @@ def main() -> int:
     check.check("and the file has them", len(fresh) == 2)
     check.check(
         "and they are its own rows",
-        {source for source, _lang in fresh.entries} == {"aether", "sky"},
+        {source for source, _lang, _domain, _cond in fresh.entries} == {"aether", "sky"},
         str(sorted(fresh.entries)),
     )
 
@@ -351,7 +427,7 @@ def main() -> int:
     check.check(
         "importing it again un-hides it",
         "aether" not in fresh.suppressed
-        and any(source == "aether" for source, _lang in fresh.entries),
+        and any(source == "aether" for source, _lang, _domain, _cond in fresh.entries),
         "otherwise the edit is invisible and looks like the import failed",
     )
 
@@ -402,6 +478,121 @@ def main() -> int:
          corpus.load(),
          "realm" not in {item["source"] for item in lib.effective_entries(corpus, store, "effective")})[-1],
         "exporting what the engine uses must not re-import what the user turned off",
+    )
+
+    # ---------------------------------------------------------------- #
+    check.section("the command line can do it too, with no browser")
+    #
+    # The flags are a user-facing surface with no other coverage at all: `--dry-run`
+    # promising to write nothing is exactly the kind of claim that quietly stops being
+    # true. Driven through `main()` rather than a subprocess, so the check is about the
+    # command paths and not about process plumbing.
+    import contextlib
+    import io
+
+    import watashi_proto
+
+    # Two levels deep, because the user corpus layer is configured as
+    # ``../plugins/user/custom_rules`` relative to the config's directory: one level up
+    # from here is still inside this run's own scratch tree. Asking the engine for the
+    # path (rather than writing it out by hand) is what this check got wrong first --
+    # a hand-built path one level off made "the dry run wrote nothing" pass for the
+    # wrong reason, because it was watching a file nothing would ever write.
+    cli_dir = Path(tempfile.mkdtemp(prefix="watashi-library-cli-")) / "proj"
+    cli_dir.mkdir(parents=True)
+    config_file = cli_dir / "config.yaml"  # absent on purpose: its directory becomes base_dir
+    glossary = cli_dir / "glossary.csv"
+    glossary.write_text(
+        "source,target,lang,domain,when_near\n"
+        "bank,银行,zh-CN,finance,account\n"
+        "bank,岸,zh-CN,geography,\n"
+        "crane,起重机,zh-CN,construction,\n",
+        encoding="utf-8-sig",
+    )
+
+    def run_cli(*argv: str) -> tuple[int, str]:
+        """Run the CLI in-process and return its exit code and what it printed.
+
+        ``SystemExit`` is caught because ``--help`` is an exit, not a failure: argparse
+        raises it *through* ``main``, and the first version of this let it through, which
+        ended the whole check script silently with no verdict at all.
+        """
+        buffer = io.StringIO()
+        with contextlib.redirect_stdout(buffer):
+            try:
+                code = watashi_proto.main(["--config", str(config_file), *argv])
+            except SystemExit as exc:
+                code = int(exc.code or 0)
+        return code, buffer.getvalue()
+
+    cli_config = AppConfig.load(config_file)
+    written = lib.library_path(cli_config)
+    check.check(
+        "the CLI's corpus file is inside this run's scratch tree, not a shared path",
+        str(written).startswith(str(cli_dir.parent)),
+        f"{written} (would otherwise read another run's leftovers)",
+    )
+
+    code, output = run_cli("--import-corpus", str(glossary), "--dry-run")
+    check.check(
+        "the import dry run reports what it would do",
+        code == 0 and "would import 3" in output and "added 3" in output,
+        f"rc={code} out={output.strip()[:140]}",
+    )
+    check.check(
+        "and writes nothing at all, which is the whole promise of a preview",
+        not written.exists(),
+        f"{written} exists: {written.exists()}",
+    )
+
+    code, output = run_cli("--import-corpus", str(glossary))
+    check.check(
+        "the real import writes them",
+        code == 0 and "imported 3 entries" in output and written.is_file(),
+        f"rc={code} out={output.strip()[:140]}",
+    )
+    cli_store = lib.Library(written)
+    check.check(
+        "with the scenes and conditions from the columns intact",
+        {(e.source, e.domain) for e in cli_store.entries.values()}
+        == {("bank", "finance"), ("bank", "geography"), ("crane", "construction")}
+        and cli_store.find("bank", "zh-CN", "finance").when_near == ("account",),
+        f"{sorted(cli_store.entries)}",
+    )
+    code, output = run_cli("--import-corpus", str(glossary), "--dry-run")
+    check.check(
+        "a second dry run now says updated rather than added, and still writes nothing",
+        code == 0 and "updated 3" in output and len(lib.Library(written)) == 3,
+        f"rc={code} out={output.strip()[:140]}",
+    )
+    code, output = run_cli("--list-scenes")
+    check.check(
+        "and --list-scenes names them, so nobody has to guess a spelling",
+        code == 0
+        and all(
+            scene in output
+            for scene in ("construction", "finance", "geography")
+        ),
+        f"rc={code} out={output.strip()[:200]}",
+    )
+    out_file = cli_dir / "out.csv"
+    code, output = run_cli(
+        "--export-corpus", str(out_file), "--corpus-scope", "user", "--corpus-format", "csv"
+    )
+    check.check(
+        "the export writes a file that imports back to the same rows",
+        code == 0 and out_file.is_file() and len(lib.parse_import(
+            out_file.read_text(encoding="utf-8-sig"), "csv"
+        )[0]) == 3,
+        f"rc={code} out={output.strip()[:120]}",
+    )
+    check.check(
+        "and every one of those flags is in --help, so it is discoverable",
+        all(
+            flag in (run_cli("--help")[1])
+            for flag in ("--import-corpus", "--export-corpus", "--promote-corrections", "--list-scenes")
+        ),
+        "a flag nobody can find is a flag that does not exist",
     )
 
     # ---------------------------------------------------------------- #

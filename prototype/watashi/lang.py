@@ -160,6 +160,32 @@ def same_language(a: str, b: str) -> bool:
     return left == right
 
 
+def language_base(tag: str | None) -> str:
+    """The language part of a tag or NLLB code: ``zh-CN`` and ``zho_Hans`` -> ``zho``.
+
+    Script is deliberately dropped: an entry written in Simplified Chinese is not the
+    right answer for a Traditional Chinese target either, but refusing it would be a
+    judgement call the entry author has not made, and *some* Chinese beats none. The
+    comparison that matters here is "is this the language that was asked for", and
+    ``zho`` answers it.
+
+    Lives here rather than in the corpus because more than one thing keys on it -- the
+    corpus, the library editor and the corrections file all have to agree on what "the
+    same language" means. Two copies of this rule would mean a correction tagged
+    ``zh-CN`` that the corpus finds under ``zh`` and the corrections file does not.
+    """
+    if not tag:
+        return ""
+    try:
+        return to_nllb_code(tag).split("_")[0]
+    except ValueError:
+        # An unknown tag is compared as written rather than dropped: a corpus entry
+        # tagged with something this project does not know is still an entry the
+        # author meant to be language specific, and matching it literally is the
+        # least surprising reading.
+        return tag.strip().lower().replace("_", "-")
+
+
 def matches_target(text: str, target_lang: str) -> bool:
     """True when *text* is already written in *target_lang*.
 

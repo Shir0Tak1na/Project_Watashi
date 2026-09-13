@@ -50,8 +50,85 @@ def _free_port() -> int:
         return int(probe.getsockname()[1])
 
 
-PORT = _free_port()
+def _process_port() -> int:
+    """A free port this process picks itself instead of one the OS hands out.
 
+    A port from ``bind(..., 0)`` is only free *at the moment it is asked for*, and the
+    OS hands these out from one system-wide pool. Two copies of this check starting
+    together -- CI, or two people running the checks on one machine -- can be handed the
+    same number, and on Windows the second bind then **succeeds** anyway, because
+    uvicorn sets SO_REUSEADDR and Windows lets two sockets share a port. After that,
+    requests are answered by whichever process won the race, and a run can honestly
+    report "the preview wrote nothing" while a *foreign* request writes an import into
+    its own corpus file. That is not hypothetical: it happened, and it read exactly like
+    a defect in the code under test.
+
+    Mixing the pid into the choice means two live copies of this check pick different
+    ports, and ``_start_owned_panel`` verifies the rest. ``_free_port`` stays as the
+    fallback for the unlikely case that every candidate is taken.
+    """
+    import os
+    import random
+    import socket
+
+    for _ in range(32):
+        port = 20000 + (os.getpid() * 7 + random.randrange(1 << 20)) % 40000
+        try:
+            with socket.socket() as probe:
+                # No SO_REUSEADDR here on purpose: this is asking whether anyone else
+                # holds the port, and a probe that may share it cannot answer that.
+                probe.bind(("127.0.0.1", port))
+        except OSError:
+            continue
+        return port
+    return _free_port()
+
+
+def _panel_library_file(url: str) -> str:
+    """The corpus file the panel behind ``url`` says it writes, or "" if it will not say.
+
+    This is the ownership test for a panel: the file path comes from the session that
+    panel is mounted on, so a URL that reports someone else's path is someone else's
+    panel -- see ``_process_port``.
+    """
+    try:
+        status, body = get(url + "/api/library", timeout=5.0)
+        return str(json.loads(body).get("file", ""))
+    except Exception:
+        return ""
+
+
+def _start_owned_panel(session: Session, attempts: int = 3) -> tuple[Any, str]:
+    """Start a panel and prove the URL reaches *this* session. ``(panel, base_url)``.
+
+    The proof is asked for rather than assumed because every assertion in this file is
+    about the session built here, and a panel belonging to another process answers the
+    same endpoints with different data. A panel that answers wrongly is stopped and
+    another port is tried; if none comes up clean, the last one is returned so the
+    failure is reported by the check that is about exactly that, instead of surfacing as
+    a confusing mismatch thirty lines later.
+    """
+    expected = str(session.library_view().get("file", ""))
+    panel: Any = None
+    url = ""
+    for attempt in range(1, attempts + 1):
+        port = _process_port()
+        panel = WebPanel(session, host="127.0.0.1", port=port, log_level="error")
+        url = f"http://127.0.0.1:{port}"
+        if not (panel.start() and panel.wait_until_ready()):
+            print(f"      port {port} did not come up (attempt {attempt})")
+            panel.stop()
+            continue
+        answered = _panel_library_file(url)
+        if answered == expected:
+            return panel, url
+        print(
+            f"      port {port} is answered by a different process "
+            f"({answered or 'no answer at all'}), not by this check's session; "
+            f"retrying on another port"
+        )
+        panel.stop()
+    return panel, url
 
 
 def get(url: str, timeout: float = 10.0) -> tuple[int, str]:
@@ -103,7 +180,7 @@ def main() -> int:
     session.build()
     session.start()
 
-    panel = WebPanel(session, host="127.0.0.1", port=PORT, log_level="error")
+    panel = WebPanel(session, host="127.0.0.1", port=_process_port(), log_level="error")
     # The session was started above, so this also pins the separation: panel state and
     # session state are different questions, and a panel that has not been started must
     # not inherit the session's "running". (An earlier version of this file asserted the
@@ -126,7 +203,27 @@ def main() -> int:
         f"running={panel.running}",
     )
 
-    base = f"http://127.0.0.1:{PORT}"
+    # The panel must be *this* session's, and the check says so rather than assuming it:
+    # on Windows a port can be shared with another copy of this check (see
+    # ``_process_port``), and when that happens the requests below read and write someone
+    # else's corpus while every response still looks plausible. Redoing the start on a
+    # fresh port is the fix; the assertion is what makes the failure legible.
+    own_file = str(session.library_view().get("file", ""))
+    base = f"http://127.0.0.1:{panel.port}"
+    answered_by = _panel_library_file(base)
+    for _ in range(2):
+        if answered_by == own_file:
+            break
+        panel.stop()
+        panel, base = _start_owned_panel(session, attempts=1)
+        answered_by = _panel_library_file(base)
+    check.check(
+        "the panel answering these requests is this check's own session",
+        answered_by == own_file,
+        f"{base} writes {answered_by or 'nothing it will name'}, "
+        f"this check's session writes {own_file}",
+    )
+
     try:
         # ---- page -------------------------------------------------------- #
         print("")
@@ -399,6 +496,466 @@ def main() -> int:
         check.check("an unsupported export format is refused, not silently substituted",
                     status == 400, f"status={status}")
 
+        # ---- scenes and conditions: one term with two meanings ------------ #
+        #
+        # This is the shape where a defect is invisible: the second meaning is stored,
+        # listed in the table, and simply never used. So these checks do not stop at "the
+        # panel accepted the row" -- they read it back through GET /api/library and then
+        # ask the engine which answer it gives per scene and per condition.
+        print("")
+        print("-- one term, two meanings: scenes and conditions --")
+
+        status, body = post(base + "/api/command",
+                            {"cmd": "library_put", "source": "quayside",
+                             "target": "码头", "lang": "zh-CN", "domain": "harbour",
+                             "when_line": "river", "when_near": "river, barge",
+                             "when_window": "Novel"})
+        result = json.loads(body)
+        check.check("a row can be created with a scene and with every condition",
+                    status == 200 and result.get("ok"), str(result.get("detail"))[:90])
+
+        status, body = get(base + "/api/library")
+        library = json.loads(body)
+        conditioned = next((row for row in library["entries"]
+                            if row["source"] == "quayside"), None)
+        check.check("and GET /api/library returns the scene and all three conditions",
+                    conditioned is not None
+                    and conditioned["domain"] == "harbour"
+                    and (conditioned["when_line"], conditioned["when_near"],
+                         conditioned["when_window"]) == ("river", "river, barge", "Novel"),
+                    json.dumps(conditioned, ensure_ascii=False)[:150] if conditioned
+                    else "the row is not in the view at all")
+
+        # Two senses of one term, told apart by scene, both written through the panel. The
+        # editor keys a row on (term, language, scene) for exactly this reason: keying on
+        # the term alone is how the second meaning used to destroy the first.
+        for target, scene in (("河岸", "nature"), ("银行", "finance")):
+            status, body = post(base + "/api/command",
+                                {"cmd": "library_put", "source": "bank", "target": target,
+                                 "lang": "zh-CN", "domain": scene})
+            check.check(f"a meaning of 'bank' in the {scene} scene is accepted",
+                        status == 200 and json.loads(body).get("ok"),
+                        str(json.loads(body).get("detail"))[:80])
+
+        status, body = get(base + "/api/library")
+        library = json.loads(body)
+        senses = [row for row in library["entries"] if row["source"] == "bank"]
+        check.check("both meanings are separate rows in the table, and neither is lost",
+                    {(row["domain"], row["target"]) for row in senses}
+                    == {("nature", "河岸"), ("finance", "银行")},
+                    json.dumps([(r["domain"], r["target"]) for r in senses], ensure_ascii=False))
+        check.check("conditions stay on the row that declared them, and the scenes stay apart",
+                    all(not row["when_line"] and not row["when_near"] and not row["when_window"]
+                        for row in senses)
+                    and conditioned is not None and conditioned["when_line"] == "river",
+                    "a condition copied onto a sibling row would make one meaning unreachable")
+        check.check("the payload lists every scene in effect, for the scene picker",
+                    {"harbour", "nature", "finance"} <= set(library.get("scenes") or []),
+                    f"{library.get('scenes')}")
+        check.check("and it names the rows that lost a collision, so the diagnostic has data",
+                    isinstance(library.get("conflicts"), list),
+                    f"{len(library.get('conflicts') or [])} conflict(s) in the payload")
+
+        from watashi.translate import Context as _Context
+
+        def answer(scene: str) -> str:
+            hit = session.corpus.lookup_exact(
+                "bank", "zh-CN", _Context(target_lang="zh-CN", scene=scene)
+            )
+            return hit.target if hit is not None else "(none)"
+
+        check.check("and the engine really answers per scene, not just the table",
+                    (answer("finance"), answer("nature")) == ("银行", "河岸"),
+                    f"finance -> {answer('finance')}, nature -> {answer('nature')}")
+
+        # Conditions are a gate rather than a rank: the same line must be answered when they
+        # hold and left alone when they do not. Asserted through the engine, because a panel
+        # that wrote them in a shape the engine does not read would look exactly like this
+        # working.
+        def answered(line: str, window: str) -> str:
+            return session.corpus.translate(
+                line, "zh-CN", _Context(target_lang="zh-CN", scene="harbour", window=window)
+            ).target_text
+
+        held = answered("down by the river quayside", "Chapter 1 - a Novel")
+        failed = answered("down by the river quayside", "a Report")
+        check.check("the conditional row is used only while its conditions hold",
+                    "码头" in held and "码头" not in failed,
+                    f"window=Novel -> {held!r} / window=Report -> {failed!r}")
+
+        # Two meanings of one term in *one* scene, told apart only by a condition. The page
+        # says this is possible (a row is keyed on term + language + scene + conditions), so
+        # it is asserted rather than claimed: both rows exist, each answers only where its
+        # own condition holds, and the delete the table's button sends -- which names the row
+        # by all four parts -- removes one meaning and leaves the other.
+        for target, line in (("账目", "account"), ("河流", "river")):
+            status, body = post(base + "/api/command",
+                                {"cmd": "library_put", "source": "crane", "target": target,
+                                 "lang": "zh-CN", "domain": "nature", "when_line": line})
+            check.check(f"a second meaning told apart only by when_line={line!r} is accepted",
+                        status == 200 and json.loads(body).get("ok"),
+                        str(json.loads(body).get("detail"))[:80])
+
+        status, body = get(base + "/api/library")
+        library = json.loads(body)
+        cranes = [row for row in library["entries"] if row["source"] == "crane"]
+        check.check("both condition-only meanings are separate rows in one scene, neither lost",
+                    {(row["domain"], row["when_line"], row["target"]) for row in cranes}
+                    == {("nature", "account", "账目"), ("nature", "river", "河流")},
+                    json.dumps([(row["domain"], row["when_line"], row["target"])
+                                for row in cranes], ensure_ascii=False))
+        def crane_answer(line: str) -> str:
+            return session.corpus.translate(
+                line, "zh-CN", _Context(target_lang="zh-CN", scene="nature")
+            ).target_text
+
+        account_answer = crane_answer("the account crane")
+        river_answer = crane_answer("the river crane")
+        check.check("and the engine answers each one only where its condition holds",
+                    "账目" in account_answer and "河流" not in account_answer
+                    and "河流" in river_answer and "账目" not in river_answer,
+                    f"account line -> {account_answer!r} / river line -> {river_answer!r}")
+
+        status, body = post(base + "/api/command",
+                            {"cmd": "library_delete", "source": "crane", "lang": "zh-CN",
+                             "domain": "nature", "when_line": "account"})
+        check.check("deleting a row by its full identity removes exactly that meaning",
+                    status == 200 and json.loads(body).get("ok"),
+                    str(json.loads(body).get("detail"))[:90])
+        status, body = get(base + "/api/library")
+        library = json.loads(body)
+        survivors = [row for row in library["entries"] if row["source"] == "crane"]
+        check.check("and its sibling is still there, which is what the panel's button relies on",
+                    len(survivors) == 1 and survivors[0]["when_line"] == "river"
+                    and survivors[0]["target"] == "河流",
+                    json.dumps([(row["when_line"], row["target"]) for row in survivors],
+                               ensure_ascii=False))
+
+        # ---- the collision diagnostic ------------------------------------- #
+        #
+        # The user's own second meaning is the case that matters, so the collision is made
+        # on purpose against a shipped row of whatever language it declares.
+        victim = next(row for row in library["entries"]
+                      if not row["user"] and not row["suppressed"] and row["lang"])
+        status, body = post(base + "/api/command",
+                            {"cmd": "library_put", "source": victim["source"],
+                             "target": "冲突测试", "lang": victim["lang"]})
+        check.check("a user row written over a shipped row is accepted (the collision case)",
+                    status == 200 and json.loads(body).get("ok"),
+                    f"{victim['source']} / {victim['lang']}")
+
+        status, body = get(base + "/api/library")
+        library = json.loads(body)
+        conflicts = library.get("conflicts") or []
+        losing = next((item for item in conflicts
+                       if item.get("source") == victim["source"]), None)
+        check.check("GET /api/library reports which translation was dropped and which was kept",
+                    losing is not None
+                    and losing["kept"]["target"] == "冲突测试"
+                    and losing["dropped"]["target"] == victim["target"],
+                    json.dumps(losing, ensure_ascii=False)[:150] if losing
+                    else f"nothing reported for {victim['source']!r} out of {len(conflicts)}")
+        check.check("and it names the layers that decided it, which is what the page shows",
+                    losing is not None and losing["kept"]["layer"] == "user"
+                    and losing["dropped"]["layer"] != "user",
+                    f"{losing['kept']['layer']} over {losing['dropped']['layer']}"
+                    if losing else "no conflict")
+        check.check("each conflict carries every field the warning text reads",
+                    all({"source", "lang", "domain", "kept", "dropped", "why"} <= set(item)
+                        and {"target", "origin", "layer", "priority"} <= set(item["kept"])
+                        and {"target", "origin", "layer", "priority"} <= set(item["dropped"])
+                        for item in conflicts),
+                    f"{len(conflicts)} conflict(s)")
+
+        # ---- an import preview must write nothing ------------------------- #
+        print("")
+        print("-- the import preview writes nothing (and the import does) --")
+        library_path = _Path(session.library().path)
+        before_bytes = library_path.read_bytes()
+        status, body = get(base + "/api/library")
+        before = json.loads(body)
+        pasted = "quayside barge,码头驳船\nskyfarer,天行者\n"
+
+        status, body = post(base + "/api/library/import",
+                            {"text": pasted, "format": "csv", "dry_run": True})
+        result = json.loads(body)
+        detail = str(result.get("detail"))
+        check.check("POST /api/library/import accepts dry_run and answers with a preview",
+                    status == 200 and result.get("ok"), f"HTTP {status} {detail[:80]}")
+        check.check("the preview counts what would happen, using the real import's numbers",
+                    "preview" in detail and "would be imported" in detail and "added 2" in detail,
+                    detail[:120])
+        check.check("and it says in words that nothing was written",
+                    "nothing written" in detail, detail[:120])
+        # The assertion that matters most in this section: a preview that wrote would be an
+        # import wearing the word "preview", and the file on disk is the only witness.
+        check.check("the library file on disk is byte for byte what it was before the preview",
+                    library_path.read_bytes() == before_bytes,
+                    f"{len(before_bytes)} bytes before and after")
+        status, body = get(base + "/api/library")
+        after = json.loads(body)
+        check.check("no row appeared, and the user's own row count is unchanged",
+                    after["user"] == before["user"]
+                    and len(after["entries"]) == len(before["entries"])
+                    and not any(row["source"] == "quayside barge" for row in after["entries"]),
+                    f"user {before['user']} -> {after['user']}, "
+                    f"rows {len(before['entries'])} -> {len(after['entries'])}")
+
+        # Without this, the three checks above would also pass on an import that never
+        # writes anything at all -- which is the failure they exist to catch.
+        status, body = post(base + "/api/library/import", {"text": pasted, "format": "csv"})
+        result = json.loads(body)
+        check.check("the same import without dry_run does write, so the preview check is not vacuous",
+                    status == 200 and "added 2" in str(result.get("detail"))
+                    and library_path.read_bytes() != before_bytes,
+                    str(result.get("detail"))[:100])
+        check.check("and the pasted rows are the user's, and usable by the engine at once",
+                    any(row["source"] == "quayside barge" and row["user"]
+                        for row in result.get("entries", []))
+                    and session.corpus.translate("quayside barge", "zh-CN").target_text == "码头驳船",
+                    session.corpus.translate("quayside barge", "zh-CN").target_text)
+
+        # The panel hands the format through rather than deciding it: an explicit choice is
+        # sent as itself, and "auto" is the engine's own signal to sniff the content
+        # (``library.sniff_format``: JSON if it starts with a brace or bracket, TSV if the
+        # first line has a tab, CSV otherwise). So this is what the paste box relies on --
+        # a block of CSV lines arrives without the page having to name its format -- and it
+        # is asserted here because one rule in one place is the whole point of it.
+        status, body = post(base + "/api/library/import",
+                            {"text": pasted, "format": "auto", "dry_run": True})
+        result = json.loads(body)
+        detail = str(result.get("detail"))
+        # Both rows are already in the library by now (the real import above put them
+        # there), so they are counted as updates -- what this asserts is that "auto" found
+        # *two* entries in comma-separated text instead of failing with "not valid JSON",
+        # which is exactly what a pasted block depends on.
+        check.check("the engine sniffs format 'auto' itself, which is what the paste box sends",
+                    status == 200 and result.get("ok")
+                    and "2 entries would be imported" in detail,
+                    f"HTTP {status} {detail[:100]}")
+
+        # ---- promotion: corrections become entries ------------------------ #
+        #
+        # Through the session, not through /api/command: the panel refuses `correct` (it is
+        # not a setting), and this is the real path the desktop window uses.
+        print("")
+        print("-- promoting corrections: a copy into the corpus, not a move --")
+        status, body = post(base + "/api/library/promote", {"scope": "term", "dry_run": True})
+        check.check("promoting with nothing recorded is refused with a readable reason",
+                    status == 400 and "纠正" in str(json.loads(body).get("detail")),
+                    f"HTTP {status} {str(json.loads(body).get('detail'))[:70]}")
+
+        recorded = session.command("correct", {"source": "an aether barge", "target": "以太驳船",
+                                              "scope": "term", "lang": "zh-CN"})
+        check.check("a correction recorded through the engine is what promotion reads",
+                    bool(recorded.get("ok")), str(recorded.get("detail"))[:90])
+
+        status, body = get(base + "/api/corpus")
+        corrections = json.loads(body).get("corrections", [])
+        check.check("the read-only corrections view lists it, so it can be seen before promoting",
+                    any(item.get("source") == "an aether barge" for item in corrections),
+                    f"{len(corrections)} correction(s)")
+
+        # A correction already shows up in the table, because the corrections file lives in
+        # the same user layer and the loader reads it as a corpus file. That is why "was it
+        # promoted?" can only be answered by the edited file itself, not by the view -- and
+        # the page's help text says the two files stay separate for exactly this reason.
+        status, body = get(base + "/api/library")
+        check.check("and the table already shows it, marked with the file it came from",
+                    any(row["source"] == "an aether barge"
+                        and row["origin"] == "corpus:corrections"
+                        for row in json.loads(body)["entries"]),
+                    "promoting copies it into library.json; the two files stay separate")
+
+        def in_library_file(source: str) -> bool:
+            """Whether the file the editor writes itself holds this source.
+
+            The file rather than the view: a correction is in the view too, so the view
+            cannot tell "promoted" from "merely corrected".
+            """
+            if not library_path.exists():
+                return False
+            try:
+                data = json.loads(library_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                return False
+            body = data.get("entries") if isinstance(data.get("entries"), dict) else data
+            return isinstance(body, dict) and source in body
+
+        before_bytes = library_path.read_bytes()
+        status, body = post(base + "/api/library/promote",
+                            {"lang": "zh-CN", "scope": "term", "dry_run": True})
+        result = json.loads(body)
+        detail = str(result.get("detail"))
+        check.check("the promotion preview counts corrections without writing",
+                    status == 200 and result.get("ok") and "preview" in detail
+                    and "would become entries" in detail and "nothing written" in detail,
+                    f"HTTP {status} {detail[:100]}")
+        check.check("and the promotion preview left the library file untouched",
+                    library_path.read_bytes() == before_bytes,
+                    f"{len(before_bytes)} bytes before and after")
+        check.check("so nothing has been copied into the edited corpus file yet",
+                    not in_library_file("an aether barge"),
+                    "library.json, not the merged view, is what a promotion writes")
+
+        status, body = post(base + "/api/library/promote", {"lang": "zh-CN", "scope": "term"})
+        result = json.loads(body)
+        detail = str(result.get("detail"))
+        check.check("the real promotion reports what it promoted",
+                    status == 200 and result.get("ok") and "promoted 1" in detail
+                    and "added 1" in detail, f"HTTP {status} {detail[:100]}")
+        promoted = [row for row in result.get("entries", [])
+                    if row["source"] == "an aether barge"]
+        check.check("the correction is now a corpus entry the editor can see and edit",
+                    in_library_file("an aether barge") and len(promoted) == 1
+                    and promoted[0]["target"] == "以太驳船" and promoted[0]["user"]
+                    and promoted[0]["lang"] == "zh-CN",
+                    json.dumps(promoted, ensure_ascii=False)[:150])
+        check.check("and the engine translates with it immediately",
+                    session.corpus.translate("an aether barge", "zh-CN").target_text == "以太驳船",
+                    session.corpus.translate("an aether barge", "zh-CN").target_text)
+        status, body = get(base + "/api/corpus")
+        check.check("the correction record is still there: promoting copies, it does not move",
+                    any(item.get("source") == "an aether barge"
+                        for item in json.loads(body).get("corrections", [])),
+                    "the two files stay separate, and the corrections file is not consumed")
+
+        # ---- the language a correction was written for -------------------- #
+        #
+        # Two engine facts the panel now states in words, so they are asserted rather than
+        # trusted: `correct` stamps the target language that was selected, and a row with
+        # **no** language -- the shape every pre-release corrections file has -- applies
+        # under *every* target. That second fact is the reason the loader must keep
+        # accepting those rows: refusing them would silently discard the user's own work
+        # on upgrade. The panel shows them as 未标注 instead of a blank cell.
+        print("")
+        print("-- the language a correction was written for --")
+        tagged_line = "a line that was corrected while translating into Chinese"
+        recorded = session.command("correct", {"source": tagged_line,
+                                              "target": "这条是中文纠正", "scope": "line"})
+        selected = str(session.config.target_lang or "")
+        check.check("a correction recorded now is stamped with the selected target language",
+                    bool(recorded.get("ok")) and bool(selected),
+                    f"selected={selected!r}; {str(recorded.get('detail'))[:60]}")
+
+        status, body = get(base + "/api/corpus")
+        rows = json.loads(body).get("corrections", [])
+        tagged = next((row for row in rows if row.get("source") == tagged_line), None)
+        check.check("and the table's language column has that language to show",
+                    tagged is not None and tagged.get("lang") == selected,
+                    json.dumps(tagged, ensure_ascii=False)[:150] if tagged
+                    else f"the row is not in the listing at all ({len(rows)} row(s))")
+
+        # An untagged correction can no longer be produced by the `correct` command -- it
+        # stamps whatever language is selected -- so it is created the way it exists in the
+        # wild: a corrections file written before the field existed. The row is *added* to
+        # the file the engine reads, beside the existing rows, which is what an upgrade
+        # looks like; the reload is the ordinary hot path for an edited file.
+        corrections_file = _Path(session.corpus.corrections.path)
+        old_line = "a sentence corrected before this release, with no language recorded"
+        payload = json.loads(corrections_file.read_text(encoding="utf-8"))
+        payload.setdefault("entries", {})[old_line] = {
+            "target": "上一个版本留下的整句",
+            "scope": "line",
+            "count": 2,
+            "first_seen": 1.0,
+            "last_seen": 2.0,
+            "note": None,
+        }
+        corrections_file.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        session.corpus.load()
+
+        status, body = get(base + "/api/corpus")
+        rows = json.loads(body).get("corrections", [])
+        untagged = next((row for row in rows if row.get("source") == old_line), None)
+        check.check("an old-format row with no language is loaded, not discarded",
+                    untagged is not None and untagged.get("target") == "上一个版本留下的整句",
+                    json.dumps(untagged, ensure_ascii=False)[:150] if untagged
+                    else "the row is missing: the engine dropped a file it used to accept")
+        check.check("and it declares no language, which is what the page marks 未标注",
+                    untagged is not None and not untagged.get("lang"),
+                    f"lang={untagged.get('lang')!r}, key present: {'lang' in untagged}"
+                    if untagged else "row missing")
+
+        def corrected(line: str, lang: str) -> str:
+            return session.corpus.translate(line, lang).target_text
+
+        check.check("an untagged correction really applies under every target language",
+                    corrected(old_line, "zh-CN") == "上一个版本留下的整句"
+                    and corrected(old_line, "ja") == "上一个版本留下的整句",
+                    f"zh-CN -> {corrected(old_line, 'zh-CN')!r} / "
+                    f"ja -> {corrected(old_line, 'ja')!r}")
+        check.check("while the tagged one answers only the language it was written for",
+                    corrected(tagged_line, selected) == "这条是中文纠正"
+                    and corrected(tagged_line, "ja") != "这条是中文纠正",
+                    f"{selected} -> {corrected(tagged_line, selected)!r} / "
+                    f"ja -> {corrected(tagged_line, 'ja')!r}")
+
+        status, body = get(base + "/api/info")
+        engine_untagged = int(json.loads(body).get("corrections_untagged", -1))
+        # `corrections_untagged` counts untagged *whole-line* corrections whose loose key is
+        # long enough to be matched; the page marks every row that declares no language. In
+        # the state this check builds there is exactly one such correction, so the engine's
+        # number and the panel's must be the same one -- and if they ever stop agreeing,
+        # this says so instead of letting the card and the engine disagree quietly.
+        marked = sum(1 for row in rows if not row.get("lang"))
+        check.check("the engine's untagged count agrees with the rows the page marks",
+                    engine_untagged == marked == 1,
+                    f"engine reports {engine_untagged}, the listing has {marked} row(s) "
+                    f"without a language, of {len(rows)}")
+
+        # ---- the page carries the controls, and is still offline ---------- #
+        print("")
+        print("-- the page carries the new controls, and is still offline --")
+        status, html = get(base + "/")
+        check.check("GET / still returns the page", status == 200, f"HTTP {status}")
+        new_controls = [
+            "libconflicts", "libscene", "libscenes", "libdomain", "libwhenline",
+            "libwhennear", "libwhenwindow", "libpaste", "libpastebtn", "libpastepreview",
+            "libpreview", "xpromotescope", "xpromotelang", "xpromotereplace",
+            "xpromotepreview", "xpromote", "xpromotemsg",
+        ]
+        missing = [name for name in new_controls if f'id="{name}"' not in html]
+        check.check("the markup defines every control the new script looks up",
+                    not missing, f"missing: {missing}")
+        check.check("the scene field suggests the known scenes without forbidding a new name",
+                    '<datalist id="libscenes">' in html and 'list="libscenes"' in html,
+                    "a datalist suggests; typing a scene nobody has used yet must stay allowed")
+        check.check("a scene-specific or conditional row is marked as one in the table",
+                    ".libtable tr.sense" in html and 'classList.add("sense")' in html,
+                    "the row the user is hunting for has to be findable in a dense table")
+        check.check("the page states the real precedence order, not a guess",
+                    "层级" in html and "priority" in html and "translate._rank" in html
+                    and "自己的词条永远压过出厂词条" in html,
+                    "layer, then scene, then priority, then a deterministic tail")
+        check.check("and it says conditions are a filter rather than a rank",
+                    "条件是筛子" in html and "when_line" in html,
+                    "an entry whose conditions do not hold is not a candidate at all")
+        check.check("the conflict warning names the fix (another scene, or conditions)",
+                    "条词条没有生效" in html and "不同的「场景」" in html
+                    and "when_near" in html,
+                    "the count alone does not tell the user what to do")
+        check.check("the corrections card explains what promotion means",
+                    "提升" in html and "corrections.json" in html
+                    and "把纠正复制成语料库词条" in html,
+                    "a copy, and the two files stay separate")
+        check.check("the corrections table has a language column and marks the untagged rows",
+                    "<th>语言</th>" in html and "未标注" in html
+                    and 'c.lang || ""' in html and "pill untagged" in html,
+                    "a blank cell would read as 'unknown'; it means 'every target language'")
+        check.check("and the card says what untagged means and how to change it",
+                    "对每个目标语言都生效" in html and "重新纠正同一条" in html
+                    and "拒绝等于升级时静默丢掉" in html,
+                    "retyping it under the wanted target language is the only way: the engine has no command to tag an existing correction")
+        check.check("and that a preview never writes, in the words of the buttons themselves",
+                    html.count("不写入") >= 3,
+                    f"{html.count('不写入')} preview button(s) labelled as not writing")
+        check.check("the page is still entirely offline (no CDN, no web font, no https)",
+                    "https://" not in html and "//cdn" not in html,
+                    "requirement R1: nothing may be fetched from the network")
+
         # ---- the boundary: settings in, features refused ------------------ #
         print("")
         print("-- what the panel still refuses --")
@@ -537,21 +1094,26 @@ def main() -> int:
 
     real_base = config.base_dir
     tmp_base = Path(tempfile.mkdtemp(prefix="watashi-web-settings-"))
-    # The earlier sections stop the panel when they are done, so this one brings it
-    # back up. Guarded by a readiness probe rather than restarted unconditionally,
-    # so the section also works if it is ever moved earlier in the file.
-    restarted = False
-    if not panel.wait_until_ready(timeout=1.0):
-        panel.start()
-        restarted = panel.wait_until_ready(timeout=10.0)
-        # Checked, not assumed. The previous version restarted the panel and then
-        # fired requests regardless of whether it came back up, so a failed restart
-        # surfaced as a ConnectionRefused several lines later instead of here.
-        check.check(
-            "the panel restarts for this section after the earlier stop()",
-            restarted,
-            "without this the requests below would fail with a confusing connection error",
-        )
+    # The earlier sections stop the panel when they are done, so this one brings it back
+    # up -- on a freshly chosen, verified port rather than the one used above. That port
+    # was released when the panel stopped, and a released port is exactly the one another
+    # process can pick up in the gap; the requests below would then be answered by that
+    # process's session and would write *its* config file. (That gap is where this file's
+    # old "ConnectionRefused, once in five runs" flake came from.)
+    if panel.running:
+        panel.stop()
+    restarted_panel, restarted_base = _start_owned_panel(session)
+    if restarted_panel is not None and restarted_panel.running:
+        panel, base = restarted_panel, restarted_base
+    # Checked, not assumed. The previous version restarted the panel and then
+    # fired requests regardless of whether it came back up, so a failed restart
+    # surfaced as a ConnectionRefused several lines later instead of here.
+    restarted = panel.running
+    check.check(
+        "the panel restarts for this section after the earlier stop()",
+        restarted,
+        "without this the requests below would fail with a confusing connection error",
+    )
     try:
         config.base_dir = tmp_base
 
@@ -600,6 +1162,20 @@ def main() -> int:
             "the live/restart split is reported for the warning text",
             payload.get("live_count", 0) + payload.get("restart_count", 0) == len(fields),
             f"{payload.get('live_count')} live / {payload.get('restart_count')} restart",
+        )
+        # Every live field names the command that applies it, and this is the surface
+        # that has a real engine to check that claim against. A schema naming a command
+        # the engine does not implement is a control that silently does nothing, and the
+        # static check cannot see it because the schema is all it has.
+        live_commands = sorted({f["command"] for f in fields if f.get("command")})
+        implemented = set(session.command_names)
+        check.check(
+            "every live field names a command this engine actually implements",
+            live_commands and not (set(live_commands) - implemented),
+            "missing: "
+            + ", ".join(sorted(set(live_commands) - implemented))
+            if set(live_commands) - implemented
+            else f"{len(live_commands)} commands, all implemented",
         )
         check.check(
             "nothing is marked overridden yet",
@@ -693,7 +1269,7 @@ def main() -> int:
     # went to that zombie. Every later section became a coin flip.
     import socket as _socket
 
-    zombie_port = _free_port()
+    zombie_port = _process_port()
     first = WebPanel(session, host="127.0.0.1", port=zombie_port, log_level="error")
     check.check("a second panel starts on its own port", first.start() and first.wait_until_ready())
 

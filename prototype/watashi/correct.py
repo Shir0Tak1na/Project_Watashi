@@ -40,6 +40,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from .lang import language_base
 from .recent import MIN_KEY_LENGTH, normalize as loose_normalize
 
 #: written into the user corpus layer, so the ordinary corpus loader picks it up
@@ -144,12 +145,22 @@ class Correction:
     first_seen: float = 0.0
     last_seen: float = 0.0
     note: str | None = None
+    #: the target language this correction was written in, when it is known.
+    #:
+    #: Without it a whole-line correction is applied at *any* target, so a Chinese
+    #: correction typed while translating into Chinese keeps winning after the user
+    #: switches to Japanese -- and the user reads Chinese text they asked not to get,
+    #: labelled as Japanese. Same failure the corpus documents for untagged entries, and
+    #: the same answer: an untagged correction is language-neutral (which is what every
+    #: pre-0.0.6a corrections file is, so it keeps working), a tagged one only applies to
+    #: that language, and a tagged one wins over a neutral one.
+    lang: str | None = None
     #: how often this run actually applied it; the one number that says whether the
     #: correction is doing anything rather than merely being stored
     hits: int = 0
 
     def to_json(self) -> dict[str, Any]:
-        return {
+        data: dict[str, Any] = {
             "target": self.target,
             "scope": self.scope,
             "count": self.count,
@@ -157,9 +168,32 @@ class Correction:
             "last_seen": round(self.last_seen, 3),
             "note": self.note,
         }
+        if self.lang:
+            data["lang"] = self.lang
+        return data
 
     def to_dict(self) -> dict[str, Any]:
         return {**self.to_json(), "source": self.source, "hits": self.hits}
+
+
+def _better_correction(candidate: Correction, incumbent: Correction) -> bool:
+    """Pick the winner when two stored corrections land on the same loose key.
+
+    They collide when two exact source strings fold to one loose key -- the same
+    sentence stored once with a trailing ``。`` and once without, which is exactly what
+    the loose key exists to catch. The most recently touched one wins: corrections are
+    human edits, and the newer edit is the human's current opinion. ``count`` breaks a
+    tie, then the target text, so the answer cannot depend on file order.
+    """
+    return (
+        candidate.last_seen,
+        candidate.count,
+        candidate.target,
+    ) > (
+        incumbent.last_seen,
+        incumbent.count,
+        incumbent.target,
+    )
 
 
 class Corrections:
@@ -167,14 +201,18 @@ class Corrections:
 
     def __init__(self, path: str | os.PathLike[str]) -> None:
         self.path = Path(path)
-        self._items: dict[str, Correction] = {}
-        self._lines: dict[str, Correction] = {}
+        #: keyed by ``(exact source, language base)``. The language is in the key
+        #: because a correction is written *in* a language: keying on the source alone
+        #: meant correcting the same line while translating into a second language
+        #: overwrote the first correction instead of sitting beside it.
+        self._items: dict[tuple[str, str], Correction] = {}
+        self._lines: dict[tuple[str, str], Correction] = {}
         self.load()
 
     # -- loading ----------------------------------------------------------- #
 
     def load(self) -> None:
-        items: dict[str, Correction] = {}
+        items: dict[tuple[str, str], Correction] = {}
         data: Any = None
         if self.path.exists():
             try:
@@ -191,11 +229,22 @@ class Corrections:
             for key, value in body.items():
                 if not isinstance(key, str) or not key.strip() or key.startswith("_"):
                     continue
-                correction = self._parse(key, value)
-                if correction is not None:
-                    items[key] = correction
+                # One correction for a source, or a *list* of them when the same line is
+                # corrected differently for two target languages. Same shape the corpus
+                # uses for a term answered in two languages, and for the same reason: a
+                # JSON object cannot hold two identical keys, so the alternative would be
+                # a file that looks right and silently keeps one of them.
+                values = value if isinstance(value, list) else [value]
+                for raw in values:
+                    correction = self._parse(key, raw)
+                    if correction is None:
+                        continue
+                    slot = (key, language_base(correction.lang))
+                    existing = items.get(slot)
+                    if existing is None or _better_correction(correction, existing):
+                        items[slot] = correction
 
-        lines: dict[str, Correction] = {}
+        lines: dict[tuple[str, str], Correction] = {}
         for correction in items.values():
             if correction.scope != SCOPE_LINE:
                 continue
@@ -204,7 +253,12 @@ class Corrections:
             # each other's sentences. Those stay in the corpus layer, where matching
             # is exact and a collision is impossible.
             if len(key) >= MIN_KEY_LENGTH:
-                lines[key] = correction
+                # Keyed by language as well as text, so one line can be corrected
+                # differently for two targets.
+                slot = (key, language_base(correction.lang))
+                existing = lines.get(slot)
+                if existing is None or _better_correction(correction, existing):
+                    lines[slot] = correction
 
         self._items = items
         self._lines = lines
@@ -221,6 +275,7 @@ class Corrections:
         scope = str(value.get("scope") or SCOPE_LINE).strip().lower()
         if scope not in SCOPES:
             scope = SCOPE_LINE
+        raw_lang = value.get("lang") or value.get("target_lang") or value.get("language")
         return Correction(
             source=source,
             target=target,
@@ -229,28 +284,99 @@ class Corrections:
             first_seen=float(value.get("first_seen", 0.0) or 0.0),
             last_seen=float(value.get("last_seen", 0.0) or 0.0),
             note=value.get("note"),
+            lang=str(raw_lang) if raw_lang else None,
         )
 
     # -- lookup ------------------------------------------------------------ #
 
-    def lookup_line(self, text: str) -> Correction | None:
+    def lookup_line(self, text: str, target_lang: str | None = None) -> Correction | None:
         """The whole-line correction for this text, if there is one.
 
         Checked before the corpus scan, and deliberately loose about whitespace and
         edge punctuation: those are the differences OCR produces between two frames
         of the same sentence, and a correction that only matched the frame it was
         typed from would be useless a second later.
+
+        ``target_lang`` is honoured when given: a correction written for Chinese is not
+        the answer to a request for Japanese. A correction with no language is
+        neutral and still applies -- that is what every corrections file written before
+        the field existed contains, and refusing them would silently discard the user's
+        own work on upgrade.
         """
         key = loose_normalize(text)
         if len(key) < MIN_KEY_LENGTH:
             return None
-        correction = self._lines.get(key)
+        correction = self._find_line(key, target_lang)
         if correction is not None:
             correction.hits += 1
         return correction
 
-    def lookup_exact(self, source: str) -> Correction | None:
-        return self._items.get(source)
+    def _find_line(self, key: str, target_lang: str | None) -> Correction | None:
+        if target_lang:
+            # the language asked for first, then the neutral one
+            for base in (language_base(target_lang), ""):
+                hit = self._lines.get((key, base))
+                if hit is not None:
+                    return hit
+            return None
+        # No language given: neutral first, then a deterministic pick among languages
+        # rather than whichever the file happened to list last.
+        neutral = self._lines.get((key, ""))
+        if neutral is not None:
+            return neutral
+        for slot in sorted(self._lines):
+            if slot[0] == key:
+                return self._lines[slot]
+        return None
+
+    def untagged_corrections(self) -> list[Correction]:
+        """Corrections that declare no language, in any scope.
+
+        They apply under **every** target, which is a reasonable default and a surprising
+        one to discover: a correction typed while translating into Chinese keeps winning
+        after a switch to Japanese. Counted here so a surface can say how many behave that
+        way -- and counted across *both* scopes, because that is what "declares no
+        language" means. Counting only the whole-line ones (which is what this did) gave a
+        number that disagreed with the rows a panel marks as untagged, and two answers to
+        one question is how a diagnostic stops being trusted.
+        """
+        return [c for c in self.items() if not c.lang]
+
+    def untagged_line_corrections(self) -> list[Correction]:
+        """Whole-line corrections that declare no language.
+
+        The subset that is reachable by loose matching, listed separately because that is
+        the subset a correction actually *engages* through -- a term correction with no
+        language is still language-neutral vocabulary, and the panel labels both.
+        """
+        return [
+            correction
+            for (key, base), correction in sorted(self._lines.items())
+            if not base and len(key) >= MIN_KEY_LENGTH
+        ]
+
+    def lookup_exact(self, source: str, target_lang: str | None = None) -> Correction | None:
+        """One stored correction by its exact source text.
+
+        Language-aware for the same reason ``lookup_line`` is: with two languages'
+        corrections for one line, "the correction for this source" is only a well-formed
+        question once the language is known. Without one, the neutral row wins, then a
+        deterministic pick.
+        """
+        key = source.strip()
+        if target_lang:
+            for base in (language_base(target_lang), ""):
+                hit = self._items.get((key, base))
+                if hit is not None:
+                    return hit
+            return None
+        neutral = self._items.get((key, ""))
+        if neutral is not None:
+            return neutral
+        for slot in sorted(self._items):
+            if slot[0] == key:
+                return self._items[slot]
+        return None
 
     # -- editing ----------------------------------------------------------- #
 
@@ -261,12 +387,17 @@ class Corrections:
         scope: str = SCOPE_LINE,
         note: str | None = None,
         now: float | None = None,
+        lang: str | None = None,
     ) -> tuple[Correction, bool]:
         """Store a correction and write the file. Returns ``(correction, created)``.
 
         Correcting the same line twice updates it rather than adding a rival entry:
         the human's latest answer is the one they mean, and a fork between two rows
         for one sentence would be unresolvable by the engine.
+
+        ``lang`` is the target language this correction was written in, and it is part
+        of what "the same line twice" means: correcting one line for Chinese and then
+        for Japanese is two corrections, not an edit of the first.
         """
         source = source.strip()
         target = target.strip()
@@ -278,7 +409,8 @@ class Corrections:
             raise ValueError(f"scope must be one of {', '.join(SCOPES)}, not {scope!r}")
 
         now = time.time() if now is None else now
-        existing = self._items.get(source)
+        slot = (source, language_base(lang))
+        existing = self._items.get(slot)
         created = existing is None
         if existing is None:
             correction = Correction(
@@ -289,6 +421,7 @@ class Corrections:
                 first_seen=now,
                 last_seen=now,
                 note=note,
+                lang=str(lang) if lang else None,
             )
         else:
             correction = existing
@@ -298,8 +431,10 @@ class Corrections:
             correction.count += 1
             if note is not None:
                 correction.note = note
+            if lang:
+                correction.lang = str(lang)
 
-        self._items[source] = correction
+        self._items[slot] = correction
         self.save()
         self.load()  # rebuild the loose keys from what was just written
         return correction, created
@@ -310,14 +445,18 @@ class Corrections:
         target: str,
         scope: str = SCOPE_LINE,
         note: str | None = None,
+        lang: str | None = None,
     ) -> dict[str, Any]:
         """Record and return the summary a surface wants to show."""
-        correction, created = self.record(source, target, scope=scope, note=note)
+        correction, created = self.record(
+            source, target, scope=scope, note=note, lang=lang
+        )
         return {
             "created": created,
             "updated": not created,
             "source": correction.source,
             "target": correction.target,
+            "lang": correction.lang or "",
             "path": str(self.path),
             "scope": correction.scope,
             "count": correction.count,
@@ -325,10 +464,23 @@ class Corrections:
             "applies_to_future_frames": True,
         }
 
-    def remove(self, source: str) -> bool:
-        """Delete one correction, so a mistake about a mistake is reversible."""
-        if self._items.pop(source.strip(), None) is None:
+    def remove(self, source: str, lang: str | None = None) -> bool:
+        """Delete one correction, so a mistake about a mistake is reversible.
+
+        With a language, that language's row goes; without one, every row for this
+        source goes. Both are deliberate: the listing shows one row per language, so a
+        delete aimed at a row must not take its sibling with it, while a delete that
+        names only the text means "this sentence is done being corrected".
+        """
+        key = source.strip()
+        if lang is not None:
+            doomed = [(key, language_base(lang))]
+        else:
+            doomed = [slot for slot in self._items if slot[0] == key]
+        if not any(slot in self._items for slot in doomed):
             return False
+        for slot in doomed:
+            self._items.pop(slot, None)
         self.save()
         self.load()
         return True
@@ -341,16 +493,25 @@ class Corrections:
         return count
 
     def save(self) -> None:
-        """Write the whole file atomically."""
-        write_json_atomic(
-            self.path,
-            {"_readme": _README, "entries": {k: v.to_json() for k, v in self._items.items()}},
-        )
+        """Write the whole file atomically.
+
+        Grouped by source, and a source with corrections in more than one language is
+        written as a *list* -- the shape the loader reads back, and the only way a JSON
+        object can hold the same key twice.
+        """
+        by_source: dict[str, list[Correction]] = {}
+        for (source, _base), correction in self._items.items():
+            by_source.setdefault(source, []).append(correction)
+        entries: dict[str, Any] = {}
+        for source, rows in by_source.items():
+            rows.sort(key=lambda c: language_base(c.lang))
+            entries[source] = rows[0].to_json() if len(rows) == 1 else [c.to_json() for c in rows]
+        write_json_atomic(self.path, {"_readme": _README, "entries": entries})
 
     # -- introspection ----------------------------------------------------- #
 
     def items(self) -> list[Correction]:
-        return sorted(self._items.values(), key=lambda c: (c.scope, c.source))
+        return sorted(self._items.values(), key=lambda c: (c.scope, c.source, c.lang or ""))
 
     def term_pairs(self) -> list[tuple[str, str]]:
         """``(source, target)`` for term scope, or everything, for listings."""
@@ -364,6 +525,10 @@ class Corrections:
             "corrections": len(self._items),
             "corrections_lines": len(self._lines),
             "corrections_hits": sum(c.hits for c in self._items.values()),
+            #: every correction that declares no language, both scopes -- see
+            #: ``untagged_corrections`` for why this is not the whole-line subset
+            "corrections_untagged": len(self.untagged_corrections()),
+            "corrections_untagged_lines": len(self.untagged_line_corrections()),
             "corrections_file": str(self.path),
         }
 
@@ -371,7 +536,9 @@ class Corrections:
         return len(self._items)
 
     def __contains__(self, source: object) -> bool:
-        return isinstance(source, str) and source.strip() in self._items
+        return isinstance(source, str) and any(
+            slot[0] == source.strip() for slot in self._items
+        )
 
 
 # --------------------------------------------------------------------------- #
@@ -389,13 +556,16 @@ def record(
     target: str,
     scope: str = SCOPE_LINE,
     note: str | None = None,
+    lang: str | None = None,
 ) -> dict[str, Any]:
-    return Corrections(corrections_path(config)).apply(source, target, scope=scope, note=note)
+    return Corrections(corrections_path(config)).apply(
+        source, target, scope=scope, note=note, lang=lang
+    )
 
 
 def listing(config: Any) -> list[dict[str, Any]]:
     return Corrections(corrections_path(config)).describe()
 
 
-def remove(config: Any, source: str) -> bool:
-    return Corrections(corrections_path(config)).remove(source)
+def remove(config: Any, source: str, lang: str | None = None) -> bool:
+    return Corrections(corrections_path(config)).remove(source, lang=lang)

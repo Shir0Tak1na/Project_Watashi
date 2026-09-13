@@ -146,26 +146,19 @@ def main() -> int:
         f"no command: {unbacked}" if unbacked else f"{len(live)} immediate fields",
     )
 
-    known_commands = {
-        "set_fps",
-        "set_diff_threshold",
-        "set_region",
-        "set_target_lang",
-        "set_presentation",
-        "load_profile",
-        "use_window",
-        "reload_corpus",
-        "set_corpus_reload",
-        "set_self_capture",
-        "correct",
-        "list_corrections",
-        "remove_correction",
-    }
+    # The authority is the engine's own declaration, not a list kept here. The version
+    # that was kept here went stale the moment a field was added, and a stale list in a
+    # check is worse than no list: it certifies a command that does not exist. Whether
+    # the engine *implements* each of these is asserted in ``selfcheck_web``, which has a
+    # real Session and can ask it (`Session.command_names`).
+    from watashi.events import ALL_COMMANDS
+
+    known_commands = set(ALL_COMMANDS)
     unknown = sorted({f.command for f in fields if f.command} - known_commands)
     check.check(
-        "and that command is one the engine really implements",
+        "and that command is one the engine declares at all",
         not unknown,
-        f"not implemented: {unknown}" if unknown else "",
+        f"not a command: {unknown}" if unknown else f"{len(known_commands)} commands",
     )
 
     restart = [f for f in fields if f.applies == schema.RESTART]

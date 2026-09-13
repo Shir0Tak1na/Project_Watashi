@@ -386,6 +386,25 @@ TRANSLATION = Category(
             note="日语含假名时可自动判断；纯汉字标题会被误判成中文，建议直接指定 ja",
         ),
         Field(
+            key="translation.scene",
+            label="当前场景",
+            description="语料库里同一个词可以在不同场景下给不同译法（词条的 domain 字段）。"
+                        "这里选定的场景优先：标了这个场景的词条压过没标场景的，"
+                        "没标场景的又压过标了别的场景的。留空 = 不偏袒，所有词条同等适用"
+                        "——这是默认，也是这个功能存在之前的行为。"
+                        "**层级仍然优先于场景**：你自己写的词条始终压过出厂词条，"
+                        "哪怕出厂那条标了当前场景。",
+            kind="text",
+            default="",
+            applies=LIVE,
+            command="set_scene",
+            cost="代价是同一个词在不同场景下会给出不同译文，而「现在是哪个场景」是你说"
+                 "而不是引擎猜的；标了场景的词条越多，这个词库越依赖你选对场景",
+            note="词条写法：{\"bank\": {\"target\": \"银行\", \"domain\": \"finance\"}}；"
+                 "条件式消歧（when_line / when_near / when_window）可写在同一条词条里，"
+                 "见语料库页的说明",
+        ),
+        Field(
             key="translation.min_confidence",
             label="最低置信度",
             description="低于此平均置信度的识别结果直接丢弃。0 = 全部保留。",

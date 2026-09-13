@@ -44,6 +44,8 @@ from pathlib import Path
 from typing import Any, Callable, Sequence
 
 from .translate import (
+    DEFAULT_CONTEXT,
+    Context,
     CorpusStore,
     Outcome,
     Span,
@@ -856,16 +858,40 @@ class HybridTranslator(Translator):
     def model_available(self) -> bool:
         return self.model is not None and self.model.available
 
-    def translate(self, text: str, target_lang: str = "zh-CN") -> Outcome:
+    def translate(
+        self,
+        text: str,
+        target_lang: str = "zh-CN",
+        context: "Context | None" = None,
+    ) -> Outcome:
         """Instant result; never touches the model."""
-        outcome = self.corpus.translate(text, target_lang)
-        cached = self._cached(text, target_lang)
+        outcome = self.corpus.translate(text, target_lang, context)
+        cached = self._cached(text, target_lang, context)
         if cached is not None:
             outcome.target_text = cached.target_text
             outcome.backend = cached.backend
         return outcome
 
-    def _cached(self, text: str, target_lang: str) -> Refinement | None:
+    def _cache_key(
+        self, text: str, target_lang: str, context: "Context | None"
+    ) -> tuple[str, ...]:
+        """``(text, *what the corpus can distinguish)``, target language included.
+
+        A cached refinement is an answer about a specific situation. Keying it on the
+        text alone served a Chinese refinement to a request for Japanese, and made two
+        senses of one term share one answer -- the corpus would pick the right entry and
+        the cache would then paint the old translation over it.
+
+        The context is normalised against the argument first: a caller that passes
+        ``Context()`` and a target language separately would otherwise key on the empty
+        string, and every language would share one cache.
+        """
+        resolved = (context or DEFAULT_CONTEXT).with_target(target_lang)
+        return (text, *self.corpus.context_key(resolved))
+
+    def _cached(
+        self, text: str, target_lang: str, context: "Context | None" = None
+    ) -> Refinement | None:
         """The cached refinement for this text, if it is still valid.
 
         A refined answer describes the vocabulary it was computed against. Once the
@@ -880,9 +906,14 @@ class HybridTranslator(Translator):
                 self._cache.clear()
                 self._cache_revision = self._revision()
                 return None
-            return self._cache.get((text, target_lang))
+            return self._cache.get(self._cache_key(text, target_lang, context))
 
-    def submit(self, texts: "str | Sequence[str]", target_lang: str) -> bool:
+    def submit(
+        self,
+        texts: "str | Sequence[str]",
+        target_lang: str,
+        context: "Context | None" = None,
+    ) -> bool:
         """Queue refinement. Accepts one string or a list of lines.
 
         Only the newest request is kept: a screen that keeps changing should not
@@ -914,7 +945,9 @@ class HybridTranslator(Translator):
             budget -= len(text)
         if not selected:
             return False
-        if not any(self._cached(text, target_lang) is None for text in selected):
+        if not any(
+            self._cached(text, target_lang, context) is None for text in selected
+        ):
             return False
 
         with self._condition:
@@ -922,13 +955,32 @@ class HybridTranslator(Translator):
                 self.dropped += 1
             # The vocabulary revision travels with the job: reading the corpus now and
             # comparing later is the only way to notice that a human corrected one of
-            # these lines while the model was still thinking about it.
-            self._latest = (selected, target_lang, self._revision())
+            # these lines while the model was still thinking about it. The context key
+            # travels with it too, so the answer is cached under the situation it was
+            # computed for rather than under the text alone.
+            self._latest = (
+                selected,
+                target_lang,
+                self._revision(),
+                self.corpus.context_key(
+                    (context or DEFAULT_CONTEXT).with_target(target_lang)
+                ),
+            )
             self._condition.notify()
         return True
 
     def _revision(self) -> int:
         return int(getattr(self.corpus, "revision", 0))
+
+    def context_key(self, context: "Context | None") -> tuple[str, ...]:
+        """What the corpus can distinguish, so the pipeline's memories can key on it.
+
+        Delegated rather than reimplemented: the pipeline's recent-translation memory
+        and this class's refinement cache have to agree with the corpus about what a
+        different situation is, or one of them will serve an answer the other would
+        have refused.
+        """
+        return tuple(self.corpus.context_key(context))
 
     def forget(self, source: str | None = None, contains: str | None = None) -> int:
         """Drop cached refinements the vocabulary has moved past.
@@ -978,7 +1030,7 @@ class HybridTranslator(Translator):
                 self._latest = None
             if job is None:
                 continue
-            texts, target_lang, revision = job
+            texts, target_lang, revision, context_key = job
             self._wait_for_quiet_period()
             if self._stop.is_set():
                 return
@@ -1000,7 +1052,11 @@ class HybridTranslator(Translator):
                 if len(self._cache) >= self.cache_size:
                     self._cache.clear()
                 for refinement in refinements:
-                    self._cache[(refinement.source_text, target_lang)] = refinement
+                    # The job's context key, not the text's: computed under the situation
+                    # the batch was queued for, so a scene change mid-flight cannot file
+                    # the answer under the new one. Same shape ``_cache_key`` builds --
+                    # text first -- because ``forget`` reads ``key[0]`` as the source.
+                    self._cache[(refinement.source_text, *context_key)] = refinement
             self.refinements += len(refinements)
             if self.on_refined is not None:
                 for refinement in refinements:
@@ -1064,6 +1120,11 @@ class HybridTranslator(Translator):
             #: whether a job is queued right now -- distinct from "dropped",
             #: which counts requests superseded before they ran
             "refinements_pending": 1 if self._latest is not None else 0,
+            # The corrections counts, published from *here* because this is the class the
+            # application actually builds: adding them to ``CorpusTranslator.stats()``
+            # alone would have left the real surfaces reading a dict that never carried
+            # them, which a self check caught immediately and a user never would have.
+            **self.corpus.correction_stats(),
         }
         if self.model is not None:
             data.update(

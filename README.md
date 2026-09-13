@@ -70,17 +70,17 @@ every layer below is a placeholder.
 | --- | --- | --- |
 | Screen capture / region selection | Stub — returns a blank image | Working (`mss`, plus drag-to-select) |
 | OCR | Stub — returns hardcoded text | Working (RapidOCR ONNX, offline) |
-| Corpus loader | Static JSON, 5 entries each | Working, layered + hot reload |
+| Corpus loader | Not implemented — `src/` has no corpus code at all | Working, layered + hot reload |
 | Rule engine | Not implemented | Working (affix / morpheme / template / transliterate) |
 | Local translation model | Not implemented (`src/llm/` empty) | Working (NLLB-200 int8 via CTranslate2) |
 | Term protection (corpus-authoritative translation) | Not implemented | Working, with fallback reporting |
 | Storage / cache | Not implemented | In-memory only |
 | UI, floating overlay | Not implemented | Working (subtitle bar + panel) |
-| Desktop control window | Not implemented | Working (`--desktop`: six tabs, shares one Tk root with the overlay) |
-| Plugins | Not implemented; Python bridge prototype | Extension points v1 with failure isolation, 2 example plugins |
+| Desktop control window | Not implemented | Working (`--desktop`: 字幕 / 采集 / 插件 tabs, sharing one Tk root with the overlay) |
+| Plugins | Not implemented; `include/plugins/plugin_api.h` is still a draft | Extension points v1 with failure isolation, 2 example plugins |
 | UI surface architecture | Not implemented | Working: engine/UI event-contract boundary, CLI, overlay, desktop window and in-process web panel all share one schema |
 | Customization (appearance, layout, profiles) | Not implemented | Working: declarative presentation spec, 7 presets, live switching, memory tiers |
-| Tests | Directories only | `--selftest` plus 8 self-check scripts, 298 assertions |
+| Tests | Directories only | `--selftest` plus 20 self-check scripts (15 headless in CI, 5 that need a display); `prototype/README.md` records the current assertion counts |
 
 ## Runtime requirements
 
@@ -149,73 +149,174 @@ prototype\run.cmd --list-monitors
 prototype\run.cmd --mode none --duration 20 --print   # headless
 ```
 
+Vocabulary can be managed without the UI, on a machine that has no browser:
+
+```bash
+prototype\run.cmd --list-scenes                       # scenes, current scene, conflicts
+prototype\run.cmd --export-corpus corpus.json          # edit it, then write it back
+prototype\run.cmd --import-corpus terms.csv --dry-run  # report, write nothing
+prototype\run.cmd --promote-corrections --dry-run      # 实时纠正 -> corpus entries
+```
+
 The native target (`./build/ProjectWatashi`) only prints a startup line; it is
 not implemented yet.
 
 ## Configuration
 
-Settings live in `config/app.yaml`:
+The working prototype reads `prototype/config.yaml`, and every path inside it is resolved
+relative to that file, so the prototype can be launched from anywhere. Settings changed in
+a UI are **not** written back there: they go to `prototype/config.user.yaml`, a thin
+override layer merged over the file at load time. That is deliberate — the comments in
+`config.yaml` are the documentation for these settings and a YAML round trip would delete
+all of them — and it makes "put it back" a one-file delete. `--config PATH` points the
+prototype at a different file.
+
+The bad news is that `config/app.yaml` is still in the tree: it is a placeholder for the
+C++ skeleton and **no code reads it**. The authoritative list of settings is
+`prototype/watashi/settings_schema.py` — one declaration per setting, carrying a key, a
+label and a description, which is what the desktop settings form and the web panel render
+— and the shipped defaults are the `DEFAULTS` dict in `prototype/watashi/config.py`. An
+unrecognised key in a config file is ignored in silence, so a typo looks exactly like a
+setting that does nothing; the settings panel is the reliable place to see what exists.
+
+A minimal file, in the shape the loader expects (every key and value below is real):
 
 ```yaml
+capture:
+  region: null          # "x,y,w,h" in physical pixels; null = a strip across the bottom
+  fps: 10               # capture rate; OCR only runs on a frame that changed
+  settle_ms: 0          # hold OCR back until the frame has been still this long
+
 translation:
-  default_source: auto      # source language, or auto-detect
-  default_target: zh-CN     # target language
-  cache_enabled: true
-  use_llm: true             # local LLM, not a cloud API
-  llm_backend: llama_cpp
+  source: auto          # auto-detect, or name it: auto cannot tell French from English
+  target: zh-CN
+  scene: ""             # which scene's term entries win; empty = no preference
+  nmt_model: null       # null = corpus + rules only; the shipped file names the model
 
-ocr:
-  provider: paddleocr
-  capture_area_enabled: true
+corpus:
+  domain: [corpus, ../rules/slang, ../rules/fiction]
+  auto_reload: true     # re-read corpus files when their modification time changes
 
-rules:
-  slang_file: rules/slang/internet_slang.json
-  fiction_file: rules/fiction/fantasy_terms.json
-
-storage:
-  db_path: data/project_watashi.db
+overlay:
+  mode: both            # bar | panel | both | none
 ```
+
+The shipped `config.yaml` is much longer, and worth reading rather than copying: its
+comments carry the measured reason behind each default (why `ocr.det_limit_type` is `max`
+and not RapidOCR's `min`, why `max_width` stays `0`).
 
 ## Custom corpus format
 
-Corpus files are JSON, keyed by source term. Directories by layer:
+Corpus files are JSON. An entry is keyed by *(target language, source term, scene,
+conditions)* — the four things that decide which answer is right for the line in front of
+you. Directories by layer:
 
 | Layer | Path | Priority |
 | --- | --- | --- |
 | User private | `plugins/user/custom_rules/` | Highest |
-| Internet slang | `rules/slang/` | Medium |
-| Fictional vocabulary | `rules/fiction/` | Medium |
+| Internet slang | `rules/slang/` | Medium (domain layer) |
+| Fictional vocabulary | `rules/fiction/` | Medium (domain layer) |
 | General dictionary | `rules/dictionaries/` | Lowest |
 
-Example (`rules/fiction/fantasy_terms.json`):
+Example — `rules/fiction/fantasy_terms.json` as it ships:
 
 ```json
 {
-  "sword": "剑",
-  "dragon": "龙",
-  "spirit": "灵力",
-  "void": "虚空",
-  "realm": "境界"
+  "lang": "zh-CN",
+  "entries": {
+    "sword": "剑",
+    "dragon": "龙",
+    "spirit": "灵力",
+    "void": "虚空",
+    "realm": "境界"
+  }
 }
 ```
 
-Entries may be extended with part of speech, domain tag, priority, source, and
-update time. Lookup order is user private > domain > general, with longest match
-winning inside a layer.
+An entry may also carry `pos`, `priority` and `note`. `pos` and `note` are carried through
+and displayed, and never affect a lookup; `priority` breaks a tie between two entries in
+the same layer, scene and condition set. Lookup order is user private > domain > general,
+with longest match winning inside a layer.
 
 **A corpus is not language-neutral.** An entry declares the language of its
 translation — once per file with `"lang": "zh-CN"` plus an `"entries"` object, or
 per entry with its own `lang` — because an English→Chinese vocabulary asked for
 Japanese would otherwise answer *with Chinese, at full confidence*. An entry that
 declares nothing is usable for any target, so every corpus written before this
-existed keeps working. The same source term may appear once per language. Languages
-are compared as languages (`zh` = `zh-CN` = `zho_Hans`), and the languages a corpus
-can answer for are reported in the `ready` event, the desktop window and the web
-panel.
+existed keeps working. The same source term may appear once per language, scene and set of
+conditions. Languages are compared as languages (`zh` = `zh-CN` = `zho_Hans`), and the
+languages a corpus can answer for are reported in the `ready` event, the desktop window and
+the web panel.
+
+### One word, several meanings
+
+Writing a second meaning used to overwrite the first **in silence**: both landed on the
+same key, and nothing anywhere said so. The key now carries the scene and the conditions
+as well, and because a JSON object cannot hold one key twice, a source with more than one
+answer is written as a **list**:
+
+```json
+{
+  "bank": [
+    {"target": "银行", "domain": "finance"},
+    {"target": "岸", "domain": "geography"}
+  ]
+}
+```
+
+There are two ways to say which meaning applies.
+
+**Scene** (`domain` on the entry) is the one you pick. Set `translation.scene` in the
+settings panel, type it in the 场景 box in the desktop top bar next to 目标语言, or pass
+`--scene NAME`. Empty — the default — means no preference, which is exactly the behaviour
+before scenes existed. Scene names are compared case-folded, so `Finance` and `finance` are
+one scene.
+
+**Conditions** are evidence the engine reads for itself, and *all* of them must hold:
+
+| Key | Holds when |
+| --- | --- |
+| `when_line` | the regex matches anywhere in the whole recognised line |
+| `when_near` | one of these words appears in the line **outside** the matched term |
+| `when_window` | the regex matches the title of the window the text was captured from |
+
+`when_near` looks at the line with the matched term cut out, so an entry for "bank" cannot
+satisfy `when_near: ["bank"]` with itself. An entry that requires a window is not applied
+when there is no window — a fixed screen region has no title — which is what keeps a
+window-specific term out of a region capture.
+
+When several entries could answer, the order is:
+
+1. **layer** — the user's own file always beats a shipped file, even when the shipped
+   entry names the scene you selected;
+2. **scene** — exact match, then an entry that names no scene, then a different scene;
+3. **`priority`**, then a deterministic tail, so the answer never depends on which file was
+   read first.
+
+Conditions are a **filter, not a weight**: they decide whether an entry is eligible at all.
+An entry whose conditions do not hold is not ranked lower, it does not compete.
+
+**Two entries that really are the same** — same term, language, scene and conditions — but
+give *different* translations: one wins deterministically and the loser is now reported
+rather than dropped in silence. It is printed when the corpus loads, listed by
+`--list-scenes`, and shown in the web panel's 语料库 tab with the reason. Two entries that
+agree on the translation are not reported: that is one statement written twice, and a
+diagnostic that cries wolf is one nobody reads. The fix for a reported conflict is to give
+the two entries different scenes or different conditions — the only way to say which one
+applies when.
 
 Corpus edits take effect while the program is running: the engine checks file
 modification times before each translation and reloads on change, throttled to once
 per 500 ms (`corpus.auto_reload`, `corpus.reload_interval_ms`).
+
+**The caches key on the situation, not on the text.** The recent-translation memory (a
+source seen again within 10 s is not translated twice) used to be keyed on the source text
+alone, so switching the target language inside that window served the previous language's
+text back. It is now keyed on the dimensions the loaded vocabulary can actually
+distinguish: always the target language, plus the scene or the window only when some entry
+depends on one. A corpus with no scenes and no window conditions therefore caches exactly
+as it did before, and one that answers differently per scene cannot hand back the other
+scene's answer. The translation cache and the model's refinement cache use the same key.
 
 **Real time correction.** When the corpus itself is wrong, the wrong answer is a
 confident hit rather than a gap, and more vocabulary cannot fix it. So the fix is
@@ -224,17 +325,61 @@ right translation, save. It is written to `corrections.json` in the user private
 layer, applied to the frame on screen immediately, and used for that sentence from
 then on. A `line` correction matches the whole sentence while ignoring the
 whitespace and edge punctuation OCR varies between frames; a `term` correction
-replaces that word in any sentence. See `prototype/README.md` for the engine
-commands (`correct`, `list_corrections`, `remove_correction`).
+replaces that word in any sentence. A correction records the target language it was
+written for: a whole-line correction typed while translating into Chinese used to keep
+winning after the target switched to Japanese, which reads as Chinese text labelled
+Japanese. A correction with no language — every file written before this existed — still
+applies to any target, and the engine reports those separately as **untagged** rather than
+guessing a language for them. See `prototype/README.md` for the engine commands
+(`correct`, `list_corrections`, `remove_correction`).
 
 **Editing the corpus in the UI.** The web panel's 语料库 tab is the editor: a table of
-every entry from every layer, with override, suppress, revert, import and export.
-**Editing a shipped entry does not rewrite the shipped file** — it writes an override
-into the user layer, and the UI shows what it overrode, what that entry used to say, and
-offers one-click revert. Import and export handle JSON (the corpus's own shapes) and
-CSV/TSV (Chinese headers understood, downloads written for spreadsheets), with other
-formats going through the plugin `corpus_loader` extension point. Every edit takes effect
-immediately.
+every entry from every layer, with override, suppress, revert, import and export, the scene
+each row declares, and the conflicts the loader found. **Editing a shipped entry does not
+rewrite the shipped file** — it writes an override into the user layer, and the UI shows
+what it overrode, what that entry used to say, and offers one-click revert. Import takes a
+file or pasted text; export handles JSON (the corpus's own shapes) and CSV/TSV (Chinese
+headers understood, downloads written for spreadsheets), with other formats going through
+the plugin `corpus_loader` extension point. Every edit takes effect immediately.
+
+A term answered more than once — two languages, or one language in two scenes — is stored
+as a *list* of entries, and the editor writes and reads that form. It did not always: it
+could write the list but not read it back, so such a term showed as no rows at all and the
+next save wrote the empty table over the file. Reading, writing, importing and exporting
+handle it now.
+
+**Bulk vocabulary.** Three ways to add many entries already existed: the panel's file
+import, dropping a file into the user corpus layer (`plugins/user/custom_rules/`), and the
+`corpus_loader` plugin extension point. There are now four more:
+
+- the panel takes **pasted text**, not only a file — one `source,target` line each, or a
+  header-driven table;
+- the panel can **preview** an import before writing it: 「预览」 and 「导入」 call the *same*
+  code with one extra `dry_run` flag, so the preview's "added / updated / skipped" is the
+  number the import will produce rather than a second guess at it;
+- recorded corrections can be **promoted into entries** in bulk — 「提升为词条」 in the
+  panel's 语料库 tab, under 实时纠正, or `--promote-corrections`. The corrections file and
+  the corpus stay separate files; nothing is promoted unless you ask, and promotion never
+  edits or deletes a correction;
+- the **command line** can do all of it headlessly:
+
+  | Command | Effect |
+  | --- | --- |
+  | `--import-corpus FILE` | add entries from a file |
+  | `--export-corpus FILE` | write the corpus out as a file |
+  | `--promote-corrections` | copy recorded corrections into the corpus |
+  | `--list-scenes` | the scenes the corpus declares, the current one, and every conflict |
+  | `--scene NAME` | select the active scene (empty clears it) |
+  | `--corpus-format json\|csv\|tsv` | format for import/export; default from the extension, else json |
+  | `--corpus-scope user\|effective` | export your own entries or everything in effect; for `--promote-corrections`, `line` / `term` instead |
+  | `--keep-existing` | import/promote: skip rows that already exist instead of replacing them |
+  | `--dry-run` | import/promote: report what would happen and write nothing |
+
+CSV and TSV import/export understand
+`source,target,lang,pos,domain,when_line,when_near,when_window,note`, and accept Chinese
+header names too — the exact list is `_COLUMNS` in `prototype/watashi/library.py`. A
+source answered more than once exports as the list form, because that is the only shape a
+JSON object can carry two answers in.
 
 ## Custom rules
 
@@ -253,8 +398,9 @@ inference, and a rule result can be saved into the corpus with one action.
 
 ## Plugins
 
-Extension points: translation post-processing, corpus loaders, rule sets, OCR
-pre/post-processing, overlay rendering, and export formats.
+Extension points: translation post-processing, corpus loaders, export formats, overlay
+rendering, and a replacement translation backend — `postprocess`, `corpus_loader`,
+`export`, `renderer` and `translator` in `prototype/watashi/plugins.py`.
 
 - `plugins/builtin/` — shipped with the app
 - `plugins/user/` — user-installed
@@ -262,11 +408,13 @@ pre/post-processing, overlay rendering, and export formats.
 - C++ — `include/plugins/plugin_api.h` (`IPlugin`), still a draft
 - Python — `prototype/watashi/plugins.py` (`PLUGIN_API_VERSION = 1`), **working**
 
-On the Python side, `postprocess` and `export` are connected and
-`corpus_loader` / `renderer` / `translator` are reserved but not yet called.
-Four failure modes — an incompatible API version, a raised exception, a wrong
-return type, and an unknown extension point — are all caught, reported and
-skipped rather than taking down the host (`selfcheck_plugins`, 35 assertions).
+On the Python side, `postprocess`, `export` and `corpus_loader` are connected —
+`corpus_loader` is what lets a plugin read a corpus format other than the built-in JSON —
+and `renderer` / `translator` are reserved but not yet called; `--list-plugins` reports
+which is which, so an author sees what is not connected rather than discovering it by
+having their plugin ignored. Four failure modes — an incompatible API version, a raised
+exception, a wrong return type, and an unknown extension point — are all caught, reported
+and skipped rather than taking down the host (`selfcheck_plugins`, 35 assertions).
 
 Plugins are expected to be versioned, isolated, and sandboxed: one failing
 plugin must never take down the host, and network access is denied by default.
@@ -283,7 +431,7 @@ plugin must never take down the host, and network access is denied by default.
 ProjectWatashi/
 ├── CMakeLists.txt
 ├── .gitignore       # excludes .venv/ and models/ (617 MiB of weights)
-├── config/          # app.yaml and user preferences
+├── config/          # app.yaml — C++ skeleton placeholder, read by no code yet
 ├── docs/            # architecture, OCR design, plugin API, presentation spec
 ├── include/         # public headers (app, core, db, llm, ocr, plugins)
 ├── src/
@@ -298,7 +446,7 @@ ProjectWatashi/
 │   └── utils/       # logging, strings, crypto (planned)
 ├── models/          # local models (ocr, llm, embedding) — gitignored
 ├── plugins/         # builtin and user plugins
-├── prototype/       # WORKING Python prototype: M1-M6, runs today
+├── prototype/       # WORKING Python prototype: M1-M3 plus plugin API v1, runs today
 ├── rules/           # editable corpora (slang, fiction, dictionaries)
 └── tests/           # C++ tests; CMakeLists.txt only, no sources yet
 ```

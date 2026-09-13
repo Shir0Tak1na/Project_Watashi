@@ -100,6 +100,8 @@ CMD_REMOVE_CORRECTION = "remove_correction"
 CMD_SET_CORPUS_RELOAD = "set_corpus_reload"
 #: {"exclude_self": bool, "hold_if_self_visible": bool}
 CMD_SET_SELF_CAPTURE = "set_self_capture"
+#: {"scene": str} -- pick which scene's term entries win; "" clears it
+CMD_SET_SCENE = "set_scene"
 #: the corpus editor: reading it, and the four things a user can do to an entry
 CMD_LIBRARY_LIST = "library_list"
 CMD_LIBRARY_PUT = "library_put"
@@ -108,6 +110,9 @@ CMD_LIBRARY_SUPPRESS = "library_suppress"
 CMD_LIBRARY_RESTORE = "library_restore"
 CMD_LIBRARY_IMPORT = "library_import"
 CMD_LIBRARY_EXPORT = "library_export"
+#: turn recorded corrections into corpus entries, in bulk: {"lang", "scope", "replace",
+#: "dry_run"} -- the bridge between what a human fixed on screen and the vocabulary
+CMD_LIBRARY_PROMOTE = "library_promote"
 
 ALL_COMMANDS = (
     CMD_PAUSE,
@@ -129,6 +134,7 @@ ALL_COMMANDS = (
     CMD_REMOVE_CORRECTION,
     CMD_SET_CORPUS_RELOAD,
     CMD_SET_SELF_CAPTURE,
+    CMD_SET_SCENE,
     CMD_LIBRARY_LIST,
     CMD_LIBRARY_PUT,
     CMD_LIBRARY_DELETE,
@@ -136,6 +142,7 @@ ALL_COMMANDS = (
     CMD_LIBRARY_RESTORE,
     CMD_LIBRARY_IMPORT,
     CMD_LIBRARY_EXPORT,
+    CMD_LIBRARY_PROMOTE,
 )
 
 

@@ -34,7 +34,7 @@ from .events import OverlayStats, OverlayUpdate, TranslatedLine
 from .lang import has_translatable_content, matches_target
 from .recent import RecentTranslations
 from .ocr import OcrResult, RapidOcrEngine
-from .translate import Translator
+from .translate import Context, Translator
 
 
 class _LatestSlot:
@@ -99,6 +99,11 @@ class PipelineConfig:
     source_lang: str = "auto"
     min_confidence: float = 0.0
     show_source_in_bar: bool = True
+    #: The scene/domain the user selected, e.g. "finance". An empty string means no
+    #: preference, which is the default and makes the dimension inert: every entry is
+    #: then equally eligible and the engine answers exactly as it did before scenes
+    #: existed. Compared against ``Entry.domain`` when a term has several senses.
+    scene: str = ""
 
 
 class Pipeline:
@@ -395,6 +400,61 @@ class Pipeline:
 
     # -- translation ------------------------------------------------------ #
 
+    def _context(self) -> Context:
+        """What this frame's lookups are allowed to depend on.
+
+        Built once per frame rather than per line, and it is the *same object* the
+        caches key on, so a scene change or a window change cannot be honoured by the
+        lookup and ignored by the cache (or the other way round).
+
+        The window title is read from the capturer, which is the only place that knows
+        it: a window-following capture has one, a fixed region does not. An entry that
+        requires a window is then simply not applied to text that came from a region,
+        rather than being applied everywhere. Read per frame rather than remembered, so
+        a capture that re-resolves its window is described by its current title.
+        """
+        return Context(
+            target_lang=self.config.target_lang,
+            scene=self.config.scene,
+            window=self._window_title(),
+        )
+
+    def _window_title(self) -> str:
+        """The captured window's title, or "" when the source has no window."""
+        for name in ("window_title", "title"):
+            value = getattr(self.capturer, name, None)
+            if callable(value):
+                try:
+                    value = value()
+                except Exception:
+                    continue
+            if isinstance(value, str):
+                return value
+        return ""
+
+    def _context_scope(self, context: Context) -> tuple[str, ...]:
+        """The cache-key scope for this frame, from the corpus when it can say.
+
+        Asks the corpus because it is the corpus that knows what it can distinguish: a
+        vocabulary with no scene tags and no window conditions yields the target
+        language alone, so the caches behave exactly as they did before either existed
+        and do not fragment into misses for dimensions that cannot change an answer.
+        """
+        asker = getattr(self.translator, "context_key", None)
+        if callable(asker):
+            try:
+                return tuple(asker(context))
+            except Exception:
+                pass
+        corpus = getattr(self.translator, "corpus", None)
+        asker = getattr(corpus, "context_key", None)
+        if callable(asker):
+            try:
+                return tuple(asker(context))
+            except Exception:
+                pass
+        return (context.target_lang,)
+
     def _make_update(self, ocr_result: OcrResult, started: float) -> OverlayUpdate | None:
         """Translate each recognised line once, keeping its geometry.
 
@@ -417,6 +477,10 @@ class Pipeline:
         traces: list[str] = []
         backends: set[str] = set()
         declared_source = (self.config.source_lang or "auto").strip().lower()
+        context = self._context()
+        # What the caches may be keyed on: exactly the parts of this frame's context that
+        # the loaded vocabulary can tell apart. Computed once per frame, not per line.
+        scope = self._context_scope(context)
         for ocr_line in ocr_result.lines:
             if not ocr_line.text.strip():
                 continue
@@ -447,7 +511,7 @@ class Pipeline:
             # the plate still follows text that has moved -- suppressing the cost and
             # suppressing the position are different things and only the first is
             # wanted here.
-            remembered = self.recent.get(ocr_line.text)
+            remembered = self.recent.get(ocr_line.text, scope=scope)
             if remembered is not None:
                 translated.append(
                     TranslatedLine(
@@ -479,7 +543,9 @@ class Pipeline:
                 backends.add("passthrough")
                 continue
 
-            outcome = self.translator.translate(ocr_line.text, self.config.target_lang)
+            outcome = self.translator.translate(
+                ocr_line.text, self.config.target_lang, context
+            )
             target = outcome.target_text or ocr_line.text
             # An echo is not a translation, and presenting it as one is worse than
             # showing nothing: the user reads the original back and concludes the
@@ -514,7 +580,7 @@ class Pipeline:
                 backends.add(outcome.backend)
             # Remember it so the next frame that reads the same sentence -- which OCR
             # will render slightly differently -- does not pay for it again.
-            self.recent.put(ocr_line.text, target)
+            self.recent.put(ocr_line.text, target, scope=scope)
 
         if not translated:
             return None
@@ -540,7 +606,7 @@ class Pipeline:
             submit = getattr(self.translator, "submit", None)
             if callable(submit):
                 try:
-                    submit(needs_refinement, self.config.target_lang)
+                    submit(needs_refinement, self.config.target_lang, context)
                 except Exception as exc:
                     self._errors += 1
                     print(f"[pipeline] could not queue refinement: {exc}")

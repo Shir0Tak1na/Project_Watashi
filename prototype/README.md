@@ -144,17 +144,25 @@ The web panel may only issue the **settings** subset of these
 
 ### Desktop UI (`--desktop`)
 
-A single window with seven tabs over the same `Session` the CLI uses:
+A single window with three tabs and one top bar, over the same `Session` the CLI uses:
 
 | Tab | What it does |
 | --- | --- |
 | 字幕 | Current translation large, source line under it, a scrolling bilingual history with provenance (`语料库` vs `模型`) and per-line latency, and the **correction editor**: click a history line, fix the translation, save |
 | 采集 | The current region, capture fps, change threshold — each applied through `session.command()` |
-| 翻译 | Target language, the memory-tier profiles (`lean` / `balanced` / `full`), corpus size |
-| 呈现 | One button per presentation preset; applies to the overlay live |
 | 插件 | Loaded plugins, their extension points, failures, and the export formats they register |
-| 设置 | The whole settings schema, read-only, with every label and description |
-| 诊断 | Raw counters as JSON — the same numbers a `stats` event carries |
+
+Top bar: pause/resume (with the state shown next to the button, so there is never a
+question of whether it is recognising), 框选区域, 选择窗口, 导出, 重载语料库, the target
+language, the scene, and 「打开设置面板」.
+
+The window used to carry seven tabs. Four of them — 设置, 呈现, 诊断 and 翻译 — were
+second editors of state the web panel already edited better (one existed only to say
+"adjust this in the web panel"), and two surfaces editing one file is how they start
+disagreeing. What is left is what a browser cannot do: drag a region on the real screen,
+pick a window, read the live subtitle, correct a line, and switch the two settings a user
+changes *while watching* (target language and scene). `selfcheck_desktop` asserts those
+four tabs stay gone and that their widgets went with them.
 
 Controls in the top bar: pause/resume, drag a new region, pick a window from a
 list, export, reload the corpus, the target language, and 「打开设置面板」.
@@ -478,12 +486,20 @@ prototype\run.cmd --no-plugins              # skip discovery entirely
 | --- | --- | --- |
 | `postprocess` | `(text, context) -> str \| None` | yes — chained over each translated line |
 | `export` | `(payload, options) -> str` | yes — `export` command and `--export` |
-| `corpus_loader` | `(path) -> dict` | reserved |
+| `corpus_loader` | `(path) -> dict` | yes — the corpus importer, when it meets a format it does not know |
 | `renderer` | see the presentation spec | reserved |
 | `translator` | a `Translator` subclass | reserved |
 
+`corpus_loader` sat reserved from the first version, described as "read a corpus format
+other than JSON", with no caller until the editor needed to import a format it does not
+know. A reserved point that nothing calls is indistinguishable from a broken one, which is
+why the remaining two are labelled as reserved rather than left to be discovered.
+
 Reserved points are listed by `--list-plugins`, so an author can see what is not
-yet connected rather than having a plugin silently ignored.
+yet connected rather than having a plugin silently ignored. A `translator` subclass
+written against the current protocol takes ``translate(text, target_lang, context)``; the
+context carries the scene and the window title, and a plugin that ignores it still works
+for everything except scene- and condition-dependent entries.
 
 Two shipped examples double as executable documentation:
 `plugins/builtin/postprocess_tidy.py`, and `plugins/builtin/export_srt.py`
@@ -508,6 +524,7 @@ prototype\run.cmd selfcheck_web --summary            # the panel, its editor and
 prototype\run.cmd selfcheck_correct --summary        # hot reload + real time correction
 prototype\run.cmd selfcheck_corpus --summary         # layering, language, rules, write-back
 prototype\run.cmd selfcheck_library --summary        # the corpus editor: override, suppress, import/export
+prototype\run.cmd selfcheck_senses --summary         # one word, several meanings: scenes, conditions, caches
 prototype\run.cmd selfcheck_selfcapture --summary    # not reading our own windows
 prototype\run.cmd selfcheck_deps --summary           # can a clean environment run these?
 prototype\run.cmd selfcheck_plugins --summary        # plugin contracts + failure handling
@@ -518,8 +535,8 @@ prototype\run.cmd selfcheck_desktop --summary        # the desktop window, and t
 prototype\run.cmd selfcheck_uirender --summary       # photographs the windows, reads them with OCR
 ```
 
-Counts as of the last full run: 45 / 17 / 29 / 141 / 84 / 112 / 40 / 35 / 49 / 21 / 64 /
-97 / 17 / 13 headless and 46 / 22 / 20 / 104 / 7 with a display — 963 checks, all
+Counts as of the last full run: 45 / 17 / 29 / 141 / 84 / 130 / 74 / 40 / 35 / 49 / 21 /
+64 / 157 / 17 / 13 headless and 46 / 22 / 20 / 108 / 7 with a display — 1119 checks, all
 passing. `selfcheck_uirender` reports 7 with one skip on this machine: its window is 70%
 covered by other applications, so the pixel section under that guard never runs. On a
 clear desktop it is 11.
@@ -942,7 +959,7 @@ metadata. In the bare form a key *is* an entry, so a bare `"lang"` would become 
 term named `lang`; the engine says so out loud rather than guessing which was meant.
 
 One more shape, used by the editor: a value may be a **list** of entries, which is how a
-single file answers the same term in two languages.
+single file answers the same term in two languages, or one language in two scenes.
 
 ```json
 {
@@ -958,6 +975,54 @@ single file answers the same term in two languages.
 It has to be a list rather than the same key twice, because a JSON object cannot hold two
 identical keys: whichever parser reads it silently keeps one of them, so the file would
 look correct and be missing half its content.
+
+#### One word, several meanings
+
+The same three-part question the target language answers — *which* answer is the right one
+— comes up one level down, and the key answers it the same way. An entry is identified by
+***(target language, source term, scene, conditions)***, so a term can be written as many
+times as it has meanings instead of once:
+
+```json
+{
+  "lang": "zh-CN",
+  "entries": {
+    "bank": [
+      { "target": "银行", "domain": "finance" },
+      { "target": "岸", "domain": "geography", "when_line": "\\briver\\b" },
+      { "target": "堤", "when_near": ["river", "flood"] }
+    ],
+    "void": { "target": "虚空", "when_window": "Novel" }
+  }
+}
+```
+
+- **Scene** (`domain`) is a *situation* the user selects: the `translation.scene` setting,
+  the 场景 box on the desktop top bar, or `--scene NAME`. Empty means no preference, which
+  is exactly the behaviour every corpus had before scenes existed. `--list-scenes` prints
+  the scene names the loaded corpus declares, so nobody has to guess a spelling.
+- **Conditions** decide *whether* an entry is eligible: `when_line` (regex searched in the
+  whole recognised line), `when_near` (words that must appear in the line **outside** the
+  matched term, so a condition naming the term itself does not match that term alone), and
+  `when_window` (regex against the captured window's title — and, because a fixed region
+  has no title, an entry that requires one is simply not applied there rather than applied
+  everywhere).
+- **Precedence** when several entries could answer: **layer first** (your own file always
+  beats shipped files), then the scene (exact match, then an entry that names no scene,
+  then a different scene), then the entry's own `priority`. Conditions are a filter, not a
+  weight: an entry whose conditions do not hold is not a weaker candidate, it is not a
+  candidate.
+- **A genuine collision is reported.** Two entries that are truly the same — same term,
+  language, scene *and* conditions — but give different translations still resolve
+  deterministically, and the loser is now printed at load, counted by `--list-scenes`, and
+  listed in the panel's 语料库 tab. Two entries that agree on the translation are not
+  reported: that is one statement written twice, and a warning nobody needs is a warning
+  nobody reads.
+- The scan is unchanged for corpora that use none of this: one dict get per candidate
+  substring, and for a single unconditioned sense one length comparison. Measured over a
+  200-entry corpus, medians of 300 translations of an ordinary line: **0.33–0.36 ms both
+  with and without senses**, i.e. the difference is inside the run-to-run noise rather
+  than a cost this feature introduced.
 
 ### Editing the corpus in the UI
 
@@ -988,8 +1053,7 @@ can be reached over the LAN.
 | | Formats | Notes |
 | --- | --- | --- |
 | Import | JSON, CSV, TSV | JSON accepts the corpus's own shapes, so any file that works as a corpus imports as one. CSV/TSV are header-driven (`source,target,lang,pos,domain,note`, Chinese headers understood); with no header they are read as two columns, `原文,译文` |
-| Import (other) | anything a plugin handles | the `corpus_loader` extension point, reserved in the plugin API from the first version and wired now that there is a reason to |
-| Export | JSON, CSV, TSV × `user` or `effective` | CSV/TSV downloads are written `utf-8-sig`, so a spreadsheet opens Chinese text instead of mojibake |
+| Import (other) | anything a plugin handles | the `corpus_loader` extension point, reserved in the plugin API from the first version and wired now that there is a reason to || Export | JSON, CSV, TSV × `user` or `effective` | CSV/TSV downloads are written `utf-8-sig`, so a spreadsheet opens Chinese text instead of mojibake |
 | | | `user` is what you wrote; `effective` is everything the engine will actually use, as a corpus file you could drop into another install |
 
 A round trip is asserted, not assumed: `selfcheck_library` exports each format and imports
@@ -1064,6 +1128,43 @@ correction replaces the whole line and, being fully protected terminology, is no
 second-guessed by the model afterwards. Both are listed (read-only) in the web
 panel, and `remove_correction` undoes one.
 
+A correction records the **target language it was written for**, and that is not
+bookkeeping: the corrections file used to be keyed on the source text alone, so a Chinese
+correction typed while translating into Chinese kept winning after a switch to Japanese —
+Chinese text delivered to someone who asked for Japanese, at full confidence, with nothing
+to notice. A correction with no language is still language-neutral, which is what every
+file written before this field existed contains, and the panel lists those so you can label
+them.
+
+#### Promoting corrections into the corpus
+
+The corrections file and the corpus stay separate on purpose — one is what you said about a
+*line you saw*, the other is vocabulary that answers a term *everywhere* — but they are the
+same shape of statement, so a session's worth of corrections can be copied into the corpus
+in bulk: 提升为词条 in the panel, `library_promote` through the boundary, or
+`--promote-corrections` from the command line, each with an optional preview. Nothing is
+promoted unless asked.
+
+### Managing the corpus without a browser
+
+Everything the panel's editor does is reachable headlessly, which matters for the machines
+this project is meant to run on (a small device, a locked-down box, a script that
+regenerates vocabulary from a glossary):
+
+```
+prototype\run.cmd watashi_proto --import-corpus glossary.csv          # bulk add
+prototype\run.cmd watashi_proto --import-corpus glossary.csv --dry-run # report only
+prototype\run.cmd watashi_proto --export-corpus out.csv --corpus-scope effective
+prototype\run.cmd watashi_proto --promote-corrections --dry-run
+prototype\run.cmd watashi_proto --list-scenes                         # scenes + conflicts
+prototype\run.cmd watashi_proto --scene finance --desktop             # and run with one selected
+```
+
+`--corpus-format json|csv|tsv`, `--corpus-scope user|effective` (export) or `line|term|`
+(promote), `--keep-existing` (skip rows that already exist instead of replacing them) and
+`--dry-run` round it out. `--dry-run` is answered by the same code that performs the real
+operation, so a preview cannot disagree with the result.
+
 ### Rules (R3)
 
 For words the corpus does not contain. Rules are **data, not code**
@@ -1119,7 +1220,9 @@ changes from `rule:affix` to `corpus:`, and the answer itself does not change.
 | `selfcheck_correct.py` | **Headless verification of corpus hot reload and real time correction**: the file format, loose matching, both scopes, cache invalidation, the repaint, and mutation-tested assertions. No screen needed. |
 | `selfcheck_corpus.py` | **Headless verification of the corpus and rule engine** (R2 / R3), which had no check of its own: layering and priority, longest match, entry forms, the target-language dimension, rule language identity, explainability, R3's write-back loop, hot reload and damaged files. No screen needed. |
 | `selfcheck_deps.py` | **Headless verification that a clean environment can run the other checks**: walks their import closures and requires every package to be declared in `requirements.txt` or exempted with a reason. Found `fastapi` and `uvicorn` missing, which would have failed the first CI run on both platforms. No screen needed. |
-| `selfcheck_library.py` | **Headless verification of the corpus editor**: that editing a shipped entry leaves the shipped file byte for byte unchanged, that a hand-written corpus beside it is untouched, that override/suppress/revert each mean one thing, and that every export format imports back to the same entries. No screen needed. |
+| `selfcheck_library.py` | **Headless verification of the corpus editor**: that editing a shipped entry leaves the shipped file byte for byte unchanged, that a hand-written corpus beside it is untouched, that override/suppress/revert each mean one thing, that every export format imports back to the same entries, and — after the editor turned out not to be able to read its own list form — that two answers for one source survive its own save and reload. No screen needed. |
+| `selfcheck_senses.py` | **Headless verification of one word with several meanings**: that both meanings of a term load instead of one silently replacing the other, that a scene answers with its own meaning, that the user's own untagged entry still beats a shipped entry tagged with the current scene, that conditions select on the line and the company and the window, that a genuine collision is reported with both sides named, that the two caches which used to serve one situation's answer in another no longer do, and that a corpus with no scenes keeps the target language as its whole cache key. Times the scan against a corpus with and without senses. No screen needed. |
+
 | `selfcheck_selfcapture.py` | **Headless verification that the engine does not read its own windows**: rectangle geometry, which windows count as ours, that a window already excluded from capture is not treated as a problem, the hold at startup, and the two switches that turn the guards off. It takes the window list as an argument, so it runs on a machine where nothing of ours is on screen. No screen needed. |
 | `selfcheck_uirender.py` | **Does the UI actually draw?** Photographs the real desktop window and the real overlay, and reads them back with the project's own OCR: the translation on screen, the history label, the correction editor's fields and button, the settings schema. Skips (never passes) when another window covers what it needs to photograph. Needs a display. |
 | `watashi_proto.py --list-monitors` | Enumerate monitors. |
@@ -1225,6 +1328,7 @@ prototype/
 ├── selfcheck_correct.py  headless corpus hot reload + correction verification
 ├── selfcheck_corpus.py   headless corpus/rule engine verification (R2 / R3)
 ├── selfcheck_library.py  headless corpus editor verification (override, import, export)
+├── selfcheck_senses.py   headless one-word-several-meanings verification (scenes, conditions, caches)
 ├── selfcheck_selfcapture.py  headless verification that we do not read our own windows
 ├── selfcheck_deps.py     headless check that a clean install can run the others
 ├── selfcheck_uirender.py photographs the real windows and reads them with OCR

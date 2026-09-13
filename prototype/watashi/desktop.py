@@ -34,6 +34,7 @@ from .events import (
     CMD_SET_DIFF_THRESHOLD,
     CMD_SET_FPS,
     CMD_SET_REGION,
+    CMD_SET_SCENE,
     CMD_SET_TARGET_LANG,
     CMD_TOGGLE_PAUSE,
     CMD_USE_WINDOW,
@@ -196,6 +197,16 @@ class DesktopApp:
             side="left", padx=(4, 4)
         )
         ttk.Button(controls, text="应用", command=self.apply_target).pack(side="left")
+        # The scene is here for the same reason the target language is: it is a setting a
+        # user changes *while watching*, and the panel is a browser they would have to
+        # alt-tab to. It is a scene name, matched against each entry's domain; empty means
+        # no preference, which is the default and the old behaviour.
+        ttk.Label(controls, text="场景").pack(side="left", padx=(12, 0))
+        self.scene_var = tk.StringVar(value="")
+        ttk.Entry(controls, textvariable=self.scene_var, width=12).pack(
+            side="left", padx=(4, 4)
+        )
+        ttk.Button(controls, text="应用", command=self.apply_scene).pack(side="left")
         self.panel_button = ttk.Button(
             controls, text="打开设置面板", command=self.open_panel
         )
@@ -494,6 +505,9 @@ class DesktopApp:
         self.profile_var.set(f"配置档：{info.get('profile') or '(none)'}")
         self.region_var.set(str(info.get("region")))
         self.target_var.set(str(info.get("target_lang", "")))
+        # Prefilled from what is actually in effect, so the box is never lying about the
+        # current scene after a restart or a panel change.
+        self.scene_var.set(str(info.get("scene", "")))
         self.fps_var.set(str(info.get("fps_target", "")))
         self.diff_var.set(str(info.get("diff_threshold", "")))
         # Kept for the status line rather than a tab of its own: how much vocabulary is
@@ -725,6 +739,10 @@ class DesktopApp:
 
     def apply_target(self) -> None:
         self._command(CMD_SET_TARGET_LANG, {"target_lang": self.target_var.get().strip()})
+
+    def apply_scene(self) -> None:
+        """Select which scene's term entries win, or clear it with an empty box."""
+        self._command(CMD_SET_SCENE, {"scene": self.scene_var.get().strip()})
 
     def apply_value(self, command: str, raw: str, caster: Callable[[str], Any]) -> None:
         try:

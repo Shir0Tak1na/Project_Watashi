@@ -46,6 +46,7 @@ from .events import (
     CMD_LIBRARY_DELETE,
     CMD_LIBRARY_EXPORT,
     CMD_LIBRARY_IMPORT,
+    CMD_LIBRARY_PROMOTE,
     CMD_LIBRARY_LIST,
     CMD_LIBRARY_PUT,
     CMD_LIBRARY_RESTORE,
@@ -60,6 +61,7 @@ from .events import (
     CMD_SET_DIFF_THRESHOLD,
     CMD_SET_FPS,
     CMD_SET_SELF_CAPTURE,
+    CMD_SET_SCENE,
     CMD_SET_PRESENTATION,
     CMD_SET_REGION,
     CMD_SET_TARGET_LANG,
@@ -206,6 +208,7 @@ class Session:
             target_lang=self.config.target_lang,
             source_lang=self.config.source_lang,
             min_confidence=float(self.config.translation.get("min_confidence", 0.0)),
+            scene=str(self.config.translation.get("scene") or "").strip(),
         )
         self._pipeline = Pipeline(
             capturer=self._capturer,
@@ -494,6 +497,12 @@ class Session:
             "settle_s": float(self.config.capture.get("settle_ms", 0) or 0) / 1000.0,
             "source_lang": self.config.source_lang,
             "target_lang": self.config.target_lang,
+            #: the scene whose term entries win, and the scenes that exist. Both
+            #: published: a user who selected a scene that no entry declares gets the
+            #: same answers as before and no explanation, unless a surface can show them
+            #: which names are real.
+            "scene": str(self.config.translation.get("scene") or ""),
+            "scenes": list(getattr(self.corpus, "domains", ()) or []) if self.corpus else [],
             "corpus_entries": int(backend_stats.get("corpus_entries", 0)),
             #: which target languages the corpus can actually answer for. Published
             #: rather than kept internal, because "nothing is being translated" is
@@ -502,6 +511,11 @@ class Session:
             "corpus_languages": str(backend_stats.get("corpus_languages", "")),
             "rules": int(backend_stats.get("rules", 0)),
             "rule_ids": list(backend_stats.get("rule_ids", [])),
+            #: how many corrections exist, and how many of them declare no language --
+            #: those apply under every target, which is the right default for files
+            #: written before the field existed and a surprising thing to discover
+            "corrections": int(backend_stats.get("corrections", 0)),
+            "corrections_untagged": int(backend_stats.get("corrections_untagged", 0)),
             "backend": backend_stats.get("backend", ""),
             "nmt_available": bool(backend_stats.get("nmt_available", False)),
             "nmt_error": backend_stats.get("nmt_error"),
@@ -661,6 +675,7 @@ class Session:
             CMD_REMOVE_CORRECTION: self._cmd_remove_correction,
             CMD_SET_CORPUS_RELOAD: self._cmd_set_corpus_reload,
             CMD_SET_SELF_CAPTURE: self._cmd_set_self_capture,
+            CMD_SET_SCENE: self._cmd_set_scene,
             CMD_LIBRARY_LIST: self._cmd_library_list,
             CMD_LIBRARY_PUT: self._cmd_library_put,
             CMD_LIBRARY_DELETE: self._cmd_library_delete,
@@ -668,7 +683,19 @@ class Session:
             CMD_LIBRARY_RESTORE: self._cmd_library_restore,
             CMD_LIBRARY_IMPORT: self._cmd_library_import,
             CMD_LIBRARY_EXPORT: self._cmd_library_export,
+            CMD_LIBRARY_PROMOTE: self._cmd_library_promote,
         }
+
+    @property
+    def command_names(self) -> tuple[str, ...]:
+        """Every command this engine really implements, sorted.
+
+        Exposed so a caller can ask rather than keep its own list: the settings schema
+        names a command per live field, and the only authority on whether that command
+        exists is the dispatch table right here. A hand-maintained copy of this list
+        went stale the first time a field was added.
+        """
+        return tuple(sorted(self._handlers()))
 
     def _post_state(self) -> dict[str, Any]:
         try:
@@ -676,6 +703,7 @@ class Session:
                 "paused": self.pipeline.paused,
                 "region": str(self._region) if self._region else None,
                 "target_lang": self.config.target_lang,
+                "scene": self.pipeline.config.scene,
             }
         except Exception:
             return {}
@@ -775,6 +803,38 @@ class Session:
         self.set_status(f"已切换为窗口捕获：{capturer.title or spec}")
         return f"window={capturer.title or spec} hwnd={capturer.hwnd}"
 
+    def _cmd_set_scene(self, payload: dict[str, Any]) -> str:
+        """Select the scene whose term entries win, or clear it.
+
+        Unlike a corpus edit this changes no file, so nothing reloads -- but the
+        *answers* change, which is what the vocabulary revision is for: cached and
+        in-flight refinements describe the old scene and are dropped rather than served
+        over the new one.
+        """
+        raw = payload.get("scene")
+        if raw is None:
+            raw = payload.get("value")
+        scene = "" if raw is None else str(raw).strip()
+        self.config.translation["scene"] = scene
+        self.pipeline.config.scene = scene
+        corpus = self.corpus
+        if corpus is not None:
+            corpus.revision += 1
+        known = list(getattr(corpus, "domains", ()) or ()) if corpus is not None else []
+        if scene and known and scene.casefold() not in {d.casefold() for d in known}:
+            # Not an error: an unknown scene simply prefers untagged entries. Said out
+            # loud because the user is expecting their terms to change and they will
+            # not, and "no entry is tagged that" is the reason.
+            self.set_status(
+                f"场景已切换为 {scene}，但语料库里没有词条标这个场景"
+                + (f"（可用：{', '.join(known)}）" if known else "")
+            )
+        elif scene:
+            self.set_status(f"场景已切换为 {scene}")
+        else:
+            self.set_status("场景已清除：所有词条同等适用")
+        return f"scene={scene} known={','.join(known)}"
+
     def _cmd_set_target_lang(self, payload: dict[str, Any]) -> str:
         lang = str(payload.get("target_lang") or payload.get("value") or "").strip()
         if not lang:
@@ -834,8 +894,14 @@ class Session:
         if corpus is None:
             raise ValueError("this translator has no corpus to reload")
         corpus.load()
-        self.set_status(f"语料库已重载：{corpus.size} 条 / {corpus.rule_count} 条规则")
-        return f"entries={corpus.size} rules={corpus.rule_count}"
+        conflicts = len(getattr(corpus, "conflicts", ()) or ())
+        self.set_status(
+            f"语料库已重载：{corpus.size} 条 / {corpus.rule_count} 条规则"
+            + (f"（{conflicts} 条被同键词条取代）" if conflicts else "")
+        )
+        return (
+            f"entries={corpus.size} rules={corpus.rule_count} conflicts={conflicts}"
+        )
 
     # ------------------------------------------------------------------ #
     # real time correction
@@ -876,10 +942,26 @@ class Session:
             # whenever the corpus was built from this config, but "agree whenever"
             # is how a correction ends up written somewhere the engine never reads:
             # stored, reported as saved, and completely without effect.
-            summary = store.apply(source, target, scope=scope, note=payload.get("note"))
+            #
+            # The target language is stamped on it because a correction is written *in*
+            # a language: without the stamp it applies under every target, so a fix typed
+            # while translating into Chinese kept winning after the user switched to
+            # Japanese.
+            summary = store.apply(
+                source,
+                target,
+                scope=scope,
+                note=payload.get("note"),
+                lang=str(payload.get("lang") or self.config.target_lang or "") or None,
+            )
         else:
             summary = corrections.record(
-                self.config, source, target, scope=scope, note=payload.get("note")
+                self.config,
+                source,
+                target,
+                scope=scope,
+                note=payload.get("note"),
+                lang=str(payload.get("lang") or self.config.target_lang or "") or None,
             )
 
         if corpus is not None:
@@ -1037,6 +1119,8 @@ class Session:
         source = str(payload.get("source") or "").strip()
         if not source:
             raise ValueError("remove_correction 需要 'source'")
+        raw_lang = payload.get("lang")
+        lang = str(raw_lang).strip() if raw_lang else None
         # Through the engine's own store when there is one, for the same reason the
         # correction was written there: a delete aimed at a different file than the
         # one the engine reads would report success and change nothing.
@@ -1044,12 +1128,14 @@ class Session:
         store = getattr(corpus, "corrections", None) if corpus is not None else None
         scope = corrections.SCOPE_LINE
         if store is not None:
-            known = store.lookup_exact(source)
+            # With a language, only that row goes: the listing shows one row per
+            # language, and deleting a row must not take its sibling with it.
+            known = store.lookup_exact(source, lang)
             if known is not None:
                 scope = known.scope
-            removed = store.remove(source)
+            removed = store.remove(source, lang=lang)
         else:
-            removed = corrections.remove(self.config, source)
+            removed = corrections.remove(self.config, source, lang=lang)
         if not removed:
             raise ValueError(f"没有找到针对 {source!r} 的纠正记录")
         if corpus is not None:
@@ -1122,29 +1208,60 @@ class Session:
             raise ValueError("library_put 需要 'target'：这个词应该译成什么")
         store = self.library()
         assert store is not None
-        before = store.entries.get(source)
+        lang = str(payload.get("lang") or "").strip() or None
+        domain = str(payload.get("domain") or "").strip() or None
+        # Looked up by the same dimensions the row is keyed on: a lookup by source alone
+        # always missed, which quietly cost the "was ..." in the report. Conditions are in
+        # the key too, so a put that changes them targets a different row than one that
+        # changes only the translation.
+        before = store.find(
+            source,
+            lang,
+            domain,
+            payload.get("when_line"),
+            payload.get("when_near"),
+            payload.get("when_window"),
+        ) if (lang or domain or payload.get("when_line") or payload.get("when_near")
+              or payload.get("when_window")) else store.find(source)
         entry, created = store.put(
             source,
             target,
-            lang=str(payload.get("lang") or "").strip() or None,
+            lang=lang,
             pos=str(payload.get("pos") or "").strip() or None,
-            domain=str(payload.get("domain") or "").strip() or None,
+            domain=domain,
             note=str(payload.get("note") or "").strip() or None,
+            when_line=str(payload.get("when_line") or "").strip() or None,
+            when_near=payload.get("when_near"),
+            when_window=str(payload.get("when_window") or "").strip() or None,
         )
         view = self._after_library_change(f"{'added' if created else 'updated'} {source}")
         row = next(
-            (item for item in view["entries"] if item["source"] == entry.source), None
+            (
+                item
+                for item in view["entries"]
+                if item["source"] == entry.source
+                and item["lang"] == (entry.lang or "")
+                and item["domain"] == (entry.domain or "")
+            ),
+            None,
         )
         overrode = row["overrides"] if row else None
+        where = "、".join(
+            part for part in (entry.lang or "", f"场景 {entry.domain}" if entry.domain else "") if part
+        )
         if overrode:
             self.set_status(
                 f"已覆盖出厂词条：{source} → {target}（原为 {overrode}），"
                 f"出厂文件未被修改"
             )
         else:
-            self.set_status(f"已{'新增' if created else '修改'}词条：{source} → {target}")
+            self.set_status(
+                f"已{'新增' if created else '修改'}词条：{source} → {target}"
+                + (f"（{where}）" if where else "")
+            )
         return (
             f"{'created' if created else 'updated'} {source!r} -> {target!r}"
+            + (f" [{where}]" if where else "")
             + (f", overriding {overrode}" if overrode else "")
             + (f" (was {before.target!r})" if before else "")
         )
@@ -1153,20 +1270,83 @@ class Session:
         source = str(payload.get("source") or "").strip()
         if not source:
             raise ValueError("library_delete 需要 'source'")
-        store = self.library()
-        assert store is not None
-        if not store.delete(source):
-            raise ValueError(f"你的语料库里没有 {source!r}（出厂词条请用 library_suppress）")
-        view = self._after_library_change(f"deleted {source}")
-        row = next(
-            (item for item in view["entries"] if item["source"] == source), None
+        lang = str(payload.get("lang") or "").strip() or None
+        domain = str(payload.get("domain") or "").strip() or None
+        # Conditions are part of the row identity, so they are part of what a delete may
+        # name. "conditions_given" is separate from "conditions are non-empty": a row with
+        # no conditions is a legitimate row to target, and a caller that means *that* row
+        # has to be able to say so.
+        conditions_given = any(
+            key in payload for key in ("when_line", "when_near", "when_window")
         )
-        if row is not None:
-            # The shipped entry underneath is visible again: that is what a revert is.
-            self.set_status(f"已撤销覆盖：{source} 恢复为出厂译文「{row['target']}」")
-            return f"reverted {source} to {row['origin']} -> {row['target']!r}"
-        self.set_status(f"已删除词条：{source}")
-        return f"deleted {source}"
+        if self._delete_library_entry(
+            source, lang, domain, payload, conditions_given=conditions_given
+        ):
+            view = self._after_library_change(f"deleted {source}")
+            row = next(
+                (
+                    item
+                    for item in view["entries"]
+                    if item["source"] == source
+                    and item["lang"] == (lang or "")
+                    and item["domain"] == (domain or "")
+                ),
+                None,
+            )
+            if row is not None:
+                # The shipped entry underneath is visible again: that is what a revert is.
+                self.set_status(f"已撤销覆盖：{source} 恢复为出厂译文「{row['target']}」")
+                return f"reverted {source} to {row['origin']} -> {row['target']!r}"
+            self.set_status(f"已删除词条：{source}")
+            return f"deleted {source}"
+        raise ValueError(self._library_delete_error(source, lang, domain))
+
+    def _delete_library_entry(
+        self,
+        source: str,
+        lang: str | None,
+        domain: str | None,
+        payload: dict[str, Any],
+        *,
+        conditions_given: bool,
+    ) -> bool:
+        """Remove the row the caller named, or the only row for that source.
+
+        Named by language, scene and conditions when the caller knows them -- the table
+        shows one row per (term, language, scene, conditions), and deleting a row must not
+        take its siblings with it.
+        """
+        store = self.library()
+        if store is None:
+            return False
+        if conditions_given:
+            return store.delete(
+                source,
+                lang,
+                domain,
+                payload.get("when_line"),
+                payload.get("when_near"),
+                payload.get("when_window"),
+                conditions_given=True,
+            )
+        if lang or domain:
+            return store.delete(source, lang, domain)
+        return store.delete(source)
+
+    def _library_delete_error(self, source: str, lang: str | None, domain: str | None) -> str:
+        store = self.library()
+        rows = store.for_source(source) if store is not None else []
+        if not rows:
+            return f"你的语料库里没有 {source!r}（出厂词条请用 library_suppress）"
+        where = "、".join(
+            f"{row.lang or '(任意语言)'}/{row.domain or '(无场景)'}"
+            + (f"/{row.when_line or row.when_window or ','.join(row.when_near)}"
+               if (row.when_line or row.when_near or row.when_window) else "")
+            for row in rows
+        )
+        return (
+            f"{source!r} 有多条词条（{where}），需要指定 lang、domain 与条件才能确定删哪一条"
+        )
 
     def _cmd_library_suppress(self, payload: dict[str, Any]) -> str:
         source = str(payload.get("source") or "").strip()
@@ -1197,6 +1377,63 @@ class Session:
         self.set_status(f"已还原为出厂状态：{source}")
         return f"restored {source}"
 
+    def _cmd_library_promote(self, payload: dict[str, Any]) -> str:
+        """Turn recorded corrections into corpus entries, in bulk.
+
+        The two files stay separate -- a correction is what a human said about a line they
+        saw, an entry is vocabulary -- but they are the same shape of statement, and a user
+        who has just corrected thirty lines while watching should not have to retype them
+        one at a time. This is the bridge, and it is deliberately explicit: nothing is
+        promoted unless asked, because a correction that references one on-screen line and
+        an entry that answers a term everywhere are not the same claim.
+        """
+        store = self.library()
+        assert store is not None
+        corpus = self.corpus
+        corrections_store = getattr(corpus, "corrections", None) if corpus is not None else None
+        if corrections_store is None:
+            raise ValueError("这个引擎没有纠正记录可提升")
+        if not len(corrections_store):
+            raise ValueError("还没有任何纠正记录：先在桌面窗口或面板里纠正一条")
+
+        lang = str(payload.get("lang") or self.config.target_lang or "").strip() or None
+        raw_scope = payload.get("scope")
+        scope = str(raw_scope).strip().lower() if raw_scope else None
+        if scope is not None and scope not in corrections.SCOPES:
+            raise ValueError(f"scope 只能是 {', '.join(corrections.SCOPES)}，不是 {scope!r}")
+        dry_run = bool(payload.get("dry_run", False))
+
+        selected = [
+            c for c in corrections_store.items() if scope is None or c.scope == scope
+        ]
+        if not selected:
+            raise ValueError(f"没有 {scope} 范围的纠正记录可提升")
+
+        payload_data = library_module.library_from_corrections(
+            corrections_store, lang=lang, scope=scope
+        )
+        entries, problems = library_module.entries_from_payload(payload_data)
+        result = store.merge(
+            entries, replace=bool(payload.get("replace", True)), dry_run=dry_run
+        )
+        if dry_run:
+            return (
+                f"preview: {len(entries)} corrections would become entries -- "
+                f"added {result['added']}, updated {result['updated']} (nothing written)"
+            )
+        self._after_library_change(f"promoted {len(entries)} corrections")
+        self.set_status(
+            f"已把 {len(entries)} 条纠正提升为词条：新增 {result['added']}、"
+            f"覆盖 {result['updated']}"
+        )
+        detail = (
+            f"promoted {len(entries)} corrections: added {result['added']}, "
+            f"updated {result['updated']}"
+        )
+        if problems:
+            detail += f"; notes: {'; '.join(problems[:3])}"
+        return detail
+
     def _cmd_library_import(self, payload: dict[str, Any]) -> str:
         text = str(payload.get("text") or "")
         fmt = str(payload.get("format") or payload.get("fmt") or "json").strip().lower()
@@ -1215,11 +1452,22 @@ class Session:
                 + ("；".join(problems[:3]) if problems else "格式不支持")
             )
 
+        # A preview is the same classification with nothing written, produced by the same
+        # code as the real import so the two cannot disagree. See ``Library.merge``.
+        dry_run = bool(payload.get("dry_run", False))
         # Entries that matter are protected by default, so an import is additive unless
         # the caller says otherwise: replacing vocabulary is a deliberate act.
         result = store.merge(
-            entries, replace=bool(payload.get("replace", True))
+            entries, replace=bool(payload.get("replace", True)), dry_run=dry_run
         )
+        if dry_run:
+            view = library_module.corpus_view(self.corpus, store)
+            return (
+                f"preview: {len(entries)} entries would be imported -- "
+                f"added {result['added']}, updated {result['updated']}, "
+                f"skipped {result['skipped']} (nothing written); "
+                f"total would become {view['user']}"
+            )
         problems = list(problems) + [f"skipped {name}" for name in result["skipped_sources"]]
         view = self._after_library_change(
             f"imported {result['added']} added, {result['updated']} updated"

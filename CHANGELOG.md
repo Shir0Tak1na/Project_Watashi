@@ -8,6 +8,210 @@ described in `Project Watashi.md`. It is usable for testing and it is honest abo
 what it does not do yet -- see "Known limitations" below, which is part of the
 release rather than a footnote.
 
+## [0.0.7a] -- 2026-09-14 -- 测试版 (pre-release)
+
+The corpus learned that one word can have several meanings, and the editor stopped
+losing the data it was asked to store. Both halves came out of the same three questions
+the user asked after using 0.0.6a: *if a word has different meanings, do we need separate
+configuration? if one configuration holds several meanings, how is the context decided?
+and can entries be added in bulk rather than one at a time?*
+
+### Added
+
+- **A term can have several meanings, and you can say which one.** Every entry is now
+  keyed by *(target language, source term, scene, conditions)*. The key used to be
+  *(target language, source term)*, which made the question unaskable rather than
+  unanswered: a second meaning landed on the first one's key and was discarded **in
+  silence** — no warning, no counter, and no way to find out except by noticing a
+  translation that never changed. Measured before the fix, with one file holding two
+  meanings for `bank`:
+
+  ```
+  file:     "bank": [ {"target": "银行", "domain": "finance"},
+                      {"target": "岸",  "domain": "geography"} ]
+  loaded:   5 entries, one of them for "bank" -> 银行
+  reported: nothing
+  ```
+- **Scenes** (`domain` on an entry) are how one term is answered differently per
+  situation: `bank` is 银行 on a finance screen and 岸 by a river. The user selects the
+  active scene with the new **`translation.scene`** setting, the desktop top bar next to
+  目标语言, or `--scene NAME`; empty means no preference, which is the old behaviour
+  exactly. **Layer still outranks scene** — the user's own file is their word on the
+  matter, and a scene tag on a shipped entry must not override it.
+- **Conditions** on an entry: `when_line` (regex over the whole recognised line),
+  `when_near` (words that must appear in the line *outside* the matched term),
+  `when_window` (regex against the captured window's title). All of them must hold; an
+  entry that requires a window is not applied to text that came from a fixed region, so
+  a scene-specific term cannot leak into a screen that has no title to match.
+- **Conflicts are visible.** When two entries are genuinely the same — same term,
+  language, scene and conditions — but give different translations, the winner is still
+  deterministic and the loser is now *reported*: printed when the corpus loads, counted by
+  `--list-scenes`, and shown in the panel's 语料库 tab with the reason. Two entries that
+  agree on the translation are not reported: that is the same statement written twice, and
+  a diagnostic that cries wolf is a diagnostic nobody reads.
+- **Bulk entry got its fourth, fifth and sixth paths.** The panel takes **pasted text**
+  (not only a file) and can **preview an import** before writing it; recorded corrections
+  can be **promoted into corpus entries** in bulk (panel button, or
+  `--promote-corrections`) — the corrections file and the corpus stay separate, but a user
+  who has just fixed thirty lines while watching should not have to retype them; and the
+  command line gained `--import-corpus FILE`, `--export-corpus FILE`,
+  `--promote-corrections`, `--list-scenes`, `--scene NAME`, `--corpus-format`,
+  `--corpus-scope`, `--keep-existing` and `--dry-run`, so a headless machine or a small
+  device can manage vocabulary without ever opening a browser. `--dry-run` is answered by
+  the same code that performs the real operation, and `selfcheck_library` asserts the file
+  is untouched afterwards.
+- **The panel shows what it can tell you and hides nothing**: each row's scene and
+  conditions (with a marker on the rows that are scene-specific or conditional), the
+  conflicts that mean an entry is not being used, the active scene, the precedence rule,
+  and a button that turns recorded corrections into entries. A language column on the
+  corrections table says which language each correction was written for, and marks the ones
+  that were written for none.
+- **The whole batch surface understands scenes and conditions.** CSV/TSV columns are now
+  `source,target,lang,pos,domain,when_line,when_near,when_window,note` (Chinese headers
+  too), and a source with more than one answer exports as a **list**, which is the only
+  shape a JSON object can carry it in.
+
+### Fixed
+
+- **The corpus editor could not read its own file, and destroyed it on the next write.**
+  Found while adding scenes, and worse than the feature that found it. A term answered
+  twice — two languages, or two scenes — is written as a *list* of objects, because a JSON
+  object cannot hold one key twice. The writer produced that list and the reader only
+  understood objects, so:
+
+  ```
+  put("void", "虚空", lang="zh-CN")
+  put("void", "虚空界", lang="ja")
+  len(editor)      -> 0      # both rows gone from the table, immediately
+  file on disk     -> both rows, intact
+  next save        -> the empty table, written over them
+  ```
+
+  `put` saves and reloads, so this happened on the second write rather than at the next
+  start. The engine still read the file correctly (its loader has always understood
+  lists), which is why every existing check passed: they asked whether the *engine* could
+  use the file, never whether the *editor* could. Reading, writing, importing and exporting
+  all handle the list form now, and `selfcheck_library` asks the editor what it can see.
+- **Two caches served one situation's answer in another**, both keyed on the source text
+  alone. Switching the target language inside the recent-translation memory's 10 s window
+  handed back the *previous* language's text, and a whole-line correction typed while
+  translating into Chinese kept winning after a switch to Japanese — a Chinese line
+  delivered to someone who asked for Japanese, at full confidence, with no way to tell.
+  Corrections now record the language they were written for; a correction with none (every
+  file written before this release) still applies to any target, and the panel lists those
+  as untagged so the user can label them. The memories now key on *what the loaded
+  vocabulary can actually distinguish* — the target language always, the scene only if some
+  entry names one, the window only if some entry tests one — so a corpus written before any
+  of this behaves exactly as it did and does not fragment its cache over dimensions that
+  cannot change an answer.
+- **A second meaning distinguished only by conditions was still lost.** Conditions are part
+  of what makes two entries rivals, so leaving them out of the key meant a term whose two
+  meanings were told apart purely by `when_line`/`when_near`/`when_window` — the case the
+  conditions exist for — collapsed onto one key and lost one meaning. Four things identify
+  an entry now, and the collision is only reported when the two would answer differently.
+- **The editor's row identity was one dimension short of the engine's**, and that is the
+  same data loss in a second place. The engine keys on (language, term, scene, *conditions*);
+  the editor keyed on (term, language, scene). So two meanings of one term in one scene,
+  told apart only by their conditions, were **one row** in the panel: writing the second
+  replaced the first, and a hand-written file holding both had one dropped the next time
+  anything was saved from there. Found by a probe rather than by a user, while wiring the
+  panel — the editor has to be able to express what the engine supports, and nothing was
+  checking that it could. Conditions are in the row key now, on both sides.
+- **`format: "auto"` did not exist, and the page therefore sniffed the format itself.**
+  Two answers to one question, and the one in the page could not be used by the command
+  line: a plain `.txt` glossary went down the "anything else is JSON" path and failed on a
+  perfectly readable two-column list. Sniffing now lives once, in `library.sniff_format`
+  (JSON if the text starts with a brace or bracket, TSV if the first line has a tab, CSV
+  otherwise), the engine accepts `auto`, and the CLI defaults to it for any extension it
+  does not recognise.
+- **`find(term, language, scene)` missed a row that carried conditions**, so "the row for
+  this term in this scene" answered nothing whenever that row happened to be conditional.
+  It now falls back to a unique match — and returns nothing, rather than guessing, when two
+  rows share the term and scene, which is what makes "delete this meaning" well defined.
+- **`Corrections.stats()` was dead code.** It computed `corrections_untagged` — how many of
+  the user's corrections apply under *every* target language, which is the surprising thing
+  about an untagged correction — and nothing called it, so no surface could say it. It is
+  published through the translator's stats now (both translators: the class the application
+  actually builds, and the corpus-only one), which a self check caught by reading a real
+  `Session`'s info rather than a stand-in's.
+- **`selfcheck_deps` reported a local script as a third-party package.** Its import walker
+  followed sibling modules only when they were named `selfcheck_*`, so `selfcheck_library`'s
+  in-process run of the CLI showed up as "needs watashi_proto" — an import that does not
+  exist. Any sibling is followed now, which is what "this check's imports" means.
+- **A settings check certified commands from a hand-written list.** `selfcheck_settings`
+  carried its own copy of the command names, which went stale the moment a field was added;
+  a stale list in a check is worse than none, because it certifies a command that does not
+  exist. It now asks the engine what it declares (`events.ALL_COMMANDS`), and `selfcheck_web`
+  — which has a real `Session` — asserts that every live field's command is one the engine
+  **actually implements** (`Session.command_names`, newly public for exactly this).
+- **`session.library_put` looked up the previous row by source alone**, which always missed
+  once the key had three parts, quietly costing the "was …" in the report it prints.
+- **`corrections_untagged` counted only whole-line corrections**, while the panel marked
+  every row without a language. Two answers to one question — and the kind of disagreement
+  that makes a diagnostic stop being trusted. It counts both scopes now (the whole-line
+  subset is published separately as `corrections_untagged_lines`, because that is the subset
+  loose matching can actually engage).
+
+### Testing
+
+- New `selfcheck_senses` (74 checks): two meanings of one word both load; each scene
+  answers with its own meaning and an unknown scene does not; the user's own untagged entry
+  beats a shipped entry tagged with the current scene; within one layer the scene does
+  decide; conditions select on the line, the company and the window, and a condition that
+  names the term itself does not match that term alone; a corpus with no scenes keys its
+  caches on the target language alone; a genuine collision is reported once with both sides
+  named and the layer that decided it; the two caches that used to serve the wrong
+  situation's answer are asserted directly; corrections are per-language, round-trip
+  through the file, and untagged ones are counted where a surface can read them; promotion
+  produces entries the corpus loader already understands, and does so through a real
+  `Session` (record a correction the way the editor does, promote it, and require the engine
+  to answer with it while the corrections file is left byte-identical).
+- **The wiring is asserted end to end, not just the pieces.** `selfcheck_senses` runs a real
+  session over two frames of the same line, switches the scene mid-run, and requires the
+  subtitle to change: a recent-translation memory handed the target language but not the
+  scene would serve the first scene's answer to the second, and every unit assertion above
+  would still pass. Removing the scene from the pipeline's cache scope fails exactly that
+  assertion, with `second=虚空界 holds (reused=1)`.
+- **The scan cost is measured, not assumed.** `selfcheck_senses` times 300 translations of
+  the same line against a 200-entry corpus with and without senses: medians of **0.33–0.36
+  ms on both sides** across six runs, i.e. the difference is inside the run-to-run noise
+  rather than a cost this feature added. The fast path is one dict get and, for a key with
+  a single sense and no conditions, one length comparison — everything else only happens
+  when a corpus actually asks for it.
+- Three mutations confirm the new assertions have teeth: dropping conditions from the entry
+  key, ranking the scene above the layer, and letting the recent-translation memory ignore
+  its scope each fail the suite (7, 1 and 2 assertions respectively).
+- `selfcheck_library` grew to 130 checks, including the round trip the editor had never been
+  asked about: two answers for one source survive its own save, a fresh reader sees them,
+  and saving again does not erase them; two meanings told apart only by their conditions are
+  two rows, findable by what the user typed, and the scene alone is reported as ambiguous
+  rather than guessed; and the command-line corpus paths, which had no coverage at all
+  before — a dry run that writes nothing, a real import with the scenes and conditions from
+  the CSV columns intact, `--list-scenes`, and an export that imports back to the same rows.
+- `selfcheck_web` grew from 64 to 157: the editor's endpoints end to end, the panel's
+  `running` contract, the page-liveness assertions, one term with two meanings through the
+  HTTP surface, a collision reported where a surface can read it, an import preview that
+  leaves the library file byte-identical (with the same import without `dry_run` asserted to
+  write, so the preview check cannot pass vacuously), promotion through the real correction
+  path, and the language each correction was written for.
+- `selfcheck_desktop` grew to 108: the scene control is in the top bar, applying it sends
+  the command with what the box says, an emptied box clears the selection, and the scene a
+  restart actually has is what the box shows.
+- The suite now runs **1119 checks** (916 headless, 203 with a display).
+
+### Known limitations (unchanged, and worth repeating)
+
+- Nothing here has been looked at by a human: this release's UI changes are asserted
+  structurally and by photographing the windows with the project's own OCR, which is not
+  the same thing as someone deciding it looks right.
+- A scene is selected by the user, never inferred. Nothing reads the window title to guess
+  a scene; `when_window` can test one, but the title only exists for a window-following
+  capture, and a fixed region has none.
+- Conditions see one line. There is no cross-line or cross-frame context: `when_near` looks
+  within the recognised line only, on purpose, because anything else would have to become
+  part of every cache key in the engine.
+- The Linux and macOS legs remain unverified, as does the C++ mainline port.
+
 ## [0.0.6a] -- 2026-09-13 -- 测试版 (pre-release)
 
 Labelled `0.0.6a` because that is what it is from the outside: the first release after

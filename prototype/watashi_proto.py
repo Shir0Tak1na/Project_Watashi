@@ -93,6 +93,27 @@ def build_parser() -> argparse.ArgumentParser:
     translation.add_argument("--llm-model", type=str, default=None, help="path to a local GGUF model (optional)")
     translation.add_argument("--nmt-model", type=str, default=None, help="path to a local CTranslate2 model directory")
     translation.add_argument("--no-nmt", action="store_true", default=None, help="disable the local model, corpus + rules only")
+    translation.add_argument("--scene", type=str, default=None,
+                             help="which scene's term entries win, e.g. finance; empty clears it")
+    translation.add_argument("--list-scenes", action="store_true", default=None,
+                             help="list the scenes the corpus declares, plus any conflicts, and exit")
+
+    corpus_group = parser.add_argument_group("corpus files")
+    corpus_group.add_argument("--import-corpus", type=str, default=None, metavar="FILE",
+                              help="bulk-add entries from a JSON/CSV/TSV file and exit")
+    corpus_group.add_argument("--export-corpus", type=str, default=None, metavar="FILE",
+                              help="write the corpus out as a file and exit")
+    corpus_group.add_argument("--promote-corrections", action="store_true", default=None,
+                              help="turn recorded 实时纠正 corrections into corpus entries and exit")
+    corpus_group.add_argument("--corpus-format", choices=["json", "csv", "tsv"], default=None,
+                              help="format for --import-corpus / --export-corpus (default: by extension, else json)")
+    corpus_group.add_argument("--corpus-scope", type=str, default=None,
+                              help="--export-corpus: 'user' (default) or 'effective'; "
+                                   "--promote-corrections: 'line', 'term' or empty for all")
+    corpus_group.add_argument("--keep-existing", action="store_true", default=None,
+                              help="import/promote: skip rows that already exist instead of replacing them")
+    corpus_group.add_argument("--dry-run", action="store_true", default=None,
+                              help="import/promote: report what would happen and write nothing")
 
     overlay = parser.add_argument_group("overlay")
     overlay.add_argument("--mode", choices=["bar", "panel", "both", "none"], default=None, help="what to display")
@@ -225,6 +246,10 @@ def apply_overrides(config: AppConfig, args: argparse.Namespace) -> AppConfig:
         config.translation["target"] = args.target
     if args.source is not None:
         config.translation["source"] = args.source
+    if args.scene is not None:
+        # "" is a real value here: it clears the selection, which is the only way to get
+        # back to "no scene preferred" from a config file that names one.
+        config.translation["scene"] = args.scene.strip()
     if args.llm_model is not None:
         config.translation["llm_model"] = args.llm_model
     if args.nmt_model is not None:
@@ -449,6 +474,108 @@ def main(argv: list[str] | None = None) -> int:
             return 1
         for change in apply_profile(config, profile):
             print(f"  profile {profile.name}: {change}")
+
+    if args.list_scenes:
+        from watashi.session import build_corpus
+
+        corpus = build_corpus(config)
+        scenes = corpus.domains
+        print(f"scenes declared by the corpus ({len(scenes)}):")
+        for name in scenes:
+            print(f"  {name}")
+        if not scenes:
+            print("  (none: no entry declares a scene, so the scene setting has no effect)")
+        current = str(config.translation.get("scene") or "")
+        print(f"current scene: {current or '(none selected)'}")
+        for item in corpus.conflicts:
+            print(
+                f"  conflict: {item['source']!r} kept {item['kept']['target']!r} "
+                f"({item['kept']['origin']}), dropped {item['dropped']['target']!r} "
+                f"({item['dropped']['origin']}) -- {item['why']}"
+            )
+        return 0
+
+    if args.import_corpus:
+        from watashi.library import Library, library_path, parse_import
+
+        path = Path(args.import_corpus)
+        if not path.is_file():
+            print(f"no such file: {path}")
+            return 1
+        fmt = args.corpus_format or path.suffix.lstrip(".").lower() or "auto"
+        # "auto" for anything whose extension is not one of the known three, because a
+        # plain .txt glossary is the most likely thing a user has, and defaulting it to
+        # JSON guarantees a confusing failure on a perfectly readable two-column list.
+        if fmt not in ("json", "csv", "tsv"):
+            fmt = "auto"
+        entries, problems = parse_import(path.read_text(encoding="utf-8-sig"), fmt)
+        for problem in problems[:10]:
+            print(f"  note: {problem}")
+        if not entries:
+            print(f"could not read any entries from {path} (format {fmt!r})")
+            return 1
+        store = Library(library_path(config))
+        result = store.merge(entries, replace=not args.keep_existing, dry_run=args.dry_run)
+        verb = "would import" if args.dry_run else "imported"
+        print(
+            f"{verb} {len(entries)} entries from {path}: added {result['added']}, "
+            f"updated {result['updated']}, skipped {result['skipped']}"
+            + (" (nothing written: --dry-run)" if args.dry_run else "")
+        )
+        print(f"  user corpus file: {store.path}")
+        return 0
+
+    if args.promote_corrections:
+        from watashi.correct import corrections_path
+        from watashi.correct import Corrections
+        from watashi.library import (
+            Library,
+            entries_from_payload,
+            library_from_corrections,
+            library_path,
+        )
+
+        corrections_store = Corrections(corrections_path(config))
+        if not len(corrections_store):
+            print("no corrections recorded yet; correct a line first")
+            return 1
+        scope = args.corpus_scope or None
+        payload = library_from_corrections(
+            corrections_store, lang=config.target_lang, scope=scope
+        )
+        entries, problems = entries_from_payload(payload)
+        for problem in problems[:10]:
+            print(f"  note: {problem}")
+        store = Library(library_path(config))
+        result = store.merge(entries, replace=not args.keep_existing, dry_run=args.dry_run)
+        verb = "would promote" if args.dry_run else "promoted"
+        print(
+            f"{verb} {len(entries)} correction(s) into entries: added {result['added']}, "
+            f"updated {result['updated']}"
+            + (" (nothing written: --dry-run)" if args.dry_run else "")
+        )
+        print(f"  corrections file: {corrections_store.path}")
+        print(f"  user corpus file: {store.path}")
+        return 0
+
+    if args.export_corpus:
+        from watashi.library import Library, effective_entries, library_path, to_export
+        from watashi.session import build_corpus
+
+        store = Library(library_path(config))
+        rows = effective_entries(
+            build_corpus(config), store, args.corpus_scope or "user"
+        )
+        fmt = args.corpus_format or "json"
+        text = to_export(rows, fmt)
+        target = Path(args.export_corpus)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        # utf-8-sig for the spreadsheet formats, matching what the panel downloads:
+        # Excel reads Chinese as mojibake without the BOM.
+        encoding = "utf-8-sig" if fmt in ("csv", "tsv") else "utf-8"
+        target.write_text(text, encoding=encoding)
+        print(f"exported {len(rows)} entries to {target} ({fmt}, {encoding})")
+        return 0
 
     if args.selftest:
         from watashi.session import build_ocr, build_translator

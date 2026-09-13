@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
@@ -129,8 +129,28 @@
       .pill.over { background: #16283d; color: #8fb8e0; }
       .pill.ship { background: #1d2228; color: #8a9aa8; }
       .pill.off { background: #3a2a12; color: #e0b070; }
+      .pill.scene { background: #1a2440; color: #9db8ff; }
+      .pill.cond { background: #2a2216; color: #e0b070; }
+      /* A correction with no language applies under every target language, which is a
+         surprising thing to discover from behaviour alone, so it is marked visibly in the
+         corrections table rather than left as an empty cell. */
+      .pill.untagged { background: #3a2a12; color: #e0b070; }
+      /* A row that only applies in one scene, or only when a condition holds, is a
+         different claim from a plain entry, so it gets a marker down the left edge of
+         the row -- a chip in one cell is easy to miss in a table this dense. */
+      .libtable tr.sense td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
+      .libtable .sensecell { display: flex; flex-direction: column; gap: 3px; }
+      .libtable .sensecell input { width: 100%; }
       .librow { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
       .librow input, .librow select { width: auto; }
+      textarea { background: #0d141b; color: var(--text); border: 1px solid var(--line);
+                 border-radius: 6px; padding: 6px 9px; font-size: 12px; width: 100%;
+                 min-height: 84px; font-family: var(--mono); }
+      #libmsg.preview, .muted.preview { color: var(--warn); }
+      .warnbox { border: 1px solid #5a3a12; background: #241a0c; color: #f0c483;
+                 border-radius: 6px; padding: 8px 10px; font-size: 12px; margin-bottom: 10px; }
+      .warnbox b { color: #ffd9a0; }
+      .warnbox ul { margin: 6px 0 0 18px; padding: 0; }
     </style>
 
     <div class="card">
@@ -142,11 +162,31 @@
         「停用」则是让出厂的某条整条不生效。
         改完立刻生效（引擎按修改时间热加载，这里写完后会强制重载一次），不需要重启。
       </p>
+      <p class="muted" style="margin:0 0 12px">
+        <b>同一个词有好几条词条时，到底用哪一条</b>（这是引擎 <code>translate._rank</code> 的实际顺序）：
+        <br>① <b>层级</b>：你写的（user） &gt; domain &gt; general。你自己的词条永远压过出厂词条，
+        <b>哪怕出厂那条标了你正在用的场景</b>。
+        <br>② <b>场景</b>：标了当前场景的 &gt; 没标场景的 &gt; 标了别的场景的。没选场景时这一项对所有条目相同，
+        也就等于不偏袒。
+        <br>③ 词条自己的 <code>priority</code>（数字大的赢）。
+        <br>④ 以上都相同，就按 <code>origin</code>、场景名、译文的字典序收尾，
+        所以答案只由词条内容决定，和文件读取顺序无关。
+        <br><b>条件是筛子，不是排名</b>：<code>when_line</code> / <code>when_near</code> /
+        <code>when_window</code> 不成立的词条根本不进入比较（不成立就是不可用），
+        只有成立的那些才按上面四条排序。
+        场景在「全部设置 → 当前场景（<code>translation.scene</code>）」里切换，当前场景：
+        <span class="pill scene" id="libscene">—</span>
+      </p>
+      <div id="libconflicts"></div>
       <div class="row">
         <input id="libfilter" placeholder="筛选源词或译文…" style="flex:1">
         <label class="muted"><input type="checkbox" id="libshowhidden"> 显示停用的</label>
       </div>
       <div id="libtable"></div>
+      <p class="muted" style="margin:8px 0 0">
+        左侧有蓝色竖线的行是「有条件的词条」：它只在你选中的场景里、或条件成立时才生效，
+        和同名的通用词条不是同一条。点「编辑」可以改场景和三个条件（<code>when_near</code> 用逗号分隔）。
+      </p>
     </div>
 
     <div class="card">
@@ -155,12 +195,33 @@
         <input id="libsource" placeholder="原文（要译的词或整句）" style="min-width:260px">
         <input id="libtarget" placeholder="译文" style="min-width:220px">
         <input id="liblang" placeholder="语言，如 zh-CN / ja（留空=任意目标）" style="min-width:220px">
+        <input id="libdomain" list="libscenes" placeholder="场景，如 finance（留空=任何场景）" style="min-width:220px">
         <input id="libnote" placeholder="备注（可选）" style="min-width:180px">
         <button class="act" id="libadd">写入</button>
         <span class="muted" id="libmsg"></span>
       </div>
+      <div class="librow" style="margin-top:6px">
+        <input id="libwhenline" placeholder="条件 · 整行正则，如 river" style="min-width:200px">
+        <input id="libwhennear" placeholder="条件 · 附近词，逗号分隔，如 river, shore" style="min-width:250px">
+        <input id="libwhenwindow" placeholder="条件 · 窗口标题正则，如 Novel" style="min-width:220px">
+      </div>
+      <!-- The known scenes come from GET /api/library's "scenes" (your rows plus the
+           shipped corpora). A datalist suggests them without forbidding a new name: the
+           first time a user invents a scene, that name is the only one that exists. -->
+      <datalist id="libscenes"></datalist>
       <p class="muted" style="margin:8px 0 0">
         原文填出厂库里已有的词，这里保存的就是一条覆盖；填新词就是新增。
+        <b>一个词有两种意思，就写两条，用「场景」或「条件」把它们分开</b>：
+        场景是「现在在讲什么」（你选，全局设置），条件是引擎在行里、窗口里看得到的证据（自动判断）。
+        <br>语言、场景、条件三者都相同、译文却不同的两条同名词条，是同一句话说了两遍：
+        引擎只能留一条，并在下面的「冲突」里告诉你丢的是哪条。条件里写正则时按整行匹配，
+        例如 <code>river</code> 会命中任何含 river 的一行；<code>when_near</code> 只看被匹配的词
+        之外的部分，所以「bank」旁边的另一个「bank」不算数。
+        <br><b>这里写的一条词条，是按「原文 + 语言 + 场景 + 条件」定位的</b>（和引擎一致），
+        所以同一个场景里两条只有 <code>when_*</code> 不同的同名词条可以并存——
+        这正是没有场景时表达「一个词两种意思」的写法。
+        反过来，改「语言 / 场景 / 条件」等于把它变成<b>另一条</b>：面板会写新的一条并删掉旧的那条，
+        删除一条时也会带上它自己的场景与条件，否则引擎不知道你指的是哪个意思。
       </p>
     </div>
 
@@ -169,13 +230,23 @@
       <div class="librow">
         <input type="file" id="libfileinput" accept=".json,.csv,.tsv,.txt">
         <select id="libimportfmt">
-          <option value="auto">按扩展名自动判断</option>
+          <option value="auto">按内容自动判断</option>
           <option value="json">JSON</option>
           <option value="csv">CSV</option>
           <option value="tsv">TSV</option>
         </select>
         <label class="muted"><input type="checkbox" id="libreplace" checked> 覆盖同名词条</label>
         <button class="act" id="libimport">导入</button>
+        <button class="act" id="libpreview">预览（不写入）</button>
+      </div>
+      <p class="muted" style="margin:10px 0 4px">
+        <b>直接粘贴</b>：一行一条，<code>原文,译文</code>（或制表符分隔），也可以带表头多列；
+        整段 JSON 也认。不必先存成文件。
+      </p>
+      <textarea id="libpaste" placeholder="aether,以太&#10;void,虚空&#10;voidblade,虚空之刃"></textarea>
+      <div class="librow" style="margin-top:6px">
+        <button class="act" id="libpastebtn">导入粘贴内容</button>
+        <button class="act" id="libpastepreview">预览粘贴内容（不写入）</button>
       </div>
       <div class="librow" style="margin-top:10px">
         <select id="libexportfmt">
@@ -192,19 +263,55 @@
       </div>
       <p class="muted" style="margin:10px 0 0">
         导入的 JSON 支持语料库本身的写法（<code>{"lang": "zh-CN", "entries": {...}}</code> 或直接的键值表），
-        所以能当语料库用的文件都能直接导进来；CSV/TSV 认 <code>source,target,lang,pos,domain,note</code> 表头，
-        没有表头时按两列「原文,译文」读。
+        所以能当语料库用的文件都能直接导进来；CSV/TSV 认
+        <code>source,target,lang,pos,domain,when_line,when_near,when_window,note</code> 表头，
+        没有表头时按两列「原文,译文」读，多余列忽略。
         其它格式（例如从别处导出的术语表）由插件的 <code>corpus_loader</code> 扩展点处理。
+        <br><b>「预览」和「导入」调的是同一个接口，只多一个 <code>dry_run</code></b>：
+        预览会用真正的导入代码算一遍「会新增几条、更新几条、跳过几条」，
+        然后什么都不写。所以预览的结果和真导入的结果不会互相打架——
+        但预览<b>不改动语料库</b>，看到数字满意了才点「导入」。
+        <br>格式选「按内容自动判断」时，判断在引擎里做（<code>{</code> 或 <code>[</code> 开头=JSON，
+        首行含制表符=TSV，其余=CSV），页面只把 <code>auto</code> 原样发过去。
+        一处判断，命令行和面板同一套规则——之前是页面嗅探、引擎拒收 <code>auto</code>，
+        同一个问题两个答案。
       </p>
     </div>
 
     <div class="card">
       <h2>实时纠正 <span class="pill" id="xsize">—</span></h2>
       <p class="muted" style="margin:0 0 10px" id="xfile">
-        只读。纠正在看到错译的地方做：在字幕上选中那一行改成你要的译文，记录就写进同一个用户层文件，
-        这一帧立刻改过来，以后同样的句子也用它。这里只用来查看。
+        纠正在看到错译的地方做：在字幕上选中那一行改成你要的译文，记录就写进用户层的
+        <code>corrections.json</code>，这一帧立刻改过来，以后同样的句子也用它。这里查看记录，并可以把它们提升成词条。
+        <br>每条记录都带着它写下来时的<b>目标语言</b>：标了语言的只在译到那个语言时生效。
+        <span class="pill untagged">未标注</span> 的记录<b>对每个目标语言都生效</b>——
+        升级前写下的文件里全是这种，所以引擎必须继续接受它们：拒绝等于升级时静默丢掉你自己写的东西。
+        <br>要让一条未标注的记录只对一个语言生效，把目标语言切到你要的那个，然后<b>重新纠正同一条</b>
+        （<code>correct</code> 只会盖上当时选中的语言，所以这里没有「给已有记录改语言」的按钮——
+        引擎确实没有那个命令），或者直接编辑 <code>corrections.json</code> 给它补一个 <code>"lang"</code>。
       </p>
       <div id="xentries"></div>
+      <div class="librow" style="margin-top:10px">
+        <select id="xpromotescope">
+          <option value="">全部纠正</option>
+          <option value="term">只提升词语（term）</option>
+          <option value="line">只提升整句（line）</option>
+        </select>
+        <input id="xpromotelang" placeholder="语言（留空=当前目标语言）" style="min-width:220px">
+        <label class="muted"><input type="checkbox" id="xpromotereplace" checked> 覆盖同名词条</label>
+        <button class="act" id="xpromotepreview">预览提升（不写入）</button>
+        <button class="act" id="xpromote">提升为词条</button>
+        <span class="muted" id="xpromotemsg"></span>
+      </div>
+      <p class="muted" style="margin:10px 0 0">
+        <b>「提升」到底做了什么</b>：纠正记录和语料库是<b>两个文件</b>，它们各自独立——
+        <code>corrections.json</code> 里是你对着屏幕上某一句话做的修改，
+        <code>library.json</code> 里是词条。提升就是<b>把纠正复制成语料库词条</b>：
+        纠正本身留在原处、照旧按它自己的规则命中，新词条则按词条规则对整段文本生效。
+        <br>两者不是同一个判断：整句纠正只对那一句负责（<code>scope=line</code>），
+        提升成词条后，凡是出现同样文字的地方都会用它；词语纠正只对一个词负责。
+        所以<b>先「预览」看清会新增/覆盖几条，再决定</b>。提升不改写纠正文件，也不删除任何纠正。
+      </p>
     </div>
   </section>
 
@@ -725,16 +832,124 @@ function libMatches(entry, filter) {
          entry.target.toLowerCase().includes(filter);
 }
 
+// The three conditions in one sentence. Four more columns would make a table that is
+// already dense unreadable, and a user asks "why does this one apply here", not "what
+// is the raw value of when_near".
+function conditionText(entry) {
+  const parts = [];
+  if (entry.when_line) parts.push("当行含 /" + entry.when_line + "/");
+  if (entry.when_near) parts.push("当附近有 " + entry.when_near);
+  if (entry.when_window) parts.push("当窗口 ~ /" + entry.when_window + "/");
+  return parts.join(" · ");
+}
+
+function sceneCell(entry) {
+  const cell = document.createElement("td");
+  const scene = (entry.domain || "").trim();
+  const conditions = conditionText(entry);
+  if (!scene && !conditions) {
+    const none = document.createElement("span");
+    none.className = "muted";
+    none.textContent = "通用";
+    cell.appendChild(none);
+    return cell;
+  }
+  if (scene) {
+    const chip = document.createElement("span");
+    chip.className = "pill scene";
+    chip.textContent = scene;
+    cell.appendChild(chip);
+  }
+  if (conditions) {
+    const chip = document.createElement("span");
+    chip.className = "pill cond";
+    chip.style.marginLeft = scene ? "4px" : "0";
+    chip.textContent = "条件";
+    chip.title = conditions;
+    cell.appendChild(chip);
+    const line = document.createElement("div");
+    line.className = "muted";
+    line.textContent = conditions;
+    cell.appendChild(line);
+  }
+  return cell;
+}
+
+// Every scene name the corpus knows: the user's rows plus whatever the shipped corpora
+// declare, which is what makes the picker useful on the first run.
+function renderScenes(names) {
+  const list = $("libscenes");
+  list.innerHTML = "";
+  (names || []).forEach((name) => {
+    const option = document.createElement("option");
+    option.value = name;
+    list.appendChild(option);
+  });
+}
+
+// The one diagnostic that answers "why is my second meaning not being used". Without it
+// the lost entry looks exactly like a corpus that loaded cleanly.
+function renderConflicts(conflicts) {
+  const box = $("libconflicts");
+  box.innerHTML = "";
+  box.className = "";
+  if (!conflicts || !conflicts.length) return;
+  box.className = "warnbox";
+  const head = document.createElement("div");
+  head.innerHTML = "";
+  const strong = document.createElement("b");
+  strong.textContent = "⚠ " + conflicts.length + " 条词条没有生效";
+  head.appendChild(strong);
+  head.appendChild(document.createTextNode(
+    "：它们和另一条词条撞在同一个「词 + 语言 + 场景 + 条件」上，引擎只能留一条" +
+    "（按 层级 → 场景 → priority 决定）。"));
+  box.appendChild(head);
+
+  const list = document.createElement("ul");
+  conflicts.slice(0, 5).forEach((item) => {
+    const li = document.createElement("li");
+    const kept = item.kept || {}, dropped = item.dropped || {};
+    li.textContent = item.source + "：" + (kept.target || "?") + "（" +
+      (kept.layer || "?") + "，" + (kept.origin || "?") + "）留下了，" +
+      (dropped.target || "?") + "（" + (dropped.layer || "?") + "，" +
+      (dropped.origin || "?") + "）没被用" +
+      (item.domain ? "；场景 " + item.domain : "；无场景") +
+      (item.lang ? " / " + item.lang : " / 任意语言");
+    list.appendChild(li);
+  });
+  box.appendChild(list);
+  if (conflicts.length > 5) {
+    const more = document.createElement("div");
+    more.className = "muted";
+    more.textContent = "（还有 " + (conflicts.length - 5) + " 条同类冲突）";
+    box.appendChild(more);
+  }
+  const fix = document.createElement("div");
+  fix.style.marginTop = "6px";
+  fix.textContent = "修法：给它们不同的「场景」，或者加上「条件」" +
+    "（when_line / when_near / when_window），让两条各自只在对应的情形下生效；" +
+    "如果两条其实是一个意思，删掉多余的那条。引擎里冲突就是「同词、同语言、同场景、同条件」" +
+    "被写了两遍，第二条只能被丢掉。";
+  box.appendChild(fix);
+}
+
 function renderLibrary() {
   const data = LIBRARY;
   const mine = (data.entries || []).filter((e) => e.user && !e.suppressed);
+  const conflicts = data.conflicts || [];
   $("libsize").textContent =
     (data.active || 0) + " 条生效 · " + mine.length + " 条是你的" +
     (data.overriding ? "（其中 " + data.overriding + " 条覆盖了出厂）" : "") +
-    (data.suppressed ? " · 停用 " + data.suppressed + " 条" : "");
+    (data.suppressed ? " · 停用 " + data.suppressed + " 条" : "") +
+    (conflicts.length ? " · 冲突 " + conflicts.length + " 条" : "");
   $("libfile").textContent =
     "写入 " + (data.file || "?") + "；语料库语言：" + (data.languages || "未标注") +
     "（只有匹配当前目标语言的词条会被使用）";
+  $("libscene").textContent = INFO && INFO.scene
+    ? INFO.scene
+    : "未选（所有场景的词条同等适用）";
+  renderScenes(data.scenes || []);
+  renderConflicts(conflicts);
 
   const filter = $("libfilter").value.trim().toLowerCase();
   const showHidden = $("libshowhidden").checked;
@@ -747,9 +962,10 @@ function renderLibrary() {
   const table = document.createElement("table");
   table.className = "libtable";
   table.innerHTML =
-    "<thead><tr><th style='width:24%'>原文</th><th style='width:24%'>译文</th>" +
-    "<th style='width:9%'>语言</th><th style='width:13%'>状态</th>" +
-    "<th>来源</th><th style='width:22%'></th></tr></thead>";
+    "<thead><tr><th style='width:20%'>原文</th><th style='width:20%'>译文</th>" +
+    "<th style='width:8%'>语言</th><th style='width:22%'>场景 / 条件</th>" +
+    "<th style='width:12%'>状态</th>" +
+    "<th>来源</th><th style='width:18%'></th></tr></thead>";
   const body = document.createElement("tbody");
   rows.forEach((entry) => body.appendChild(libraryRow(entry)));
   table.appendChild(body);
@@ -766,6 +982,10 @@ function libraryRow(entry) {
   const tr = document.createElement("tr");
   if (entry.user) tr.classList.add("mine");
   if (entry.suppressed) tr.classList.add("hidden");
+  // A scene-specific or conditional meaning is a different claim from a plain entry, and
+  // the row has to look like one: this is the row the user is looking for when their
+  // second meaning "does not work".
+  if ((entry.domain || "").trim() || conditionText(entry)) tr.classList.add("sense");
 
   const source = document.createElement("td");
   source.textContent = entry.source;
@@ -806,8 +1026,11 @@ function libraryRow(entry) {
   const actions = document.createElement("td");
   actions.appendChild(libButton("编辑", () => editLibraryRow(tr, entry)));
   if (entry.user) {
+    // The row's full identity rides along -- language, scene *and* conditions -- because
+    // that is what the engine deletes by, and a term with two meanings has more than one
+    // row: without them the delete is refused as ambiguous and the button looks broken.
     actions.appendChild(libButton("删除", () => libraryCommand("library_delete",
-      { source: entry.source }, entry.source)));
+      identity(entry), entry.source)));
   } else if (entry.suppressed) {
     actions.appendChild(libButton("恢复", () => libraryCommand("library_restore",
       { source: entry.source }, entry.source)));
@@ -816,7 +1039,7 @@ function libraryRow(entry) {
       { source: entry.source }, entry.source)));
   }
 
-  tr.append(source, target, lang, state, origin, actions);
+  tr.append(source, target, lang, sceneCell(entry), state, origin, actions);
   return tr;
 }
 
@@ -827,6 +1050,22 @@ function libButton(label, handler) {
   button.style.marginRight = "4px";
   button.onclick = handler;
   return button;
+}
+
+// What makes two rows different: term, language, scene **and conditions**. Conditions are
+// part of the row's identity rather than decoration on it, so deleting a row and asking
+// "did this edit change which row it is?" both need all four. A panel that sent only the
+// term would make the engine guess between two meanings of one word, and guessing is how
+// the wrong meaning disappears.
+function identity(entry) {
+  return {
+    source: entry.source,
+    lang: entry.lang || "",
+    domain: entry.domain || "",
+    when_line: entry.when_line || "",
+    when_near: entry.when_near || "",
+    when_window: entry.when_window || "",
+  };
 }
 
 // Editing in place rather than in a separate dialog: the row being changed is the subject,
@@ -843,6 +1082,28 @@ function editLibraryRow(tr, entry) {
     cell.appendChild(input);
     tr.appendChild(cell);
   });
+
+  // Scene and conditions are editable here because they are *part of the entry*, not
+  // metadata: dropping them on save would turn "fix this row's translation" into "remove
+  // the reason this row was the right one" -- and the engine would then pick the other
+  // meaning of the term.
+  const sense = document.createElement("td");
+  sense.className = "sensecell";
+  [
+    ["domain", "场景（如 finance）", "list"],
+    ["when_line", "条件：整行正则（如 river）", null],
+    ["when_near", "条件：附近词，逗号分隔", null],
+    ["when_window", "条件：窗口标题正则", null],
+  ].forEach(([field, placeholder, kind]) => {
+    const input = document.createElement("input");
+    input.value = entry[field] || "";
+    input.placeholder = placeholder;
+    if (kind === "list") input.setAttribute("list", "libscenes");
+    inputs[field] = input;
+    sense.appendChild(input);
+  });
+  tr.appendChild(sense);
+
   const state = document.createElement("td");
   state.className = "muted";
   state.textContent = entry.overrides ? "将覆盖 " + entry.overrides : "新增";
@@ -853,14 +1114,39 @@ function editLibraryRow(tr, entry) {
   tr.appendChild(origin);
 
   const actions = document.createElement("td");
-  actions.appendChild(libButton("保存", () => libraryCommand("library_put", {
-    source: inputs.source.value,
-    target: inputs.target.value,
-    lang: inputs.lang.value,
-  }, inputs.source.value)));
+  actions.appendChild(libButton("保存", () => saveLibraryRow(entry, inputs)));
   actions.appendChild(libButton("取消", () => renderLibrary()));
   tr.appendChild(actions);
   inputs.target.focus();
+}
+
+async function saveLibraryRow(entry, inputs) {
+  const next = {
+    source: inputs.source.value.trim(),
+    target: inputs.target.value.trim(),
+    lang: inputs.lang.value.trim(),
+    domain: inputs.domain.value.trim(),
+    when_line: inputs.when_line.value.trim(),
+    when_near: inputs.when_near.value.trim(),
+    when_window: inputs.when_window.value.trim(),
+  };
+  const ok = await libraryCommand("library_put", next, next.source);
+  if (!ok) return;
+  // The engine keys a row on (term, language, scene, conditions): changing any of those
+  // four writes a *different* row, and the old one would still be there -- the table would
+  // show two rows for what the user thinks is one edit. So the old row is removed, named by
+  // its full identity (conditions included: one term can have two rows that differ only by
+  // them). Editing the *translation* moves nothing, because the identity is untouched.
+  const before = identity(entry);
+  const moved = entry.user && ["lang", "domain", "when_line", "when_near", "when_window"]
+    .some((field) => (before[field] || "") !== (next[field] || ""));
+  if (!moved) return;
+  const gone = await libraryCommand("library_delete", before, entry.source);
+  if (!gone) {
+    // Said rather than hidden: a leftover row is exactly what makes a user think the
+    // editor ignored their edit. The message from the engine names the rows it found.
+    $("libmsg").textContent += "（旧的那条没能删掉，表里可能还留着一条）";
+  }
 }
 
 async function libraryCommand(cmd, payload, label) {
@@ -896,14 +1182,78 @@ $("libadd").onclick = async () => {
   const ok = await libraryCommand("library_put", {
     source, target,
     lang: $("liblang").value.trim(),
+    // The scene and the three conditions are what let one term have two meanings; a form
+    // that could not write them would send the user to hand-edit JSON for the one case
+    // this feature exists for.
+    domain: $("libdomain").value.trim(),
+    when_line: $("libwhenline").value.trim(),
+    when_near: $("libwhennear").value.trim(),
+    when_window: $("libwhenwindow").value.trim(),
     note: $("libnote").value.trim(),
   }, source);
   if (ok) {
     $("libsource").value = "";
     $("libtarget").value = "";
     $("libnote").value = "";
+    $("libwhenline").value = "";
+    $("libwhennear").value = "";
+    $("libwhenwindow").value = "";
   }
 };
+
+/* ---- import: the same call for a file and for pasted text ---- */
+
+function formatFor(chosen) {
+  if (chosen && chosen !== "auto") return chosen;
+  // "auto" is handed to the engine rather than decided here. The page used to sniff --
+  // and the engine used to reject "auto" -- which was two answers to one question, and the
+  // one that lived in the page could not be used by the command line. `library.sniff_format`
+  // is the single authority now: JSON if the text starts with a brace or a bracket, TSV if
+  // the first line has a tab, CSV otherwise.
+  return "auto";
+}
+
+async function runImport(text, format, dryRun, label) {
+  if (!text.trim()) {
+    $("libmsg").textContent = "没有内容可导入。";
+    return false;
+  }
+  $("libmsg").classList.toggle("preview", !!dryRun);
+  $("libmsg").textContent = (dryRun ? "预览中… " : "导入中… ") + label;
+  let response, result;
+  try {
+    response = await fetch("/api/library/import", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        text, format,
+        replace: $("libreplace").checked,
+        dry_run: !!dryRun,
+      }),
+    });
+    result = await response.json();
+  } catch (exc) {
+    $("libmsg").textContent = "请求失败：" + exc;
+    return false;
+  }
+  if (!response.ok || !result.ok) {
+    $("libmsg").textContent = (dryRun ? "预览失败：" : "导入失败：") +
+      (result.detail || response.status);
+    log("导入失败（" + format + "）：" + (result.detail || response.status), true);
+    return false;
+  }
+  if (dryRun) {
+    // Said in words that cannot be mistaken for a write: a preview that looked like an
+    // import would teach the user to distrust the button that really writes.
+    $("libmsg").textContent = "预览（没有写入任何东西）：" + result.detail;
+    log("导入预览（" + format + "，" + label + "）：" + result.detail);
+    return true;
+  }
+  $("libmsg").textContent = "导入完成：" + result.detail;
+  log("导入 " + label + "（" + format + "）：" + result.detail);
+  await loadLibrary();
+  return true;
+}
 
 $("libimport").onclick = async () => {
   const file = $("libfileinput").files[0];
@@ -911,28 +1261,28 @@ $("libimport").onclick = async () => {
     $("libmsg").textContent = "先选一个文件。";
     return;
   }
-  let format = $("libimportfmt").value;
-  if (format === "auto") {
-    const name = file.name.toLowerCase();
-    format = name.endsWith(".csv") ? "csv" : name.endsWith(".tsv") ? "tsv"
-           : name.endsWith(".json") ? "json" : (name.split(".").pop() || "json");
-  }
   const text = await file.text();
-  $("libmsg").textContent = "导入中… " + file.name;
-  const response = await fetch("/api/library/import", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ text, format, replace: $("libreplace").checked }),
-  });
-  const result = await response.json();
-  if (!response.ok || !result.ok) {
-    $("libmsg").textContent = "导入失败：" + (result.detail || response.status);
-    log("导入失败：" + (result.detail || response.status), true);
+  await runImport(text, formatFor($("libimportfmt").value), false, file.name);
+};
+
+$("libpreview").onclick = async () => {
+  const file = $("libfileinput").files[0];
+  if (!file) {
+    $("libmsg").textContent = "先选一个文件，再预览。";
     return;
   }
-  $("libmsg").textContent = "导入完成：" + result.detail;
-  log("导入 " + file.name + "：" + result.detail);
-  await loadLibrary();
+  const text = await file.text();
+  await runImport(text, formatFor($("libimportfmt").value), true, file.name);
+};
+
+$("libpastebtn").onclick = async () => {
+  const text = $("libpaste").value;
+  await runImport(text, formatFor($("libimportfmt").value), false, "粘贴的内容");
+};
+
+$("libpastepreview").onclick = async () => {
+  const text = $("libpaste").value;
+  await runImport(text, formatFor($("libimportfmt").value), true, "粘贴的内容");
 };
 
 $("libexport").onclick = () => {
@@ -947,14 +1297,21 @@ $("libexport").onclick = () => {
   log("导出语料库：" + scope + " / " + format);
 };
 
-/* ---- 实时纠正（只读） ---- */
+/* ---- 实时纠正：查看，并可提升为词条 ---- */
 async function loadCorrections() {
   const data = await (await fetch("/api/corpus")).json();
   renderCorrections(data.corrections || []);
 }
 
 function renderCorrections(list) {
-  $("xsize").textContent = list.length ? list.length + " 条" : "暂无";
+  // A row without a `lang` key at all is the pre-release shape, and it means "every
+  // target language" rather than "unknown": the loader keeps those rows working on
+  // upgrade, and the panel shows them as 未标注 instead of leaving a blank cell that
+  // would read as "no information".
+  const untagged = list.filter((c) => !(c.lang || ""));
+  $("xsize").textContent = list.length
+    ? list.length + " 条" + (untagged.length ? " · " + untagged.length + " 条未标注" : "")
+    : "暂无";
   const box = $("xentries");
   box.innerHTML = "";
   if (!list.length) {
@@ -965,23 +1322,82 @@ function renderCorrections(list) {
     return;
   }
   const table = document.createElement("table");
-  table.innerHTML = "<thead><tr><th>原文</th><th>你的译文</th><th>范围</th><th>次数</th><th>本次命中</th></tr></thead>";
+  table.innerHTML = "<thead><tr><th>原文</th><th>你的译文</th><th>语言</th>" +
+    "<th>范围</th><th>次数</th><th>本次命中</th></tr></thead>";
   const body = document.createElement("tbody");
   list.forEach((c) => {
     const tr = document.createElement("tr");
-    tr.innerHTML = "<td></td><td></td><td><span class='pill'></span></td><td class='muted'></td><td class='muted'></td>";
+    tr.innerHTML = "<td></td><td></td><td></td><td><span class='pill'></span></td>" +
+      "<td class='muted'></td><td class='muted'></td>";
     tr.children[0].textContent = c.source;
     tr.children[1].textContent = c.target;
-    tr.children[2].firstChild.textContent = c.scope === "term" ? "词语" : "整句";
-    tr.children[3].textContent = c.count;
+    const lang = String(c.lang || "");
+    if (lang) {
+      tr.children[2].textContent = lang;
+    } else {
+      const pill = document.createElement("span");
+      pill.className = "pill untagged";
+      pill.textContent = "未标注";
+      pill.title = "没写语言：对每个目标语言都生效（升级前的记录就是这样）";
+      tr.children[2].appendChild(pill);
+    }
+    tr.children[3].firstChild.textContent = c.scope === "term" ? "词语" : "整句";
+    tr.children[4].textContent = c.count;
     // The hit count is the only evidence that a correction is doing anything at all:
     // a stored row that never matches looks exactly like a working one from the file.
-    tr.children[4].textContent = c.hits || 0;
+    tr.children[5].textContent = c.hits || 0;
     body.appendChild(tr);
   });
   table.appendChild(body);
   box.appendChild(table);
 }
+
+/* ---- 提升：把纠正记录复制成语料库词条 ---- */
+//
+// Two files, one button. The correction file is not consumed: promotion copies what a
+// human said about the lines they saw into entries the engine applies everywhere, which is
+// a broader claim, so it is always one deliberate click -- and it can be previewed first.
+async function promoteCorrections(dryRun) {
+  const msg = $("xpromotemsg");
+  const payload = {
+    lang: $("xpromotelang").value.trim(),
+    scope: $("xpromotescope").value,
+    replace: $("xpromotereplace").checked,
+    dry_run: !!dryRun,
+  };
+  msg.classList.toggle("preview", !!dryRun);
+  msg.textContent = dryRun ? "预览中…" : "提升中…";
+  let response, result;
+  try {
+    response = await fetch("/api/library/promote", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    result = await response.json();
+  } catch (exc) {
+    msg.textContent = "请求失败：" + exc;
+    return;
+  }
+  if (!response.ok || !result.ok) {
+    // "还没有任何纠正记录" and "没有 term 范围的纠正记录" arrive here, and they are the
+    // answer to "why did nothing happen" -- shown where the button is, not only in the log.
+    msg.textContent = (dryRun ? "预览失败：" : "提升失败：") + (result.detail || response.status);
+    log("提升纠正失败：" + (result.detail || response.status), true);
+    return;
+  }
+  if (dryRun) {
+    msg.textContent = "预览（没有写入任何东西）：" + result.detail;
+    log("提升预览：" + result.detail);
+    return;
+  }
+  msg.textContent = "已提升：" + result.detail;
+  log("提升纠正为词条：" + result.detail);
+  await loadLibrary();   // re-reads the corrections too, and the promoted rows are in it
+}
+
+$("xpromote").onclick = () => promoteCorrections(false);
+$("xpromotepreview").onclick = () => promoteCorrections(true);
 
 async function loadStats() {
   const s = await (await fetch("/api/stats")).json();

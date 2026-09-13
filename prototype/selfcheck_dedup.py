@@ -159,11 +159,20 @@ def main() -> int:
 
         def __init__(self) -> None:
             self.calls: list[str] = []
+            #: every context the pipeline passed, so the check can assert the pipeline
+            #: sends the scene and window rather than only the target language
+            self.contexts: list[object] = []
 
-        def translate(self, text: str, target_lang: str = "zh-CN"):  # noqa: ANN201
+        def translate(  # noqa: ANN201
+            self,
+            text: str,
+            target_lang: str = "zh-CN",
+            context: object = None,
+        ):
             from watashi.translate import Outcome, Span
 
             self.calls.append(text)
+            self.contexts.append(context)
             return Outcome(
                 source_text=text,
                 target_text=f"[{len(self.calls)}] {text}",

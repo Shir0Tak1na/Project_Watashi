@@ -55,6 +55,7 @@ from .events import (
     CMD_LIBRARY_EXPORT,
     CMD_LIBRARY_IMPORT,
     CMD_LIBRARY_LIST,
+    CMD_LIBRARY_PROMOTE,
     CMD_LIBRARY_PUT,
     CMD_LIBRARY_RESTORE,
     CMD_LIBRARY_SUPPRESS,
@@ -63,6 +64,7 @@ from .events import (
     CMD_SET_FPS,
     CMD_SET_PRESENTATION,
     CMD_SET_REGION,
+    CMD_SET_SCENE,
     CMD_SET_TARGET_LANG,
     CMD_STATUS,
     SCHEMA_VERSION,
@@ -87,6 +89,9 @@ SETTINGS_COMMANDS: tuple[str, ...] = (
     CMD_SET_PRESENTATION,
     CMD_LOAD_PROFILE,
     CMD_SET_TARGET_LANG,
+    # The scene is a translation setting like the target language, and it is the one a
+    # user switches while watching -- "this scene's terms", not "this install's terms".
+    CMD_SET_SCENE,
     CMD_SET_FPS,
     CMD_SET_DIFF_THRESHOLD,
     CMD_SET_REGION,
@@ -98,6 +103,7 @@ SETTINGS_COMMANDS: tuple[str, ...] = (
     CMD_LIBRARY_RESTORE,
     CMD_LIBRARY_IMPORT,
     CMD_LIBRARY_EXPORT,
+    CMD_LIBRARY_PROMOTE,
 )
 
 #: Directives that disable every remote fetch, so the page cannot phone home
@@ -253,12 +259,16 @@ def create_app(session: Session) -> FastAPI:
 
     @app.post("/api/library/import")
     async def api_library_import(request: Request) -> JSONResponse:
-        """Apply an uploaded file. The text arrives from the page's file picker.
+        """Apply an uploaded file, or preview what applying it would do.
 
-        Text rather than multipart on purpose: the browser already knows how to read a
-        file, the panel then has no filesystem access to the machine it is running on
-        (which matters because this panel can be reached over the LAN), and the engine
-        only ever needs the bytes.
+        The text arrives from the page's file picker. Text rather than multipart on
+        purpose: the browser already knows how to read a file, the panel then has no
+        filesystem access to the machine it is running on (which matters because this
+        panel can be reached over the LAN), and the engine only ever needs the bytes.
+
+        ``dry_run`` is answered by the same code that does the real import, so the preview
+        cannot disagree with the result -- a preview computed separately would be a guess
+        about the import rather than a report from it.
         """
         body: Any = await request.json()
         if not isinstance(body, dict):
@@ -269,6 +279,33 @@ def create_app(session: Session) -> FastAPI:
                 "text": body.get("text") or "",
                 "format": body.get("format") or "json",
                 "replace": bool(body.get("replace", True)),
+                "dry_run": bool(body.get("dry_run", False)),
+            },
+        )
+        if not result.get("ok"):
+            return JSONResponse(
+                {"ok": False, "detail": result.get("detail", "")}, status_code=400
+            )
+        return JSONResponse({"ok": True, "detail": result.get("detail", ""), **session.library_view()})
+
+    @app.post("/api/library/promote")
+    async def api_library_promote(request: Request) -> JSONResponse:
+        """Turn recorded corrections into corpus entries, in bulk.
+
+        The bridge between the two halves of the vocabulary: what a human fixed on screen
+        while watching, and the corpus the engine reads. Both are files, both are the
+        user's, and until now nothing connected them.
+        """
+        body: Any = await request.json()
+        if not isinstance(body, dict):
+            raise HTTPException(status_code=400, detail="body must be a JSON object")
+        result = session.command(
+            CMD_LIBRARY_PROMOTE,
+            {
+                "lang": body.get("lang") or "",
+                "scope": body.get("scope") or "",
+                "replace": bool(body.get("replace", True)),
+                "dry_run": bool(body.get("dry_run", False)),
             },
         )
         if not result.get("ok"):

@@ -14,6 +14,7 @@ selfcheck_dedup
 selfcheck_correct
 selfcheck_corpus
 selfcheck_library
+selfcheck_senses
 selfcheck_selfcapture
 selfcheck_plugins
 selfcheck_settings

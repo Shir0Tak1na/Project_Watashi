@@ -135,10 +135,12 @@ def declared_distributions() -> dict[str, str]:
 def closure(script: Path) -> set[str]:
     """The third-party modules reachable from a check, following local modules.
 
-    Follows two kinds of local thing: the ``watashi`` package, and sibling
-    ``selfcheck_*.py`` scripts -- the render check drives `selfcheck_desktop`'s fakes
-    rather than copying them, so its imports are this check's imports too. Counting a
-    sibling script as a distribution was the first thing this walker got wrong.
+    Follows every local thing the check can reach: the ``watashi`` package, and **any**
+    sibling ``.py`` in this directory -- a check that drives ``selfcheck_desktop``'s fakes,
+    or that runs the CLI in process instead of spawning it, has that module's imports too.
+    Counting a sibling script as a distribution was the first thing this walker got wrong;
+    restricting the follow to ``selfcheck_*`` names was the second, and it showed up as
+    ``selfcheck_library needs watashi_proto`` -- a local script reported as a package.
     """
     todo = imports_anywhere(script)
     walked: set[str] = set()
@@ -163,7 +165,7 @@ def closure(script: Path) -> set[str]:
                 todo |= imports_anywhere(target)
             continue
         sibling = HERE / f"{top}.py"
-        if sibling.exists() and top.startswith("selfcheck"):
+        if sibling.exists():
             todo |= imports_anywhere(sibling)
             continue
         if top in sys.stdlib_module_names or top in WINDOWS_ONLY_MODULES:

@@ -196,6 +196,22 @@ def drain(app: DesktopApp, rounds: int = 3) -> None:
         app.root.update()
 
 
+def _scene_from_ready(app: DesktopApp) -> str:
+    """What the scene box shows after a ready event that names a scene.
+
+    The real ``INFO`` fixture with only ``scene`` added, and the boxes are put back
+    afterwards: ``_on_ready`` also fills the plugin tab and the export format list, so a
+    partial payload here would fail later assertions for a reason that belongs to this one.
+    """
+    before_target = app.target_var.get()
+    before_scene = app.scene_var.get()
+    app._on_ready({**INFO, "scene": "wildlife"})
+    shown = app.scene_var.get()
+    app._on_ready({**INFO, "scene": before_scene})
+    app.target_var.set(before_target)
+    return shown
+
+
 def main() -> int:
     check = Checker()
     print("=" * 78)
@@ -291,6 +307,35 @@ def main() -> int:
             "the target language control is in the top bar, where it is used",
             app.target_var.get() == "zh-CN",
             app.target_var.get(),
+        )
+        # The scene is here for the same reason the target language is: it is a setting a
+        # user changes while watching, and the panel is a browser they would have to
+        # alt-tab to. The window has to be able to set it, and to clear it.
+        check.check(
+            "the scene control is in the top bar too, and starts empty",
+            app.scene_var.get() == "",
+            app.scene_var.get(),
+        )
+        session.commands.clear()
+        app.scene_var.set("finance")
+        app.apply_scene()
+        check.check(
+            "applying a scene sends the command with what the box says",
+            session.commands[-1] == ("set_scene", {"scene": "finance"}),
+            f"got {session.commands[-1]}",
+        )
+        session.commands.clear()
+        app.scene_var.set("  ")
+        app.apply_scene()
+        check.check(
+            "and an emptied box clears the selection rather than sending a blank scene",
+            session.commands[-1] == ("set_scene", {"scene": ""}),
+            f"got {session.commands[-1]}",
+        )
+        check.check(
+            "the scene a restart actually has is shown, not remembered from the box",
+            _scene_from_ready(app) == "wildlife",
+            "info() carries it, so the box cannot lie about the current scene",
         )
         check.check(
             "the panel button is present, so the surface that edits is one click away",

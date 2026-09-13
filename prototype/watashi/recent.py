@@ -14,6 +14,17 @@ and genuinely different lines get collapsed into one.
 A bounded, time-limited memory rather than a permanent cache, because the same words
 recur legitimately. A song lyric repeating, or a character saying the same thing twice
 in a scene, must be translated again rather than silently reused from minutes ago.
+
+``scope`` is the rest of the key, and it exists because this memory used to be keyed on
+the source text *alone*: switching the target language inside the TTL then served the
+previous language's text back as if it were the new one -- a Chinese line handed to a
+user who asked for Japanese, at full confidence, for ten seconds. The same collision
+made "the same line, in a different situation" impossible to express, which is the whole
+question a corpus of one word with two meanings rests on. So the key is
+``(normalised source, *scope)``, and the engine decides what belongs in the scope: it
+passes the parts of the context its *vocabulary* can actually distinguish, so a corpus
+with no scene and no window conditions behaves exactly as before (see
+``CorpusStore.context_key``).
 """
 
 from __future__ import annotations
@@ -22,6 +33,7 @@ import re
 import time
 from collections import OrderedDict
 from dataclasses import dataclass
+from typing import Sequence
 
 #: Punctuation that OCR adds, drops or substitutes between otherwise identical frames.
 #: Stripped from both ends before comparing, never from the middle: internal
@@ -67,23 +79,42 @@ class RecentTranslations:
         self.ttl_s = max(0.0, float(ttl_s))
         self.limit = max(1, int(limit))
         self.enabled = bool(enabled)
-        self._entries: "OrderedDict[str, _Entry]" = OrderedDict()
+        self._entries: "OrderedDict[tuple[str, ...], _Entry]" = OrderedDict()
         self.hits = 0
         self.misses = 0
         self.stored = 0
 
+    # -- keys -------------------------------------------------------------- #
+
+    @staticmethod
+    def _key(source: str, scope: Sequence[str] = ()) -> tuple[str, ...] | None:
+        """The memory key, or None when this source is too short to remember.
+
+        Always a tuple, even with an empty scope, so nothing downstream has to ask
+        whether it is holding a string or a key.
+        """
+        base = normalize(source)
+        if len(base) < MIN_KEY_LENGTH:
+            return None
+        return (base, *scope)
+
     # -- lookup ------------------------------------------------------------ #
 
-    def get(self, source: str, now: float | None = None) -> str | None:
-        """The recent translation of ``source``, or None.
+    def get(
+        self,
+        source: str,
+        now: float | None = None,
+        scope: Sequence[str] = (),
+    ) -> str | None:
+        """The recent translation of ``source`` *in this scope*, or None.
 
         Reuse moves the entry to the end, so a phrase that keeps appearing on screen is
         not evicted by a burst of one-off lines -- it is the phrase most worth keeping.
         """
         if not self.enabled:
             return None
-        key = normalize(source)
-        if len(key) < MIN_KEY_LENGTH:
+        key = self._key(source, scope)
+        if key is None:
             self.misses += 1
             return None
         entry = self._entries.get(key)
@@ -104,12 +135,18 @@ class RecentTranslations:
         self.hits += 1
         return entry.target
 
-    def put(self, source: str, target: str, now: float | None = None) -> None:
+    def put(
+        self,
+        source: str,
+        target: str,
+        now: float | None = None,
+        scope: Sequence[str] = (),
+    ) -> None:
         """Remember a translation. Empty targets are not worth remembering."""
         if not self.enabled or not target.strip():
             return
-        key = normalize(source)
-        if len(key) < MIN_KEY_LENGTH:
+        key = self._key(source, scope)
+        if key is None:
             return
         now = time.perf_counter() if now is None else now
         self._entries[key] = _Entry(target=target, at=now)
@@ -121,22 +158,27 @@ class RecentTranslations:
     # -- invalidation ------------------------------------------------------ #
 
     def drop(self, *sources: str) -> int:
-        """Forget these sources. Returns how many entries went.
+        """Forget these sources, in **every** scope. Returns how many entries went.
 
         Exists for corrections. A memory that keeps serving the translation a human
         just rejected is worse than having no memory at all: the corrected corpus
         entry is ready and the cache would hide it for the rest of the TTL -- which
         is exactly the ten seconds in which the user is looking at the screen to
         check whether their correction worked.
+
+        Every scope, not just the current one: the caller is saying "this source is
+        wrong", which is true whichever scene or window it was read in, and a memory
+        that keeps the rejected answer alive in another scope is the same bug one
+        scene later.
         """
-        removed = 0
-        for source in sources:
-            if self._entries.pop(normalize(source), None) is not None:
-                removed += 1
-        return removed
+        wanted = {normalize(source) for source in sources}
+        doomed = [key for key in self._entries if key[0] in wanted]
+        for key in doomed:
+            del self._entries[key]
+        return len(doomed)
 
     def drop_containing(self, fragment: str) -> int:
-        """Forget every remembered source that contains ``fragment``.
+        """Forget every remembered source that contains ``fragment``, in every scope.
 
         For term corrections: the term is one word inside a line, and the stale entry
         is the whole line's translation, so there is no single key to drop.
@@ -144,7 +186,7 @@ class RecentTranslations:
         needle = normalize(fragment)
         if not needle:
             return 0
-        doomed = [key for key in self._entries if needle in key]
+        doomed = [key for key in self._entries if needle in key[0]]
         for key in doomed:
             del self._entries[key]
         return len(doomed)

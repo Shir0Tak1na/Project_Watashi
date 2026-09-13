@@ -49,6 +49,8 @@ DEFAULTS: dict[str, Any] = {
     "translation": {
         "source": "auto",
         "target": "zh-CN",
+        #: which scene's term entries win; "" = no preference, all equally eligible
+        "scene": "",
         "min_confidence": 0.0,
         "nmt_model": None,
         "nmt_compute_type": "int8",
