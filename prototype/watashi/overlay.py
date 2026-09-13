@@ -89,6 +89,33 @@ _FALLBACK_FONT_FAMILIES = (
 )
 
 
+def _composite(color: str, background: str | None, alpha: float) -> str:
+    """Blend ``color`` over ``background`` at ``alpha``, returning a hex colour.
+
+    tkinter canvas text has no alpha channel -- only a whole toplevel window does --
+    so opacity has to be faked by pre-blending the colour against whatever is behind
+    it. That is exact when there is a plate, and impossible when the background is
+    transparent, which is why the caller passes ``None`` there and the colour is left
+    alone rather than being darkened against a guess.
+
+    This is the mechanism the settings page used to advertise with
+    ``overlay.dim_low_confidence`` while the painter ignored ``DrawText.opacity``
+    entirely: low-confidence lines were drawn exactly as confidently as certain ones.
+    For a tool whose output is a guess about pixels, being able to look unsure is not
+    a decoration, it is the thing that makes it trustworthy.
+    """
+    alpha = max(0.0, min(1.0, alpha))
+    if alpha >= 1.0 or not background:
+        return color
+    try:
+        fg = tuple(int(color.lstrip("#")[i:i + 2], 16) for i in (0, 2, 4))
+        bg = tuple(int(background.lstrip("#")[i:i + 2], 16) for i in (0, 2, 4))
+    except (ValueError, IndexError):
+        return color
+    mixed = tuple(round(f * alpha + b * (1.0 - alpha)) for f, b in zip(fg, bg))
+    return "#" + "".join(f"{value:02x}" for value in mixed)
+
+
 def _toplevel_hwnd(window: tk.Misc) -> int:
     """Return the real top level HWND for a Tk window (Windows only)."""
     if not _IS_WINDOWS:
@@ -334,6 +361,7 @@ class Overlay:
         panel_height: int = 320,
         panel_font_size: int = 13,
         font_family: str | None = None,
+        dim_low_confidence: bool = True,
     ) -> None:
         self.spec = presentation or PresentationSpec.preset("bar")
         self.click_through = click_through
@@ -349,6 +377,10 @@ class Overlay:
         self.panel_height = panel_height
         self._panel_font_size = panel_font_size
         self._font_family = font_family
+        #: `overlay.dim_low_confidence`. Dimming used to happen whenever coverage fell
+        #: below the spec threshold, so the setting could not turn it off -- the switch
+        #: was in the config and in the settings page and controlled nothing.
+        self.dim_low_confidence = bool(dim_low_confidence)
 
         self._queue: "queue.Queue[tuple[str, Any]]" = queue.Queue(maxsize=64)
         self._root: tk.Misc | None = None
@@ -368,6 +400,8 @@ class Overlay:
         self._drag_origin: tuple[int, int] = (0, 0)
         #: (x_root, y_root, width, height) captured when a resize drag starts
         self._resize_origin: tuple[int, int, int, int] | None = None
+        #: the previously drawn translation, for the `previous` element role
+        self._previous_line = ""
         self._fonts: dict[tuple[int, bool], Any] = {}
         #: Physical pixels per logical (Tk) pixel. Windows display scaling makes
         #: Tk report a *logical* screen while mss and OCR report physical
@@ -783,7 +817,10 @@ class Overlay:
             return
 
         origin = self._logical_region_origin()
-        dim = update.coverage < self.spec.confidence.dim_below
+        dim = (
+            self.dim_low_confidence
+            and update.coverage < self.spec.confidence.dim_below
+        )
         blocks = compute_blocks(
             self.spec,
             source_text=update.source_text,
@@ -795,9 +832,14 @@ class Overlay:
             trace=update.trace,
             coverage=update.coverage,
             dim=dim,
+            previous=self._previous_line,
         )
         self._last_blocks = blocks
         self.renders += 1
+        # Remembered after rendering, not before: the scrolling line has to show what
+        # was said *last*, so the frame being drawn now must not be its own history.
+        if update.target_text.strip() and update.target_text != self._previous_line:
+            self._previous_line = update.target_text
 
         if mode == "inplace":
             self._paint_per_block(blocks)
@@ -861,6 +903,13 @@ class Overlay:
         no text in it -- for bar, bare, minimal and lines alike.
         """
         canvas = surface.canvas
+        # The plate colour, when there is one, is what a faded glyph is blended
+        # against. A transparent background gives nothing to blend with, so opacity
+        # is left alone there -- dimming towards black would darken text over a video
+        # and read as a rendering fault rather than as uncertainty.
+        plate = None
+        if block.background is not None and block.background.kind != "none":
+            plate = block.background.color
         for text in block.texts:
             font = (self._font_family, text.size, "bold" if text.bold else "normal")
             x = text.x - origin_x
@@ -873,18 +922,20 @@ class Overlay:
                 "justify": "left",
                 "width": max(1, block.width),
             }
+            fill = _composite(text.color, plate, text.opacity)
             if text.outline_color and text.outline_width:
                 # tkinter has no text stroke, so draw a copy underneath in each
                 # surrounding direction
+                outline = _composite(text.outline_color, plate, text.opacity)
                 radius = text.outline_width
                 for ox in range(-radius, radius + 1):
                     for oy in range(-radius, radius + 1):
                         if ox == 0 and oy == 0:
                             continue
                         canvas.create_text(
-                            x + ox, y + oy, fill=text.outline_color, **options
+                            x + ox, y + oy, fill=outline, **options
                         )
-            canvas.create_text(x, y, fill=text.color, **options)
+            canvas.create_text(x, y, fill=fill, **options)
 
     # -- panel mode -------------------------------------------------------- #
 

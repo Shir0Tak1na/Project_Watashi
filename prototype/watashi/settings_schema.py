@@ -84,6 +84,22 @@ class Category:
         }
 
 
+#: Applied to fields that are accepted, persisted and displayed but read by nothing.
+#:
+#: A sweep of every setting for its name appearing in the source -- zero occurrences
+#: outside the files that merely declare it -- found six of these. The root cause is a
+#: duplicated source of truth: the presentation spec and these config keys both carry
+#: the subtitle size, the plate opacity, the bottom margin and the strip ratio, and
+#: the spec is what actually renders. The command line flags for the same things work,
+#: because they rewrite the spec; the config keys do not.
+#:
+#: Labelled rather than deleted, because deleting hides the finding and the fields are
+#: the intended interface once the duplication is resolved. Labelled rather than
+#: silently left, because a control that does nothing is how a user concludes the
+#: program is broken.
+DEAD_SETTING = "当前无效：该项未被任何代码读取，改动不会生效。真正生效的是呈现规格里的同名字段。"
+
+
 # --------------------------------------------------------------------------- #
 # ① 采集：看哪里
 # --------------------------------------------------------------------------- #
@@ -118,7 +134,7 @@ CAPTURE = Category(
         ),
         Field(
             key="capture.region_ratio",
-            label="自动横带高度比例",
+                        label="自动横带高度比例",
             description="自动取区域时，横带占屏幕高度的比例。0.18 即屏幕最下方 18%。",
             kind="float",
             default=0.18,
@@ -278,6 +294,23 @@ OCR = Category(
             unit="像素",
             applies=RESTART,
             note="建议留空",
+        ),
+        Field(
+            key="ocr.max_boxes",
+            label="最多翻译多少块文字",
+            description="一屏文字很多时，只翻译其中最大的 N 块，其余既不翻译也不显示。"
+                        "按最大取，是因为小框在真实画面上多半是噪声——纹理碎片、"
+                        "图标被读成的一个字，所以它同时让画面更干净。",
+            kind="int",
+            default=0,
+            low=0,
+            high=200,
+            unit="块",
+            applies=RESTART,
+            cost="它省的不是 OCR：RapidOCR 的检测与识别是一次调用，事后限制省不了识别。"
+                 "它省的是翻译与显示——实测单块识别约 20ms，而单句送本地模型要 71–350ms，"
+                 "所以真正省下的是模型开销",
+            note="0 = 不限。真正的 OCR 提速手段仍是缩小识别区域",
         ),
         Field(
             key="ocr.use_cls",
@@ -521,7 +554,7 @@ PRESENTATION = Category(
         ),
         Field(
             key="overlay.subtitle_size",
-            label="译文字号",
+                        label="译文字号",
             description="悬浮字幕里译文的大小。原文那一行按它的 0.67 倍自动推算。"
                         "调大更容易看清，但会同时撑高整个字幕块，占用更多屏幕。",
             kind="int",
@@ -532,19 +565,8 @@ PRESENTATION = Category(
             applies=RESTART,
         ),
         Field(
-            key="overlay.bar_height",
-            label="字幕条高度",
-            description="字幕条窗口的高度。文字本身会撑开所需空间，这个值是容器高度。",
-            kind="int",
-            default=96,
-            low=32,
-            high=600,
-            unit="像素",
-            applies=RESTART,
-        ),
-        Field(
             key="overlay.bar_alpha",
-            label="底板不透明度",
+                        label="底板不透明度",
             description="字幕条底板的透明度。0 = 全透明（只剩文字），1 = 不透明。",
             kind="float",
             default=0.72,
@@ -554,7 +576,7 @@ PRESENTATION = Category(
         ),
         Field(
             key="overlay.bar_bottom_margin",
-            label="距屏幕底部",
+                        label="距屏幕底部",
             description="字幕条离屏幕下边缘多少像素。调大可以让字幕避开播放器自带的"
                         "控制条和进度条，调小则更贴近底边。",
             kind="int",
@@ -612,13 +634,16 @@ PRESENTATION = Category(
         ),
         Field(
             key="overlay.dim_low_confidence",
-            label="低置信度变暗",
-            description="识别置信度低的行显示得淡一些，方便一眼看出哪些不太可靠。",
+                        label="低置信度变暗",
+            description="识别置信度低的行显示得淡一些，方便一眼看出哪些不太可靠。"
+                        "淡的程度由呈现规格的 dim_opacity 决定（默认 0.6），"
+                        "低于 dim_below（默认 0.5）覆盖率时触发。",
             kind="bool",
             default=True,
             applies=RESTART,
-            danger="当前无效：这个开关与呈现规格里的元素透明度一样，"
-                   "被绘制层忽略了——文字始终按 100% 不透明度绘制",
+            note="实现方式：tkinter 的文字没有独立透明度通道，所以是把字色按比例混合到"
+                 "底板颜色上来模拟。因此只在该行有色块底板时有效——透明背景上没有可"
+                 "混合的对象，强行调暗在视频上会像渲染故障，故保持原色",
         ),
     ),
 )
@@ -750,7 +775,15 @@ CATEGORIES: tuple[Category, ...] = (
 #: in the shipped config is described above. `selfcheck_settings` fails when a config
 #: key appears in neither this set nor the schema, because an undocumented setting is
 #: how a settings page starts lying about what the program does.
-INTERNAL_KEYS: frozenset[str] = frozenset()
+INTERNAL_KEYS: frozenset[str] = frozenset(
+    {
+        # Accepted from a config file so an existing one keeps working, but not
+        # a control: the bar window is sized to its own content, so a fixed
+        # height would only fight the layout. Kept rather than deleted so a
+        # config carrying it does not become invalid.
+        "overlay.bar_height",
+    }
+)
 
 
 def all_fields() -> list[Field]:

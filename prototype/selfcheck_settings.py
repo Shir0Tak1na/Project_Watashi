@@ -15,6 +15,7 @@ the exact complaint that prompted this work ("不知道功能是什么").
 
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 
@@ -437,8 +438,33 @@ def main() -> int:
         _changelog_mentions(__version__),
         "CHANGELOG.md must have an entry for the version being released",
     )
+    check.check(
+        "a licence is present, so the code is legally usable at all",
+        _licence_ok(),
+        "without one the repository is 'all rights reserved' by default, however the "
+        "hosting service labels it",
+    )
 
     return check.report()
+
+
+def _licence_ok() -> bool:
+    """The repository must carry a real licence file.
+
+    Worth asserting because the failure is invisible from the inside: GitHub's About
+    panel can show a licence that no file in the repository declares, so the project
+    looks licensed while nobody downstream may legally use, modify or redistribute it.
+    """
+    for name in ("LICENSE", "LICENSE.md", "LICENSE.txt", "COPYING"):
+        path = Path(__file__).resolve().parent.parent / name
+        if not path.exists():
+            continue
+        text = path.read_text(encoding="utf-8")
+        has_title = "MIT License" in text
+        has_holder = bool(re.search(r"Copyright \(c\) \d{4} \S", text))
+        has_grant = "Permission is hereby granted" in text
+        return has_title and has_holder and has_grant
+    return False
 
 
 def session_version_ok() -> bool:

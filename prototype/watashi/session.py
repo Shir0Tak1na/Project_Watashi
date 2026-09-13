@@ -164,7 +164,11 @@ class Session:
             self._ocr = build_ocr(self.config)
         if self._capturer is None:
             self._capturer = RegionCapturer(
-                region=self.config.region, monitor=self.config.monitor
+                region=self.config.region,
+                monitor=self.config.monitor,
+                # the configured strip height now reaches the capturer instead of being
+                # stored and ignored
+                height_ratio=self.config.capture.get("region_ratio"),
             )
 
         pipeline_config = PipelineConfig(
@@ -176,6 +180,7 @@ class Session:
             #: holds OCR back until the frame has been still that long, which is
             #: what makes animated or scrolling text recognisable.
             settle_s=float(self.config.capture.get("settle_ms", 0) or 0) / 1000.0,
+            max_boxes=int(self.config.ocr.get("max_boxes", 0) or 0),
             max_width=int(self.config.capture.get("max_width", 0)),
             target_lang=self.config.target_lang,
             source_lang=self.config.source_lang,

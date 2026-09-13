@@ -32,6 +32,7 @@ import numpy as np
 from .capture import ChangeDetector, RegionCapturer
 from .events import OverlayStats, OverlayUpdate, TranslatedLine
 from .lang import has_translatable_content, matches_target
+from .recent import RecentTranslations
 from .ocr import OcrResult, RapidOcrEngine
 from .translate import Translator
 
@@ -85,6 +86,14 @@ class PipelineConfig:
     #: A non-zero value is what makes scrolling/animated text usable: recognising
     #: mid-motion captures half-drawn glyphs.
     settle_s: float = 0.0
+    #: Reuse a translation seen within this many seconds instead of paying for it
+    #: again. 0 disables the memory entirely.
+    dedup_ttl_s: float = 10.0
+    #: Turn the reuse off without losing the counters.
+    dedup: bool = True
+    #: Recognise everything, but only translate and draw the largest N boxes. 0 = no
+    #: cap. See Pipeline._cap_boxes for what this does and does not save.
+    max_boxes: int = 0
     max_width: int = 1280
     target_lang: str = "zh-CN"
     source_lang: str = "auto"
@@ -111,8 +120,7 @@ class Pipeline:
         self.on_update = on_update
         self.on_stats = on_stats
 
-        self.detector = ChangeDetector(
-            threshold=self.config.diff_threshold,
+        self.detector = ChangeDetector(            threshold=self.config.diff_threshold,
             signature_width=self.config.signature_width,
             min_interval=self.config.min_ocr_interval,
             settle_s=self.config.settle_s,
@@ -126,6 +134,22 @@ class Pipeline:
         #: (measured 73 ms -> 266 ms). OCR wins because it feeds the screen.
         self.ocr_busy = threading.Event()
         self._threads: list[threading.Thread] = []
+        #: Short-term memory of what was just translated. OCR is not deterministic, so
+        #: the same sentence returns with a different trailing punctuation or space and
+        #: each variant misses the translation cache; this is what stops the model
+        #: being paid again for text it has already read.
+        self.recent = RecentTranslations(
+            ttl_s=self.config.dedup_ttl_s, enabled=self.config.dedup
+        )
+        self.reused_lines = 0
+        #: lines where the translator returned the source unchanged, i.e. nothing
+        #: translated them. Visible so a language pair with no coverage shows up as a
+        #: number instead of as a screen full of untranslated text.
+        self.untranslated_lines = 0
+        #: boxes dropped by the cap, so a limit that is biting is visible rather than
+        #: silently changing what the user sees
+        self.capped_lines = 0
+        self._cap_active = False
 
         self._lock = threading.Lock()
         self._total_ms: deque[float] = deque(maxlen=60)
@@ -195,6 +219,47 @@ class Pipeline:
             except ValueError:
                 return False
         return matches_target(text, self.config.target_lang)
+
+    def _cap_boxes(self, result: Any) -> Any:
+        """Keep only the largest N recognised boxes, when a cap is configured.
+
+        What this saves, stated honestly because the obvious reading is wrong: OCR
+        detects and recognises in a single call, so a cap applied *after* that call
+        cannot save recognition time -- the work is already done. What it does save is
+        everything downstream of recognition, and that is the expensive part here:
+        measured, one box costs about 20 ms to recognise but a sentence costs 71-350 ms
+        to translate with the local model. On a dense screen, refusing to translate 40
+        of 50 boxes is a much larger saving than the recognition it cannot avoid, and it
+        keeps the overlay and the history readable instead of flooded.
+
+        The largest boxes win because on a real screen the small ones are
+        disproportionately noise: a fragment of a texture or a UI ornament picked up as
+        a single character. Dropping them improves what is shown as well as how much.
+
+        Reading order is restored afterwards, so a cap never reorders the display.
+        """
+        limit = int(self.config.max_boxes or 0)
+        if limit <= 0:
+            return result
+        lines = list(getattr(result, "lines", []) or [])
+        if len(lines) <= limit:
+            return result
+
+        def area(line: Any) -> int:
+            box = getattr(line, "box", None)
+            if not box:
+                return 0
+            return int(box[2]) * int(box[3])
+
+        kept = sorted(lines, key=area, reverse=True)[:limit]
+        kept.sort(key=lambda line: (getattr(line, "box", (0, 0, 0, 0)) or (0, 0, 0, 0))[1])
+        self.capped_lines += len(lines) - len(kept)
+        self._cap_active = True
+        try:
+            result.lines = kept
+        except AttributeError:
+            return result
+        return result
 
     def set_capturer(self, capturer: Any, close_old: bool = True) -> None:
         """Swap the capture source while the pipeline is running.
@@ -288,6 +353,8 @@ class Pipeline:
                 print(f"[pipeline] OCR failed: {exc}")
                 continue
 
+            ocr_result = self._cap_boxes(ocr_result)
+
             if self._paused.is_set():
                 # pause landed while this frame was in flight; honour it rather
                 # than publishing one more subtitle after the fact
@@ -367,6 +434,28 @@ class Pipeline:
                 self.nontranslatable_lines += 1
                 continue
 
+            # Already translated a moment ago? Reuse it rather than paying the model
+            # again. The box comes from *this* frame, not from the remembered one, so
+            # the plate still follows text that has moved -- suppressing the cost and
+            # suppressing the position are different things and only the first is
+            # wanted here.
+            remembered = self.recent.get(ocr_line.text)
+            if remembered is not None:
+                translated.append(
+                    TranslatedLine(
+                        source=ocr_line.text,
+                        target=remembered,
+                        box=ocr_line.box,
+                        confidence=ocr_line.confidence,
+                        coverage=1.0,
+                    )
+                )
+                passthrough.append(True)
+                traces.append("reuse: identical to a line translated a moment ago")
+                backends.add("reuse")
+                self.reused_lines += 1
+                continue
+
             if self._already_target(ocr_line.text, declared_source):
                 translated.append(
                     TranslatedLine(
@@ -383,19 +472,41 @@ class Pipeline:
                 continue
 
             outcome = self.translator.translate(ocr_line.text, self.config.target_lang)
+            target = outcome.target_text or ocr_line.text
+            # An echo is not a translation, and presenting it as one is worse than
+            # showing nothing: the user reads the original back and concludes the
+            # translation is broken. It happens whenever the corpus has no coverage for
+            # the language pair -- the shipped corpus and rules are en<->zh only, so
+            # zh->ja comes back as the Chinese it went in as -- and the transliterate
+            # fallback is what returns it.
+            #
+            # Reported as zero coverage rather than dropped, so the line still appears
+            # (the text is on screen either way) but is drawn as the uncertain result it
+            # is, and the model's refinement can replace it a moment later.
+            echoed = _normalize_for_echo(target) == _normalize_for_echo(ocr_line.text)
+            coverage = 0.0 if echoed else outcome.coverage
             translated.append(
                 TranslatedLine(
                     source=ocr_line.text,
-                    target=outcome.target_text or ocr_line.text,
+                    target=target,
                     box=ocr_line.box,
                     confidence=outcome.confidence,
-                    coverage=outcome.coverage,
+                    coverage=coverage,
                 )
             )
             passthrough.append(False)
-            traces.append(outcome.trace())
-            if outcome.backend:
+            traces.append(
+                "untranslated: no coverage for this language pair, the source is "
+                "unchanged" if echoed else outcome.trace()
+            )
+            if echoed:
+                backends.add("untranslated")
+                self.untranslated_lines += 1
+            elif outcome.backend:
                 backends.add(outcome.backend)
+            # Remember it so the next frame that reads the same sentence -- which OCR
+            # will render slightly differently -- does not pay for it again.
+            self.recent.put(ocr_line.text, target)
 
         if not translated:
             return None
@@ -512,6 +623,17 @@ class Pipeline:
             "stability_s": round(self.detector.stability_s, 3),
             "last_diff": round(self.detector.last_diff, 3),
             "detector_accepted": self.detector.accepted,
+            # --- text reuse ---------------------------------------------------- #
+            # `reused_lines` is the number that matters: it is how many times the
+            # model was NOT paid for text already translated. Without it a memory
+            # that never matches looks exactly like one that works.
+            "reused_lines": self.reused_lines,
+            #: how many lines came back unchanged because nothing could translate them
+            "untranslated_lines": self.untranslated_lines,
+            #: how many recognised boxes the cap dropped before translating them
+            "capped_lines": self.capped_lines,
+            "max_boxes": int(self.config.max_boxes or 0),
+            **self.recent.stats(),
             "refinements_deferred": int(
                 self.translator.stats().get("refinements_deferred", 0)
             ),
@@ -523,6 +645,18 @@ class Pipeline:
             },
             "last_lines": [l.text for l in (self._last_result.lines if self._last_result else [])],
         }
+
+
+def _normalize_for_echo(text: str) -> str:
+    """Fold the differences OCR introduces, so an echo is recognised as one.
+
+    Reuses the reuse layer's normalisation on purpose: both are asking "is this the
+    same string?", and two different answers to that question would be a bug waiting
+    to happen.
+    """
+    from .recent import normalize
+
+    return normalize(text)
 
 
 def _mean(values: deque[float]) -> float:

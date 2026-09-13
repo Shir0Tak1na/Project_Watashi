@@ -1,0 +1,72 @@
+name: checks
+
+# Runs the self checks that need no display.
+#
+# Four of the ten self checks open real windows (overlay, window selection,
+# drag-to-select, the desktop main window). A hosted runner has no graphical session
+# and there is no Windows equivalent of `xvfb-run`, so those are verified locally and
+# listed in prototype/checks_display.txt instead of being quietly omitted.
+#
+# The list of checks run here lives in prototype/checks.txt, not in this file.
+# prototype/selfcheck_ci.py asserts that the two lists cover every selfcheck_*.py on
+# disk, so a new check cannot be added and then never run here -- which is the way a
+# green badge starts meaning less than it appears to.
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  headless:
+    name: ${{ matrix.os }} / python ${{ matrix.python }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      # One platform failing should not hide whether the other one passed.
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python: ["3.12"]
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r prototype/requirements.txt
+
+      # The checks are run through prototype/_run.py's discovery path rather than
+      # being invoked one by one, so the list stays in one place.
+      - name: Run headless self checks
+        run: |
+          set -euo pipefail
+          status=0
+          while IFS= read -r line; do
+            name="$(echo "$line" | sed 's/#.*//' | tr -d '[:space:]')"
+            [ -z "$name" ] && continue
+            echo "::group::$name"
+            if python "prototype/${name}.py" --summary; then
+              echo "::endgroup::"
+            else
+              code=$?
+              echo "::error title=${name} failed::exit ${code}"
+              echo "::endgroup::"
+              status=1
+            fi
+          done < prototype/checks.txt
+          exit "$status"
+
+      # A failure is much easier to act on with the counters in the log, and the
+      # session report is the one summary that covers the whole engine end to end.
+      - name: Engine self test (OCR, corpus, rules, model)
+        if: always()
+        continue-on-error: true
+        run: python prototype/watashi_proto.py --selftest

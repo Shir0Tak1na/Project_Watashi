@@ -28,6 +28,7 @@ from watashi.presentation import (
     PresentationSpec,
     compute_blocks,
     measure_block_text,
+    resolve_presentation,
 )
 
 
@@ -260,6 +261,62 @@ def main() -> int:
     print("")
     print("-- hidden mode --")
     check.check("hidden draws nothing", blocks_for(PresentationSpec.preset("hidden")) == [])
+
+    print("")
+    print("-- overlay.* config keys reach the spec, not just the command line --")
+    # subtitle_size, bar_alpha and bar_bottom_margin used to be read by nobody: they
+    # were in the config, in the settings page and as command line flags, and only the
+    # flags worked, because they rewrite the spec. These assertions are what stops the
+    # silent half-fix coming back -- a setting that does nothing is worse than a
+    # missing one, because the UI promises it works.
+    from watashi.config import AppConfig
+
+    def resolved(overrides: dict) -> PresentationSpec:
+        config = AppConfig.load()
+        config.presentation = "bar"
+        config.overlay.update(overrides)
+        return resolve_presentation(config)
+
+    base = resolved({})
+    check.check(
+        "an untouched config leaves the preset alone",
+        base.element("target").font.size == 24
+        and base.background.opacity == 0.72
+        and base.layout.offset[1] == -90,
+        f"size={base.element('target').font.size} "
+        f"alpha={base.background.opacity} offset={base.layout.offset}",
+    )
+
+    bigger = resolved({"subtitle_size": 36})
+    check.check(
+        "subtitle_size changes the translation size",
+        bigger.element("target").font.size == 36,
+        f"got {bigger.element('target').font.size}",
+    )
+    check.check(
+        "and the source line scales with it, keeping the proportion",
+        bigger.element("source").font.size == 24,
+        f"source 16 -> {bigger.element('source').font.size} at a 1.5x scale",
+    )
+
+    faded = resolved({"bar_alpha": 0.25})
+    check.check(
+        "bar_alpha changes the plate opacity",
+        abs(faded.background.opacity - 0.25) < 1e-6,
+        f"got {faded.background.opacity}",
+    )
+
+    lifted = resolved({"bar_bottom_margin": 200})
+    check.check(
+        "bar_bottom_margin moves the bar off the bottom edge",
+        lifted.layout.offset[1] == -200,
+        f"got {lifted.layout.offset}",
+    )
+    check.check(
+        "a nonsense subtitle_size cannot produce a zero or negative font",
+        resolved({"subtitle_size": 0}).element("target").font.size >= 6,
+        "0 means 'leave it alone', and the floor protects the rest",
+    )
 
     return check.report()
 

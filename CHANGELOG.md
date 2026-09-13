@@ -8,6 +8,98 @@ described in `Project Watashi.md`. It is usable for testing and it is honest abo
 what it does not do yet -- see "Known limitations" below, which is part of the
 release rather than a footnote.
 
+## [0.0.3] -- 2026-09-13 -- 测试版 (pre-release)
+
+Everything here came out of using 0.0.2 for real, which is the only way most of it
+would have been found. Three of the five fixes are for things that looked like they
+worked.
+
+### Fixed
+
+- **Text in the target language was shown as if it were a translation.** Asking for
+  zh->ja through the corpus path returns the Chinese unchanged, because the shipped
+  corpus and rules are en<->zh only and the transliterate fallback echoes its input.
+  That echo was displayed as the result, so the user read their own language back and
+  concluded the translator was broken. An echo is now reported with zero coverage,
+  counted as `untranslated_lines`, and drawn as the uncertain result it is -- which is
+  what `overlay.dim_low_confidence` now does.
+- **`overlay.dim_low_confidence` and per-element opacity did nothing.** The layout
+  computed the opacity and the painter never read it, so a guess was drawn exactly as
+  confidently as a certainty. tkinter canvas text has no alpha channel -- only a whole
+  window does -- so opacity is now pre-blended against the plate colour. Over a
+  transparent background the colour is deliberately left alone: darkening text over
+  video reads as a rendering fault, not as uncertainty.
+- **Six settings were stored, displayed, and read by nobody.** `overlay.subtitle_size`,
+  `overlay.bar_alpha`, `overlay.bar_bottom_margin`, `capture.region_ratio`,
+  `overlay.dim_low_confidence` and `overlay.bar_height`. The first three now drive the
+  presentation spec, which is what actually renders -- and which is why the command
+  line flags for the same three worked while the config keys did not. `region_ratio`
+  now reaches `bottom_strip` (which had accepted the parameter all along, with nothing
+  passing it). `bar_height` was removed from the settings because the bar is sized to
+  its content; the key is still accepted so existing config files stay valid.
+- **A detection-only OCR call crashed the recogniser.** `_unpack` assumed
+  `(box, text, score)`, but `use_rec=False` -- which the constructor supports --
+  returns bare quads, so `float(point)` raised `TypeError` and took the call with it.
+  Entries that are not that shape are now skipped rather than coerced.
+- **The web self check failed two runs in seven, at a different line each time.**
+  `WebPanel.stop()` joined once, gave up, and cleared its handles anyway, leaving a
+  server thread holding the port; the next `start()` failed to bind and requests went
+  to that zombie, whose session was a different one. `stop()` now escalates to
+  `force_exit` and reports whether it actually stopped, the self check picks a free
+  port at run time, and a new assertion reproduces the original failure -- an open SSE
+  stream, then a stop.
+
+### Added
+
+- **`ocr.max_boxes`** -- translate and draw only the largest N recognised boxes.
+  Measured, because the obvious reading is wrong: one box costs about 20 ms to
+  recognise, but one sentence costs 71-350 ms to translate with the local model, so a
+  cap applied after recognition saves the expensive half and cannot save the cheap one.
+  Largest-first, because small boxes on a real screen are mostly noise. The setting
+  says all of this on its own row rather than in a README.
+- **A scrolling line of the previous subtitle** (`previous` element role), enabled in
+  `bar` and `bare`. Reading along with a subtitle that replaces itself loses the thread
+  of the conversation. `inplace` does not need it (the old text is still under the
+  plate) and `panel` already is a history, which is why it is a role a spec opts into.
+- **Text reuse** (`watashi/recent.py`): a line translated a moment ago is reused
+  instead of paying the model again. OCR is not deterministic, so the same sentence
+  returns with a different trailing punctuation and misses the translation cache every
+  time. The key is a normalised form of the source, the window slides while the line
+  keeps appearing, and boxes are taken from the current frame so a moving plate still
+  follows. Short lines are never remembered, because a collision there would be a
+  wrong answer that is very hard to notice.
+- **`selfcheck_ocr`**, and `selfcheck_dedup` was registered with CI -- the CI coverage
+  assertion caught that one had been written and never added, so it would never have
+  run.
+
+### Changed
+
+- The `bar` preset is one line taller: previous, source, target.
+- The settings schema is 50 fields in 9 categories, none of them labelled "does
+  nothing" any more.
+
+### What the measurements say
+
+Interleaved sampling, seven rounds each, because sequential comparison was swamped by
+a 3x drift in the same frame between runs:
+
+| | median | share |
+| --- | --- | --- |
+| OCR, detection + recognition | 198 ms | 100% |
+| OCR, detection only | 43 ms | 22% |
+| recognition | 155 ms | 78% |
+
+And on translation quality, ten lines, the reason the hybrid design exists:
+
+| path | term accuracy | lines fully correct | mean chrF |
+| --- | --- | --- | --- |
+| corpus + rules | 53.8% | 40% | 0.139 |
+| local model alone | 20.0% | 40% | 0.340 |
+
+Neither alone is usable: the model produces sentences but loses the terminology, the
+corpus keeps the terminology but does not produce sentences. Reproduce with
+`run.cmd bench_translate --backend corpus|model`.
+
 ## [0.0.2] -- 2026-09-13 -- 测试版 (pre-release)
 
 The first tagged build. Everything below is verified by 10 self-check scripts
@@ -38,6 +130,15 @@ run them with `prototype\run.cmd selfcheck_<name> --summary`.
   remembered across rebuilds. `overlay.panel_width` had been accepted and never read.
 - **`--version`**, and the version is reported through the session so every surface
   can display it.
+- **MIT licence** (`LICENSE`). Without a licence file a public repository is "all
+  rights reserved" by default, whatever the hosting service's sidebar claims, so
+  nobody could legally use, modify or redistribute this.
+- **Continuous integration** (`.github/workflows/checks.yml`) running the seven
+  display-free self checks on Linux and Windows, Python 3.12. The list of checks
+  lives in `prototype/checks.txt` rather than in the workflow, and
+  `selfcheck_ci.py` asserts that it and `checks_display.txt` between them account for
+  every `selfcheck_*.py` on disk — so a new check cannot be added and then silently
+  never run, which is how a green badge starts meaning less than it appears to.
 
 ### Fixed
 

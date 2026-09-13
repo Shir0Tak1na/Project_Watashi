@@ -83,6 +83,25 @@ ocr:
   # Direction classification. Subtitles are horizontal, so this is pure cost.
   use_cls: false
 
+  # Only translate and draw the largest N recognised text boxes. 0 = no cap.
+  #
+  # What this does NOT do, because the obvious reading is wrong: it does not make OCR
+  # faster. RapidOCR detects and recognises in one call, so a cap applied afterwards
+  # cannot un-recognise anything.
+  #
+  # What it does: it stops the expensive half. Measured, one box costs about 20 ms to
+  # recognise, but one sentence costs 71-350 ms to *translate* with the local model.
+  # On a dense screen, refusing to translate 40 of 50 boxes saves far more than the
+  # recognition it cannot avoid, and it keeps the overlay and the history readable.
+  #
+  # Largest-first, because the small boxes on a real screen are mostly noise: a
+  # fragment of texture or a UI ornament read as one character. Dropping them is a
+  # quality improvement as well as a cost one.
+  #
+  # The real lever on OCR latency remains the region size: select the smallest area
+  # that still contains the text you want.
+  max_boxes: 0
+
 translation:
   source: auto
   target: zh-CN

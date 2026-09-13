@@ -358,6 +358,138 @@ def main() -> int:
         probe.close()
 
     print("")
+    print("-- low confidence is drawn differently from certainty --")
+    # The assertion that was missing while `overlay.dim_low_confidence` was advertised
+    # and `DrawText.opacity` was computed by the layout and ignored by the painter:
+    # a low-confidence line rendered exactly as confidently as a certain one.
+    #
+    # The two probe updates use *different* text on purpose. `_render` skips work when
+    # the target text is unchanged, so repeating the same sentence would test nothing
+    # at all -- the second render would never happen.
+    from watashi.overlay import _composite
+
+    dim_probe = Overlay(
+        presentation=PresentationSpec.preset("bar"), physical_screen=PHYSICAL_SCREEN
+    )
+    dim_probe.start()
+    dim_probe.set_region_box(REGION)
+
+    def drawn_fill(update: OverlayUpdate) -> str:
+        dim_probe.push(update)
+        for _ in range(20):
+            dim_probe._root.update()
+            time.sleep(0.02)
+        for surface in dim_probe._surfaces:
+            for item in surface.canvas.find_all():
+                if surface.canvas.type(item) != "text":
+                    continue
+                text = surface.canvas.itemcget(item, "text")
+                if text == update.target_text:
+                    return str(surface.canvas.itemcget(item, "fill"))
+        return ""
+
+    certain = drawn_fill(
+        OverlayUpdate(
+            source_text="probe one",
+            target_text="确定的译文",
+            coverage=0.95,
+            confidence=0.95,
+            lines=[TranslatedLine("probe one", "确定的译文", box=(20, 20, 400, 40))],
+        )
+    )
+    unsure = drawn_fill(
+        OverlayUpdate(
+            source_text="probe two",
+            target_text="不确定的译文",
+            coverage=0.2,
+            confidence=0.4,
+            lines=[TranslatedLine("probe two", "不确定的译文", box=(20, 20, 400, 40))],
+        )
+    )
+    check.check(
+        "a certain line and a guessed line are not drawn identically",
+        bool(certain) and bool(unsure) and certain != unsure,
+        f"certain={certain!r} unsure={unsure!r}",
+    )
+    check.check(
+        "the guessed line is faded toward the plate, not recoloured to something else",
+        bool(unsure) and unsure != "#ffffff" and unsure.startswith("#"),
+        f"unsure={unsure!r} (certain=#ffffff over a #000000 plate)",
+    )
+    # The blending itself, checked directly: half opacity of white over black is grey.
+    check.check(
+        "half opacity of white over a black plate is mid grey",
+        _composite("#ffffff", "#000000", 0.5) == "#808080",
+        _composite("#ffffff", "#000000", 0.5),
+    )
+    check.check(
+        "full opacity is untouched, so nothing that was readable got dimmer",
+        _composite("#ffffff", "#000000", 1.0) == "#ffffff",
+    )
+    check.check(
+        "a transparent background leaves the colour alone rather than darkening it",
+        _composite("#ffffff", None, 0.5) == "#ffffff",
+        "there is nothing to blend against over video, so guessing would be worse",
+    )
+    dim_probe.close()
+
+    print("")
+    print("-- the scrolling line shows the previous subtitle --")
+    hist = Overlay(
+        presentation=PresentationSpec.preset("bar"), physical_screen=PHYSICAL_SCREEN
+    )
+    hist.start()
+    hist.set_region_box(REGION)
+
+    def drawn_texts() -> list[str]:
+        found = []
+        for surface in hist._surfaces:
+            for item in surface.canvas.find_all():
+                if surface.canvas.type(item) == "text":
+                    found.append(str(surface.canvas.itemcget(item, "text")))
+        return found
+
+    def say(text: str) -> None:
+        hist.push(
+            OverlayUpdate(
+                source_text=f"src {text}",
+                target_text=text,
+                coverage=0.95,
+                lines=[TranslatedLine(f"src {text}", text, box=(20, 20, 400, 40))],
+            )
+        )
+        for _ in range(15):
+            hist._root.update()
+            time.sleep(0.02)
+
+    say("第一句")
+    first = drawn_texts()
+    check.check(
+        "on the very first line there is no history to show",
+        "第一句" in first and first.count("第一句") == 1,
+        f"drawn={first}",
+    )
+
+    say("第二句")
+    second = drawn_texts()
+    check.check(
+        "the line before this one is still on screen",
+        "第一句" in second,
+        f"drawn={second}",
+    )
+    check.check(
+        "and the current line is not drawn as its own history",
+        second.count("第二句") == 1,
+        f"drawn={second}",
+    )
+    check.check(
+        "the block now carries three elements rather than two",
+        len(second) == 3,
+        f"drawn={second} (source, previous, target)",
+    )
+    hist.close()
+
+    print("")
     print("-- the panel can be resized --")
     from watashi.overlay import MIN_PANEL_HEIGHT, MIN_PANEL_WIDTH
 

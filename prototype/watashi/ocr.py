@@ -278,9 +278,18 @@ class RapidOcrEngine:
                 box, text, score = item[0], item[1], item[2]
             except (TypeError, IndexError):
                 continue
-            if text is None:
+            # The contract here is (box, text, score). A detection-only run
+            # (use_rec=False) returns bare quads instead -- each item is a list of
+            # points, so item[1] is a point rather than text and float() on it raised
+            # TypeError, taking down the whole call. Detection carries no text, so the
+            # honest answer for this contract is to skip it, not to coerce a shape.
+            if not isinstance(text, str):
                 continue
-            out.append((box, str(text), float(score)))
+            try:
+                value = float(score)
+            except (TypeError, ValueError):
+                continue
+            out.append((box, text, value))
         return out
 
     @staticmethod

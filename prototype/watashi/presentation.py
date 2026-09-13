@@ -43,7 +43,13 @@ ANCHORS = (
 MODES = ("bar", "lines", "inplace", "panel", "hidden")
 
 #: Element roles, i.e. which text to draw.
-ROLES = ("source", "target", "trace")
+#:
+#: `previous` is the line before this one, for a scrolling line that keeps the thread
+#: of a conversation when the subtitle replaces itself. It is validated here like any
+#: other role: leaving it out of this tuple meant a spec carrying a `previous` element
+#: silently lost it on the way back through `from_dict`, which the round-trip
+#: assertion in selfcheck_presentation caught.
+ROLES = ("source", "target", "trace", "previous")
 
 BACKGROUND_KINDS = ("none", "plate")
 ALIGNMENTS = ("left", "center", "right")
@@ -398,21 +404,34 @@ def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> None:
 
 
 def _preset_bar() -> PresentationSpec:
-    """The default: source line small above, translation large below."""
+    """The default: previous line above, then source, then the translation large.
+
+    The previous line is dim and small: it is there to keep the thread of a
+    conversation when the subtitle replaces itself, not to compete with the line being
+    read now. It is a scrolling line rather than a list -- `lines` already stacks
+    several recognised lines and `panel` is a full history.
+    """
     return PresentationSpec(
         name="bar",
         layout=LayoutSpec(mode="bar", anchor="bottom-center", offset=(0, -90), align="center"),
         elements=[
             ElementSpec(
-                role="source",
+                role="previous",
                 order=0,
+                font=FontSpec(size=13),
+                color="#7d909f",
+                opacity=0.75,
+            ),
+            ElementSpec(
+                role="source",
+                order=1,
                 font=FontSpec(size=16),
                 color="#c9d6e0",
                 opacity=0.9,
             ),
             ElementSpec(
                 role="target",
-                order=1,
+                order=2,
                 font=FontSpec(size=24, bold=True),
                 color="#ffffff",
             ),
@@ -508,7 +527,51 @@ def _preset_hidden() -> PresentationSpec:
 
 
 def resolve_presentation(config: Any) -> PresentationSpec:
-    """Read the configured presentation: a preset name or a spec object.
+    """Read the configured presentation and let ``overlay.*`` drive it.
+
+    The spec stays authoritative -- it is what every surface renders -- but three
+    config keys now feed into it instead of being read by nobody:
+    ``subtitle_size``, ``bar_alpha`` and ``bar_bottom_margin`` existed in the config,
+    in the settings page and as command line flags, and only the flags did anything,
+    because they rewrite the spec. The same change made from a config file silently
+    did nothing, which is the worst of both worlds.
+
+    Their defaults match the presets exactly (24 / 0.72 / 90), so applying them
+    unconditionally changes nothing for an untouched config.
+    """
+    return _apply_overlay_settings(_resolve_base(config), config)
+
+
+def _apply_overlay_settings(spec: PresentationSpec, config: Any) -> PresentationSpec:
+    overlay = getattr(config, "overlay", {}) or {}
+
+    size = overlay.get("subtitle_size")
+    target = spec.element("target")
+    if size and target is not None:
+        base = target.font.size or 24
+        try:
+            ratio = float(size) / float(base)
+        except (TypeError, ValueError, ZeroDivisionError):
+            ratio = 1.0
+        if ratio != 1.0 and ratio > 0:
+            # Every element scales together, so the source line keeps its proportion
+            # to the translation instead of the two drifting apart.
+            for element in spec.elements:
+                element.font.size = max(6, int(round(element.font.size * ratio)))
+
+    alpha = overlay.get("bar_alpha")
+    if alpha is not None and spec.background is not None:
+        spec.background.opacity = _clamp(float(alpha), 0.0, 1.0)
+
+    margin = overlay.get("bar_bottom_margin")
+    if margin is not None:
+        spec.layout.offset = (spec.layout.offset[0], -int(margin))
+
+    return spec
+
+
+def _resolve_base(config: Any) -> PresentationSpec:
+    """The configured presentation: a preset name or a spec object.
 
     Kept here rather than in ``session`` so that a config carrying a spec dict is
     validated the same way whether it came from a file, a command or a profile.
@@ -631,13 +694,25 @@ def _anchor_position(
     return x + offset[0], y + offset[1]
 
 
-def _element_text(role: str, source: str, target: str, trace: str) -> str:
+def _element_text(role: str, source: str, target: str, trace: str,
+                  previous: str = "") -> str:
+    """The text an element shows.
+
+    ``previous`` is the line before this one. Reading along with a subtitle that
+    replaces itself every few seconds loses the thread of the conversation -- a
+    scrolling line of what was just said is what keeps it. ``inplace`` does not need
+    it (the old text is still on screen under the plate) and ``panel`` already is a
+    history, which is why this is a role that presets opt into rather than something
+    every preset gets.
+    """
     if role == "source":
         return source
     if role == "target":
         return target
     if role == "trace":
         return trace
+    if role == "previous":
+        return previous
     return target
 
 
@@ -654,6 +729,7 @@ def compute_blocks(
     trace: str = "",
     coverage: float = 1.0,
     dim: bool = False,
+    previous: str = "",
 ) -> list[DrawBlock]:
     """Turn a spec plus a translation into positioned drawing primitives.
 
@@ -746,7 +822,7 @@ def compute_blocks(
     staged: list[tuple[list[DrawText], int, int]] = []
     for source, target, _box in units:
         texts = _layout_texts(
-            ordered, source, target, trace, 0, 0, measure, dim, coverage, spec
+            ordered, source, target, trace, 0, 0, measure, dim, coverage, spec, previous
         )
         if not texts:
             continue
@@ -812,12 +888,13 @@ def _layout_texts(
     dim: bool,
     coverage: float,
     spec: PresentationSpec,
+    previous: str = "",
 ) -> list[DrawText]:
     """Stack the configured elements vertically inside a block."""
     texts: list[DrawText] = []
     cursor = y
     for element in elements:
-        value = _element_text(element.role, source, target, trace)
+        value = _element_text(element.role, source, target, trace, previous)
         if not value.strip():
             continue
         opacity = element.opacity

@@ -576,6 +576,7 @@ def main(argv: list[str] | None = None) -> int:
             panel_height=int(config.overlay.get("panel_height", 320)),
             panel_font_size=int(config.overlay.get("panel_size", 13)),
             panel_history=int(config.overlay.get("panel_history", 12)),
+            dim_low_confidence=bool(config.overlay.get("dim_low_confidence", True)),
             region_box=(
                 (config.region.x, config.region.y, config.region.width, config.region.height)
                 if config.region

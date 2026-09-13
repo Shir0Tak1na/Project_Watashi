@@ -39,6 +39,8 @@ DEFAULTS: dict[str, Any] = {
         "det_limit_type": "max",
         "det_limit_side_len": None,
         "use_cls": False,
+        #: translate and draw only the largest N recognised boxes; 0 = no cap
+        "max_boxes": 0,
     },
     "translation": {
         "source": "auto",

@@ -1,0 +1,19 @@
+# Self checks that run without a display.
+#
+# This file is the single source of truth for CI: `.github/workflows/checks.yml`
+# reads it rather than listing scripts again, and `selfcheck_ci.py` asserts that
+# this list and checks_display.txt between them cover every selfcheck_*.py in the
+# directory. Adding a check without adding it here fails that assertion, which is
+# the point -- a check that silently never runs in CI is worse than no check,
+# because the green badge then means less than it appears to.
+#
+# One script per line. Blank lines and lines starting with # are ignored.
+selfcheck_presentation
+selfcheck_ocr
+selfcheck_dedup
+selfcheck_plugins
+selfcheck_settings
+selfcheck_settle
+selfcheck_session
+selfcheck_web
+selfcheck_ci

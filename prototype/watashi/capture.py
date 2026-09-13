@@ -135,17 +135,28 @@ class RegionCapturer:
     #: and a dragged region was ignored while the window kept being followed.
     KIND = "region"
 
-    def __init__(self, region: Region | None = None, monitor: int = 1) -> None:
+    def __init__(
+        self, region: Region | None = None, monitor: int = 1, height_ratio: float | None = None
+    ) -> None:
         self.monitor_index = monitor
         self._local = threading.local()
         self._region = region
+        # `capture.region_ratio` existed in the config, in the settings page and in the
+        # docs, and was passed to nobody: the automatic strip always used the default
+        # 0.18. Passing None keeps that default, so an untouched config is unchanged.
+        self.height_ratio = height_ratio
         if region is None:
             monitors = list_monitors()
             if monitor >= len(monitors):
                 raise ValueError(
                     f"monitor {monitor} not available (found {len(monitors) - 1})"
                 )
-            self._region = Region.bottom_strip(monitors[monitor])
+            if height_ratio is None:
+                self._region = Region.bottom_strip(monitors[monitor])
+            else:
+                self._region = Region.bottom_strip(
+                    monitors[monitor], height_ratio=float(height_ratio)
+                )
 
     @property
     def region(self) -> Region:
