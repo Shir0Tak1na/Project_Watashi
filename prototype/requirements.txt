@@ -6,6 +6,11 @@
 #
 # tkinter is used for the overlay and is part of the Python standard library,
 # so it is intentionally not listed.
+#
+# This file is what `pip install -r` installs, and therefore what CI installs.
+# selfcheck_deps exists because it was missing two packages that the local venv
+# happened to have: a check that passes locally and cannot start in a clean
+# environment is the failure mode that file guards against.
 
 rapidocr-onnxruntime>=1.4.4
 onnxruntime>=1.17
@@ -14,6 +19,20 @@ numpy>=1.24
 mss>=9.0
 pillow>=10.0
 pyyaml>=6.0
+
+# The web settings panel. Declared rather than left to the local environment:
+# watashi/web.py imports fastapi when the module is loaded, so without it
+# selfcheck_web cannot even be imported, and uvicorn is what actually serves the
+# panel -- the import is guarded, but the check starts a real server, so the
+# guard turns a missing package into a failed assertion instead of a clear error.
+fastapi>=0.110
+uvicorn>=0.29
+
+# Linux capture. mss declares no runtime dependencies of its own, but its Linux
+# backend imports Xlib, so without this a Linux user gets an ImportError the first
+# time anything is captured. The CI checks never capture, so this is for people
+# running the prototype rather than for the badge.
+python-xlib>=0.33; sys_platform == "linux"
 
 # Optional: local LLM backend for M3 (requirement R1). Requires a local GGUF
 # model file and is enabled by setting translation.llm_model in config.yaml.

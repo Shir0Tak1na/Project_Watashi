@@ -464,7 +464,7 @@ or names an unknown point is reported and skipped — never fatal, never silent.
 
 ## Verifying
 
-Twelve self checks run without a display, and four more with one:
+Thirteen self checks run without a display, and four more with one:
 
 ```bash
 prototype\run.cmd selfcheck_presentation --summary   # spec and layout maths
@@ -472,6 +472,7 @@ prototype\run.cmd selfcheck_session --summary        # engine boundary + languag
 prototype\run.cmd selfcheck_web --summary            # the panel and its limits
 prototype\run.cmd selfcheck_correct --summary        # hot reload + real time correction
 prototype\run.cmd selfcheck_corpus --summary         # layering, language, rules, write-back
+prototype\run.cmd selfcheck_deps --summary           # can a clean environment run these?
 prototype\run.cmd selfcheck_plugins --summary        # plugin contracts + failure handling
 prototype\run.cmd selfcheck_overlay --summary        # overlay, capture exclusion, hotkeys
 prototype\run.cmd selfcheck_window --summary         # window selection and following
@@ -479,8 +480,44 @@ prototype\run.cmd selfcheck_selector --summary       # drag-to-select, driven sy
 prototype\run.cmd selfcheck_desktop --summary        # the desktop window, its tabs and commands
 ```
 
-Counts as of the last full run: 45 / 17 / 29 / 138 / 79 / 35 / 49 / 21 / 60 / 64 /
-13 headless and 46 / 22 / 20 / 80 with a display — 718 checks, all passing.
+Counts as of the last full run: 45 / 17 / 29 / 138 / 79 / 17 / 35 / 49 / 21 / 60 /
+64 / 13 headless and 46 / 22 / 20 / 80 with a display — 735 checks, all passing.
+
+### Running this in CI
+
+`.github/workflows/checks.yml` runs the headless list on `ubuntu-latest` and
+`windows-latest`, Python 3.12. It is triggered by **any push to any branch**, by a
+pull request, or by hand from **Actions → checks → Run workflow**
+(`workflow_dispatch`). A workflow only executes where the repository is, so it starts
+when the commits are pushed to GitHub, not when they are committed locally — which is
+why there is also a local runner:
+
+```bash
+prototype\run.cmd check_all              # the same 12 checks CI runs, ~35 s
+prototype\run.cmd check_all --display    # plus the 4 that need a display
+prototype\run.cmd check_all --only selfcheck_corpus,selfcheck_deps
+```
+
+`check_all` reads `checks.txt` — the same file the workflow reads, so the two cannot
+disagree — and exits non-zero if anything failed, so it works as a pre-push gate.
+
+What CI itself runs, for reference:
+
+```bash
+python -m pip install -r prototype/requirements.txt
+while IFS= read -r line; do
+  name="$(echo "$line" | sed 's/#.*//' | tr -d '[:space:]')"
+  [ -z "$name" ] && continue
+  python "prototype/${name}.py" --summary || echo "FAILED: $name"
+done < prototype/checks.txt
+```
+
+Two checks protect that arrangement, from opposite sides. `selfcheck_deps` asserts the
+`pip install` above provides every package the checks import, so "passes locally, fails
+on the runner" is caught locally — it found `fastapi` and `uvicorn` missing on its first
+run, which would have failed both platforms. `selfcheck_ci` asserts that a new check
+cannot be added without being run here, by checking the two list files against the
+scripts on disk.
 `prototype/checks.txt` and `checks_display.txt` are the lists CI and the
 documentation both read; `selfcheck_ci` asserts they cover every
 `selfcheck_*.py`, so a new check cannot be added and then never run.
@@ -922,9 +959,11 @@ changes from `rule:affix` to `corpus:`, and the answer itself does not change.
 | Tool | Purpose |
 | --- | --- |
 | `watashi_proto.py --selftest` | Headless end-to-end check of OCR + corpus + rules + model. No screen needed. |
+| `check_all.py` | Runs every check CI runs (from `checks.txt`, the same file the workflow reads) on this machine, as a pre-push gate. `--display` adds the four that need a screen. |
 | `selfcheck_session.py` | **Headless verification of the engine boundary**: events, envelope integrity, every command, adapter pass-through. No screen needed. |
 | `selfcheck_correct.py` | **Headless verification of corpus hot reload and real time correction**: the file format, loose matching, both scopes, cache invalidation, the repaint, and mutation-tested assertions. No screen needed. |
 | `selfcheck_corpus.py` | **Headless verification of the corpus and rule engine** (R2 / R3), which had no check of its own: layering and priority, longest match, entry forms, the target-language dimension, rule language identity, explainability, R3's write-back loop, hot reload and damaged files. No screen needed. |
+| `selfcheck_deps.py` | **Headless verification that a clean environment can run the other checks**: walks their import closures and requires every package to be declared in `requirements.txt` or exempted with a reason. Found `fastapi` and `uvicorn` missing, which would have failed the first CI run on both platforms. No screen needed. |
 | `watashi_proto.py --list-monitors` | Enumerate monitors. |
 | `watashi_proto.py --select` | Drag to choose a region. |
 | `watashi_proto.py --print` | Echo recognised lines, translations and refinements to the console. |
@@ -1027,6 +1066,8 @@ prototype/
 ├── selfcheck_session.py  headless engine boundary verification
 ├── selfcheck_correct.py  headless corpus hot reload + correction verification
 ├── selfcheck_corpus.py   headless corpus/rule engine verification (R2 / R3)
+├── selfcheck_deps.py     headless check that a clean install can run the others
+├── check_all.py          runs every check CI runs, locally (pre-push gate)
 ├── config.yaml           configuration (paths relative to this file)
 ├── requirements.txt      local-only dependencies
 ├── fetch_model.py        one-time, resume-safe model download

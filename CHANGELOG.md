@@ -8,6 +8,49 @@ described in `Project Watashi.md`. It is usable for testing and it is honest abo
 what it does not do yet -- see "Known limitations" below, which is part of the
 release rather than a footnote.
 
+## [0.0.6] -- 2026-09-13 -- 测试版 (pre-release)
+
+The first CI run would have failed on both platforms, at the same line, for a reason
+no local check could see.
+
+### Fixed
+
+- **`fastapi` was not in `requirements.txt`.** `watashi/web.py` imports it when the
+  module loads, `selfcheck_web` imports that module, and `selfcheck_web` is in
+  `checks.txt` -- so CI would have failed at `ModuleNotFoundError: No module named
+  'fastapi'` on Linux *and* Windows. It passed locally because the virtual environment
+  had it installed by hand. `uvicorn` was missing for the same reason and is worse in
+  kind: its import is guarded, so the module loads fine and the check fails later when
+  the server refuses to start. Both are now declared, along with
+  `python-xlib; sys_platform == "linux"` -- `mss` declares no runtime dependencies of
+  its own but its Linux backend imports `Xlib`, so a Linux user's first capture would
+  otherwise fail on a package nothing told them to install.
+- **A headless Linux runner has no `libGL.so.1`, and `opencv-python` needs it at
+  import.** Added as one guarded apt step rather than switching to
+  `opencv-python-headless`, which `rapidocr-onnxruntime` also depends on -- two
+  distributions both providing `cv2` is a worse problem than a missing system library.
+
+### Added
+
+- **`selfcheck_deps`**, 17 checks: for every check in `checks.txt`, walk the real
+  import closure and require each third-party module to be declared in
+  `requirements.txt` or exempted with a written reason. Guarded imports count too --
+  excluding them is exactly how `uvicorn` was missed. It carries a vacuity guard (the
+  walker is asserted to find known dependencies, so a broken walker cannot report "all
+  clear" forever) and a negative control (the one deliberate exemption, the optional
+  LLM backend, is asserted to be found *and* exempted, so that path is not dead).
+  Verified by mutation: deleting `fastapi` from `requirements.txt` fails it.
+- The README now documents **how to run CI**, how to trigger it by hand
+  (`workflow_dispatch`), and the exact shell loop CI executes.
+- **`check_all`** (`prototype/check_all.py`), so the same 12 checks can be run locally
+  before pushing (34 s) instead of finding out from a red badge. It reads `checks.txt`,
+  the file the workflow itself reads, so the two lists cannot drift; `--display` adds
+  the four checks that need a screen and `--only` re-runs a subset. The first version of
+  this was a batch file, and it parsed the comment lines of `checks.txt` as script
+  names -- `delims=#` skips *leading* delimiters, so `# This file...` contributed `This`
+  as a check to run. One Python implementation for both platforms replaced a `.cmd` and
+  a `.sh`, which is also one parser instead of two.
+
 ## [0.0.5] -- 2026-09-13 -- 测试版 (pre-release)
 
 The corpus engine had no self check of its own, and two real defects were sitting in

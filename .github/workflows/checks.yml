@@ -1,8 +1,8 @@
 name: checks
 
-# Runs the self checks that need no display.
+# Runs the self checks that need no display, on Linux and Windows.
 #
-# Four of the twelve self checks open real windows (overlay, window selection,
+# Four of the sixteen self checks open real windows (overlay, window selection,
 # drag-to-select, the desktop main window). A hosted runner has no graphical session
 # and there is no Windows equivalent of `xvfb-run`, so those are verified locally and
 # listed in prototype/checks_display.txt instead of being quietly omitted.
@@ -11,6 +11,11 @@ name: checks
 # prototype/selfcheck_ci.py asserts that the two lists cover every selfcheck_*.py on
 # disk, so a new check cannot be added and then never run here -- which is the way a
 # green badge starts meaning less than it appears to.
+#
+# prototype/selfcheck_deps.py covers the other half of the same problem: that this
+# file's `pip install` is sufficient for those checks to start. It exists because it
+# was not (fastapi and uvicorn were missing while the local venv had them), so the
+# first run of this workflow would have failed on both platforms.
 
 on:
   push:
@@ -37,6 +42,17 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python }}
+
+      # opencv-python imports libGL.so.1 when it loads, and a headless Linux runner
+      # does not have it. The import is what fails, and the error looks like a broken
+      # installation rather than a missing system library, so it is worth one apt line
+      # to remove the question. Guarded to Linux because the Windows runner has its
+      # own OpenGL, and installing it there would be noise.
+      - name: System libraries for OpenCV (Linux only)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libgl1 libglib2.0-0
 
       - name: Install dependencies
         run: |
@@ -66,6 +82,12 @@ jobs:
 
       # A failure is much easier to act on with the counters in the log, and the
       # session report is the one summary that covers the whole engine end to end.
+      #
+      # The model weights live in models/llm/, which is not in the repository (617 MiB),
+      # so on a runner this reports the corpus + rules path and says the model is
+      # unavailable. That is a useful result in its own right -- it is the `lean`
+      # profile, and it is what a first-time user without the model sees -- which is
+      # why this step is kept rather than deleted, and why it does not fail the job.
       - name: Engine self test (OCR, corpus, rules, model)
         if: always()
         continue-on-error: true
