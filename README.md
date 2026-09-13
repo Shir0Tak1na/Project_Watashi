@@ -227,6 +227,15 @@ whitespace and edge punctuation OCR varies between frames; a `term` correction
 replaces that word in any sentence. See `prototype/README.md` for the engine
 commands (`correct`, `list_corrections`, `remove_correction`).
 
+**Editing the corpus in the UI.** The web panel's 语料库 tab is the editor: a table of
+every entry from every layer, with override, suppress, revert, import and export.
+**Editing a shipped entry does not rewrite the shipped file** — it writes an override
+into the user layer, and the UI shows what it overrode, what that entry used to say, and
+offers one-click revert. Import and export handle JSON (the corpus's own shapes) and
+CSV/TSV (Chinese headers understood, downloads written for spreadsheets), with other
+formats going through the plugin `corpus_loader` extension point. Every edit takes effect
+immediately.
+
 ## Custom rules
 
 Rules cover words that the corpus does not contain:

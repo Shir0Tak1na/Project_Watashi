@@ -313,6 +313,33 @@ OCR = Category(
             note="0 = 不限。真正的 OCR 提速手段仍是缩小识别区域",
         ),
         Field(
+            key="capture.exclude_self",
+            label="把自己的窗口排除在识别之外",
+            description="让 Windows 不把本程序自己的窗口拍进画面。引擎是「拍屏幕→认字→翻译」的，"
+                        "所以自己的窗口如果落在识别区域里，就是在读自己的输出："
+                        "字幕条会读到上一句译文，设置窗口会让画面每刷新一个计数器就重新识别一次——"
+                        "表现出来就是程序一启动就卡。悬浮窗一直这么做（不这么做它会读自己的字幕）。",
+            kind="bool",
+            default=True,
+            applies=RESTART,
+            danger="副作用是真实的：被排除的窗口对你自己的截图/录屏同样不可见",
+            note="关掉后仍有第二道防线：区域覆盖自己窗口时引擎会先暂停并说明原因",
+        ),
+        Field(
+            key="capture.hold_if_self_visible",
+            label="区域压住自己窗口时先暂停",
+            description="启动时、以及每次改识别区域后，检查识别区域是否覆盖了本程序的窗口"
+                        "（包括浏览器里打开的设置面板——那个窗口不属于本程序，"
+                        "排除机制管不了它）。覆盖到就先暂停并把原因写在状态里，"
+                        "把窗口移开再点「继续识别」。",
+            kind="bool",
+            default=True,
+            applies=LIVE,
+            command="set_self_capture",
+            cost="代价是偶尔需要你多点一次「继续识别」，换来的是不会一启动就卡着读自己的界面",
+            note="识别窗口捕获（use_window）时选不到本程序自己的窗口，这条对它不适用",
+        ),
+        Field(
             key="ocr.use_cls",
             label="方向分类",
             description="判断文字是否颠倒后再识别。字幕都是横排正立的，这个步骤"

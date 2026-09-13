@@ -323,6 +323,70 @@ def main() -> int:
         == "ワイ",
     )
 
+    # A value may be a *list*, which is how one file answers the same term in two
+    # languages -- the shape the corpus editor writes, and the only way to express it in
+    # a single JSON object, which cannot hold two identical keys.
+    listed = store(
+        _lang_dir(
+            root,
+            "listform",
+            {
+                "entries": {
+                    "gate": [
+                        {"target": "门", "lang": "zh-CN"},
+                        {"target": "ゲート", "lang": "ja"},
+                    ]
+                }
+            },
+        )
+    )
+    check.check(
+        "a list value answers each language separately",
+        listed.translate("gate", ZH).target_text == "门"
+        and listed.translate("gate", JA).target_text == "ゲート",
+        f"zh={listed.translate('gate', ZH).target_text!r} "
+        f"ja={listed.translate('gate', JA).target_text!r}",
+    )
+    check.check(
+        "and the list counts as two entries",
+        listed.size == 2,
+        f"{listed.size}",
+    )
+
+    # Layer precedence has to survive the language merge. An untagged override and a
+    # language-tagged shipped entry are different slots, so merging the language view with
+    # a plain dict update lets the tagged one win *regardless of layer* -- which silently
+    # defeated every override written without a language, i.e. the default in the editor.
+    precedence_root = Path(str(root) + "-precedence")
+    write(
+        precedence_root / "user",
+        "mine.json",
+        {"entries": {"sword intent": "剑之意"}},
+    )
+    write(
+        precedence_root / "domain",
+        "shipped.json",
+        {"lang": "zh-CN", "entries": {"sword intent": "剑意"}},
+    )
+    precedence = store(precedence_root)
+    check.check(
+        "an untagged user override beats a language-tagged shipped entry",
+        precedence.translate("sword intent", ZH).target_text == "剑之意",
+        f"got {precedence.translate('sword intent', ZH).target_text!r}: the user layer "
+        f"wins on layer, not on which dict was written last",
+    )
+    check.check(
+        "while the shipped entry is still there underneath",
+        any(entry.target == "剑意" for entry in precedence.entries_snapshot()),
+        "both are loaded; only one is used for this target",
+    )
+    check.check(
+        "and it is the user's entry that the lookup returns",
+        precedence.lookup_exact("sword intent", ZH).target == "剑之意"
+        and precedence.lookup_exact("sword intent", ZH).layer == LAYER_USER,
+        str(precedence.lookup_exact("sword intent", ZH)),
+    )
+
     # The bare form has no metadata layer, so a "lang" key there is just an entry. That
     # is a footgun with an obvious intent, and the engine says so instead of guessing:
     # reading the intent would mean either silently dropping a legitimate entry for the

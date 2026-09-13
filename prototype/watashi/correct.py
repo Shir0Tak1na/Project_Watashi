@@ -61,6 +61,26 @@ _README = (
 _WRITE_LOCK = threading.RLock()
 
 
+def write_json_atomic(path: Path, payload: Any) -> None:
+    """Write a whole JSON file, atomically.
+
+    A half written JSON file is a corpus that fails to load, and it fails at the next
+    start, far away from the write that caused it. So: temp file, then a rename, which is
+    atomic on both POSIX and Windows.
+
+    Shared by every file this application writes on the user's behalf -- corrections and
+    the edited library both use it, so neither can half-write its way into a state the
+    loader refuses, and there is one place to get the temp-file dance right.
+    """
+    body = json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+    path = Path(path)
+    with _WRITE_LOCK:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_name(path.name + ".tmp")
+        tmp.write_text(body, encoding="utf-8")
+        os.replace(tmp, path)
+
+
 def resolve_corrections_path(dirs: list[Path], fallback: Path | None = None) -> Path:
     """The corrections file for a list of already resolved user layer paths.
 
@@ -321,19 +341,11 @@ class Corrections:
         return count
 
     def save(self) -> None:
-        """Write the whole file atomically.
-
-        A half written JSON file is a corpus that fails to load, and it fails at the
-        next start, far away from the write that caused it. So: temp file, then a
-        rename, which is atomic on both POSIX and Windows.
-        """
-        payload = {"_readme": _README, "entries": {k: v.to_json() for k, v in self._items.items()}}
-        body = json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
-        with _WRITE_LOCK:
-            self.path.parent.mkdir(parents=True, exist_ok=True)
-            tmp = self.path.with_name(self.path.name + ".tmp")
-            tmp.write_text(body, encoding="utf-8")
-            os.replace(tmp, self.path)
+        """Write the whole file atomically."""
+        write_json_atomic(
+            self.path,
+            {"_readme": _README, "entries": {k: v.to_json() for k, v in self._items.items()}},
+        )
 
     # -- introspection ----------------------------------------------------- #
 

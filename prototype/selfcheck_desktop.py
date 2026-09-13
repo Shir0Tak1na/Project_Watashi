@@ -40,6 +40,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from watashi.checks import Checker  # noqa: E402
 
 from watashi.desktop import SCOPE_LABELS, DesktopApp  # noqa: E402
+from watashi.config import AppConfig  # noqa: E402
+from watashi.overlay import WDA_EXCLUDEFROMCAPTURE, _IS_WINDOWS  # noqa: E402
 from watashi.events import (  # noqa: E402
     CMD_CORRECT,
     CMD_SET_REGION,
@@ -128,8 +130,12 @@ class FakeSession:
         self.commands: list[tuple[str, dict[str, Any]]] = []
         self.fail_names: set[str] = set()
         self.corrections: list[dict[str, Any]] = []
+        self.paused = False
         self.presentation = PresentationSpec.preset("bar")
         self.presentation_sinks: list[Any] = []
+        #: the desktop window reads capture.exclude_self from it, and a fake that lacks it
+        #: would hide that code path from this check rather than exercise it
+        self.config = AppConfig.load()
 
     def subscribe(self, maxsize: int = 512) -> "queue.Queue[dict[str, Any]]":
         return self.channel
@@ -147,7 +153,17 @@ class FakeSession:
         self.commands.append((name, payload))
         if name in self.fail_names:
             return {"cmd": name, "ok": False, "detail": "refused by the fake session"}
-        return {"cmd": name, "ok": True, "detail": "ok"}
+        result: dict[str, Any] = {"cmd": name, "ok": True, "detail": "ok"}
+        # The real session reports the paused state on every command result, and the
+        # window reads it to flip its button without waiting for an event. A fake that
+        # omitted it would hide exactly that code path.
+        if name in ("pause", "resume", "toggle_pause"):
+            if name == "toggle_pause":
+                self.paused = not self.paused
+            else:
+                self.paused = name == "pause"
+            result["paused"] = self.paused
+        return result
 
     def correction_listing(self) -> list[dict[str, Any]]:
         return list(self.corrections)
@@ -192,13 +208,13 @@ def main() -> int:
     app.attach()
     try:
         # ---------------------------------------------------------------- #
-        check.section("the window builds with every tab")
+        check.section("the window builds with the tabs a desktop window is for")
         tabs = [
             app.notebook.tab(i, "text") for i in range(app.notebook.index("end"))
         ]
         check.check(
-            "seven tabs exist",
-            tabs == ["字幕", "采集", "翻译", "呈现", "插件", "设置", "诊断"],
+            "three tabs exist: the live view, capture, and plugins",
+            tabs == ["字幕", "采集", "插件"],
             f"got {tabs}",
         )
         check.check("the status strip starts empty-ish", app.status_var.get() != "")
@@ -208,8 +224,52 @@ def main() -> int:
             f"got {app.history!r}",
         )
 
+        # The tabs that used to be here -- 设置, 呈现, 诊断, 翻译 -- duplicated the web
+        # panel, and this is the assertion that they stay gone rather than growing back
+        # one at a time. A second editor of the same state is how two surfaces start
+        # disagreeing, which is the reason the panel became the editing surface.
+        gone = [
+            name for name in ("设置", "呈现", "诊断", "翻译") if name in tabs
+        ]
+        check.check(
+            "the duplicated settings/presentation/diagnostics/translation tabs are gone",
+            not gone,
+            f"still present: {gone}",
+        )
+        for attribute in ("settings_box", "presets_frame", "stats_box", "profiles_frame"):
+            check.check(
+                f"and their widgets went with them ({attribute})",
+                not hasattr(app, attribute),
+                "a half-removed tab leaves code that still tries to update it",
+            )
+
+        # "Screen recognition must exclude itself": the engine photographs a rectangle,
+        # and this window is one of the two windows we own that can be inside it.
+        check.check(
+            "the window asks Windows to keep it out of screen capture",
+            app.excluded_from_capture or not _IS_WINDOWS,
+            f"capture_affinity={hex(getattr(app, 'capture_affinity', 0))}",
+        )
+        check.check(
+            "using the variant that hides it from capture rather than rendering it black",
+            getattr(app, "capture_affinity", 0) == WDA_EXCLUDEFROMCAPTURE or not _IS_WINDOWS,
+            "WDA_MONITOR would also stop the loop but draws the window black",
+        )
+
+        off_session = FakeSession()
+        off_session.config.capture["exclude_self"] = False
+        app_off = DesktopApp(off_session, overlay=None, title="no exclusion")
+        try:
+            check.check(
+                "with the setting off it is not excluded, so the assertion above is not vacuous",
+                not app_off.excluded_from_capture,
+                f"capture_affinity={hex(getattr(app_off, 'capture_affinity', 0))}",
+            )
+        finally:
+            app_off.close()
+
         # ---------------------------------------------------------------- #
-        check.section("a ready event populates the settings views")
+        check.section("a ready event fills the strip, not four tabs")
         session.publish(EVENT_READY, session.info())
         drain(app)
         check.check(
@@ -223,30 +283,19 @@ def main() -> int:
             app.region_var.get(),
         )
         check.check(
-            "explanation line carries the counts",
-            "42 条词条" in app.corpus_var.get() and "3 条规则" in app.corpus_var.get(),
-            app.corpus_var.get(),
-        )
-        profile_buttons = [
-            w.cget("text") for w in app.profiles_frame.winfo_children()
-        ]
-        check.check(
-            "one button per profile",
-            profile_buttons == ["lean", "balanced", "full"],
-            f"got {profile_buttons}",
-        )
-        preset_buttons = [
-            w.cget("text") for w in app.presets_frame.winfo_children()
-        ]
-        check.check(
-            "one button per presentation preset",
-            preset_buttons == PresentationSpec.preset_names(),
-            f"got {preset_buttons}",
+            "the vocabulary line carries the counts and its languages",
+            "42 词条" in app.corpus_summary and "3 规则" in app.corpus_summary,
+            app.corpus_summary,
         )
         check.check(
-            "presentation summary names the current preset",
-            "当前：bar" in app.spec_var.get(),
-            app.spec_var.get(),
+            "the target language control is in the top bar, where it is used",
+            app.target_var.get() == "zh-CN",
+            app.target_var.get(),
+        )
+        check.check(
+            "the panel button is present, so the surface that edits is one click away",
+            "面板" in app.panel_button.cget("text"),
+            app.panel_button.cget("text"),
         )
         export_values = list(app.export_combo.cget("values"))
         check.check(
@@ -307,11 +356,22 @@ def main() -> int:
             "9.4 FPS" in app.status_var.get() and "893 MiB" in app.status_var.get(),
             app.status_var.get(),
         )
-        stats_text = app.stats_box.get("1.0", "end")
         check.check(
-            "the diagnostics tab shows raw counters",
-            '"refinements_dropped": 1' in stats_text and '"frames": 57' in stats_text,
-            stats_text.splitlines()[:2],
+            "the counters a user acts on are on that one line, where the diagnostics tab used to be",
+            "识别 57" in app.status_var.get() and "精修 8" in app.status_var.get(),
+            app.status_var.get(),
+        )
+        check.check(
+            "and so is the size of the loaded vocabulary",
+            "42 词条" in app.status_var.get(),
+            app.status_var.get(),
+        )
+        check.check(
+            "a presentation event from another surface does not break this window",
+            (session.publish(EVENT_PRESENTATION, PresentationSpec.preset("minimal").to_dict()),
+             drain(app),
+             app.current_var.get() == UPDATE.target_text)[-1],
+            "the presentation spec is edited in the panel now; this window must ignore it",
         )
         check.check(
             "the pause button flips with the paused state",
@@ -512,6 +572,33 @@ def main() -> int:
             session.commands == [(CMD_TOGGLE_PAUSE, {})],
             f"got {session.commands}",
         )
+        # The user's report: pressing the stop button changed nothing they could see. The
+        # button used to be set only from the next stats event, and a paused pipeline
+        # emitted none -- so it never moved.
+        check.check(
+            "and the button changes at once, without waiting for a stats event",
+            app.pause_button.cget("text") == "继续识别",
+            app.pause_button.cget("text"),
+        )
+        check.check(
+            "with the state said next to it, where a user asking 'is it running?' looks",
+            "已暂停" in app.pause_hint.get(),
+            app.pause_hint.get(),
+        )
+        app.toggle_pause()
+        check.check(
+            "clicking again flips both back",
+            app.pause_button.cget("text") == "暂停识别" and "正在识别" in app.pause_hint.get(),
+            f"{app.pause_button.cget('text')!r} / {app.pause_hint.get()!r}",
+        )
+        session.fail_names.add(CMD_TOGGLE_PAUSE)
+        app.toggle_pause()
+        check.check(
+            "a refused pause does not pretend to have happened",
+            app.pause_button.cget("text") == "暂停识别",
+            "the update is guarded by the command result, not by the click",
+        )
+        session.fail_names.discard(CMD_TOGGLE_PAUSE)
         app.target_var.set("ja")
         app.apply_target()
         check.check(
@@ -538,10 +625,11 @@ def main() -> int:
             any("无效的数值" in e[1] for e in app.history),
             [e[1] for e in app.history[-2:]],
         )
-        app.apply_presentation("inplace")
+        app.target_var.set("ja")
+        app.apply_target()
         check.check(
-            "presentation presets are applied by name",
-            session.commands[-1] == ("set_presentation", {"preset": "inplace"}),
+            "the target language in the top bar is applied as a command",
+            session.commands[-1] == ("set_target_lang", {"target_lang": "ja"}),
             f"got {session.commands[-1]}",
         )
         app.region_var.set("0,0,640,360")
@@ -550,6 +638,58 @@ def main() -> int:
             "the diff threshold is applied",
             session.commands[-1] == ("set_diff_threshold", {"value": 1.5}),
             f"got {session.commands[-1]}",
+        )
+
+        # The one control that hands the user to the surface that edits: it has to
+        # actually start the panel, and it must not open a browser window in a test run.
+        import watashi.desktop as desktop_module
+        import watashi.web as web_module
+
+        started: list[str] = []
+        opened: list[str] = []
+
+        class _Panel:
+            """Stands in for the web panel, so the check starts no server and no browser."""
+
+            running = False
+
+            def __init__(self, session: Any) -> None:
+                self.session = session
+
+            def start(self) -> bool:
+                self.running = True
+                started.append("started")
+                return True
+
+            def url(self) -> str:
+                return "http://127.0.0.1:9999/"
+
+        original_panel = web_module.WebPanel
+        original_open = desktop_module.webbrowser.open
+        web_module.WebPanel = _Panel  # type: ignore[assignment]
+        desktop_module.webbrowser.open = (  # type: ignore[assignment]
+            lambda url: opened.append(url) or True
+        )
+        try:
+            app.open_panel()
+        finally:
+            web_module.WebPanel = original_panel  # type: ignore[assignment]
+            desktop_module.webbrowser.open = original_open  # type: ignore[assignment]
+
+        check.check(
+            "the panel button starts the panel in this process",
+            started == ["started"],
+            f"started={started}",
+        )
+        check.check(
+            "and opens its URL rather than telling the user to run something",
+            opened == ["http://127.0.0.1:9999/"],
+            f"opened={opened}",
+        )
+        check.check(
+            "the URL is also written into the history, for when the browser does not open",
+            any("127.0.0.1:9999" in entry[1] for entry in app.history),
+            [entry[1] for entry in app.history[-3:]],
         )
 
         # a refused command must be visible, not silently ignored

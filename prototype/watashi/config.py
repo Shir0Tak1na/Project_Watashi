@@ -31,6 +31,10 @@ DEFAULTS: dict[str, Any] = {
         #: hold OCR back until the frame has been still this long (ms). 0 = the
         #: original behaviour: recognise the changing frame itself.
         "settle_ms": 0,
+        #: keep this program's own windows out of what it photographs
+        "exclude_self": True,
+        #: pause at startup when the capture region covers one of those windows
+        "hold_if_self_visible": True,
     },
     "ocr": {
         "intra_op_threads": 4,

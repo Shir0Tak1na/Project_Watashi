@@ -19,6 +19,7 @@ from __future__ import annotations
 import json
 import re
 import sys
+import tempfile
 import threading
 import time
 import urllib.error
@@ -83,6 +84,21 @@ def main() -> int:
 
     config = AppConfig.load()
     config.translation["nmt_model"] = None  # keep this fast
+    # The user corpus layer is pointed at a scratch directory *before* the engine is
+    # built. The panel's editor writes to the user layer, so leaving this alone would make
+    # this check write files into the repository's own corpus directory -- and setting it
+    # later would not help, because the corpus store is built from the config once.
+    import tempfile as _tempfile
+    from pathlib import Path as _Path
+
+    scratch_user = _Path(_tempfile.mkdtemp(prefix="watashi-web-library-")) / "user"
+    config.corpus["user"] = [str(scratch_user)]
+    # The panel's own window is the browser, which this check cannot see; the engine's
+    # self-capture guard could pause the pipeline if one happened to be over the capture
+    # strip, and the SSE assertions below expect frames. Guarded separately,
+    # in selfcheck_selfcapture.
+    config.capture["hold_if_self_visible"] = False
+
     session = Session(config, capturer=SyntheticCapturer(hold_seconds=0.7))
     session.build()
     session.start()
@@ -119,6 +135,77 @@ def main() -> int:
         check.check("no stray remote URLs anywhere in the page", not remote_refs,
                     f"{remote_refs[:3]}" if remote_refs else "")
 
+        # ---- is the page alive? ------------------------------------------ #
+        #
+        # Everything above reads the page as text, so all of it passes on a page whose
+        # script has a syntax error or whose ids were renamed -- and both of those leave a
+        # panel that loads and then does nothing at all. Neither is visible from the
+        # server side either: the HTML is served, the JSON endpoints answer, and the only
+        # broken thing is the browser.
+        print("")
+        print("-- the page's script is valid, not just present --")
+        scripts = re.findall(r"<script[^>]*>(.*?)</script>", html, flags=re.DOTALL)
+        check.check(
+            "the page has an inline script",
+            len(scripts) >= 1 and sum(len(block) for block in scripts) > 1000,
+            f"{len(scripts)} block(s), {sum(len(b) for b in scripts)} chars",
+        )
+        ids_defined = set(re.findall(r'id="([^"]+)"', html))
+        ids_used = set(re.findall(r'\$\("([^"]+)"\)', "".join(scripts)))
+        unknown = sorted(ids_used - ids_defined)
+        check.check(
+            "every element the script looks up exists in the markup",
+            not unknown,
+            f"looked up but not defined: {unknown}",
+        )
+        check.check(
+            "and it looks up a plausible number of elements",
+            len(ids_used) >= 20,
+            f"{len(ids_used)} id(s) reached for, {len(ids_defined)} defined",
+        )
+
+        # Local aliases again: this function imports shutil, tempfile and Path further
+        # down, and a local import anywhere in a function makes that name local for the
+        # whole of it -- so the module level ones are unreachable from here. That trap has
+        # cost three confusing failures in this file alone.
+        import shutil as _shutil
+
+        node = _shutil.which("node")
+        if node is None:
+            check.skip(
+                "the inline script parses",
+                "node is not installed here, so the script's syntax could not be checked. "
+                "Everything above still passes on a page that cannot run.",
+            )
+        else:
+            import subprocess
+            import tempfile as _tempfile
+            from pathlib import Path as _PathAgain
+
+            parse_failures: list[str] = []
+            for index, block in enumerate(scripts):
+                with _tempfile.NamedTemporaryFile(
+                    "w", suffix=".js", delete=False, encoding="utf-8"
+                ) as handle:
+                    handle.write(block)
+                    temp = _PathAgain(handle.name)
+                try:
+                    result = subprocess.run(
+                        [node, "--check", str(temp)],
+                        capture_output=True,
+                        text=True,
+                        timeout=30,
+                    )
+                finally:
+                    temp.unlink(missing_ok=True)
+                if result.returncode != 0:
+                    parse_failures.append(f"block {index}: {result.stderr.strip()[:200]}")
+            check.check(
+                "the inline script parses",
+                not parse_failures,
+                "; ".join(parse_failures) or f"{len(scripts)} block(s) parsed by {node}",
+            )
+
         # ---- json endpoints --------------------------------------------- #
         print("")
         print("-- json endpoints --")
@@ -152,13 +239,152 @@ def main() -> int:
         check.check("and it lists the human corrections, so they can be read here",
                     isinstance(corpus.get("corrections"), list),
                     f"{len(corpus.get('corrections', []))} correction(s)")
-        check.check("the page has a read-only section for them",
+        check.check("the page has a section for them",
                     "实时纠正" in html and "xentries" in html,
-                    "viewing is in scope for this panel; authoring is not")
+                    "the corrections stay read-only; the corpus does not")
+
+        # ---- the corpus editor ------------------------------------------- #
+        print("")
+        print("-- the corpus editor: the panel is the editing surface --")
+        check.check("the editor writes to the scratch user layer, not the repository",
+                    str(session.library_view().get("file", "")).startswith(str(scratch_user)),
+                    str(session.library_view().get("file")))
+
+        status, body = get(base + "/api/library")
+        library = json.loads(body)
+        check.check("GET /api/library lists the editor's rows",
+                    status == 200 and len(library.get("entries", [])) > 0,
+                    f"{len(library.get('entries', []))} row(s)")
+        check.check("with the state each row is in",
+                    all(
+                        {"source", "target", "lang", "layer", "origin", "user",
+                         "overrides", "suppressed"} <= set(row)
+                        for row in library["entries"][:5]
+                    ),
+                    str(sorted(library["entries"][0]))[:120] if library.get("entries") else "",
+                )
+        check.check("and the file it writes, so a user can find it",
+                    str(library.get("file", "")).endswith("library.json"),
+                    str(library.get("file")))
+        check.check("the shipped entries are marked as shipped",
+                    any(row["user"] is False for row in library["entries"]),
+                    f"{sum(1 for row in library['entries'] if not row['user'])} shipped row(s)")
+        check.check("and nothing in this fresh editor is the user's yet",
+                    library.get("user") == 0,
+                    f"user={library.get('user')}")
+
+        status, body = post(base + "/api/command",
+                            {"cmd": "library_put", "source": "void sword",
+                             "target": "虚空剑", "lang": "zh-CN"})
+        result = json.loads(body)
+        check.check("library_put is allowed through the panel",
+                    status == 200 and result.get("ok"), str(result.get("detail"))[:80])
+        status, body = get(base + "/api/library")
+        library = json.loads(body)
+        check.check("the new row is the user's",
+                    any(row["source"] == "void sword" and row["user"]
+                        for row in library["entries"]),
+                    f"user={library.get('user')}")
+        check.check("and the engine translates with it immediately",
+                    session.corpus.translate("void sword", "zh-CN").target_text == "虚空剑",
+                    session.corpus.translate("void sword", "zh-CN").target_text)
+
+        shipped = next(
+            row for row in library["entries"] if not row["user"] and not row["suppressed"]
+        )
+        status, body = post(base + "/api/command",
+                            {"cmd": "library_put", "source": shipped["source"],
+                             "target": "覆盖测试"})
+        check.check("overriding a shipped entry through the panel is allowed",
+                    status == 200 and json.loads(body).get("ok"),
+                    str(json.loads(body).get("detail"))[:80])
+        status, body = get(base + "/api/library")
+        overridden = next(
+            row for row in json.loads(body)["entries"]
+            if row["source"] == shipped["source"] and row["user"]
+        )
+        check.check("and the row says what it overrides",
+                    overridden["overrides"] == shipped["origin"],
+                    f"{overridden['overrides']} vs {shipped['origin']}")
+        check.check("with the shipped translation still visible for comparison",
+                    overridden["overrides_target"] == shipped["target"],
+                    f"{overridden['overrides_target']!r} vs {shipped['target']!r}")
+
+        status, body = post(base + "/api/command",
+                            {"cmd": "library_suppress", "source": shipped["source"]})
+        check.check("library_suppress is allowed", status == 200 and json.loads(body).get("ok"))
+        status, body = get(base + "/api/library")
+        row = next(
+            item for item in json.loads(body)["entries"] if item["source"] == shipped["source"]
+        )
+        check.check("the row is still listed, marked as hidden",
+                    row["suppressed"] is True,
+                    "a row that disappears leaves no way to undo it")
+
+        status, body = post(base + "/api/command",
+                            {"cmd": "library_restore", "source": shipped["source"]})
+        check.check("library_restore brings it back", status == 200 and json.loads(body).get("ok"))
+
+        # import: the text path the page's file picker uses
+        status, body = post(base + "/api/library/import",
+                            {"format": "csv",
+                             "text": "source,target,lang\naether,以太,zh-CN\nsky,天,zh-CN\n"})
+        result = json.loads(body)
+        check.check("POST /api/library/import applies an uploaded file",
+                    status == 200 and result.get("ok"), str(result.get("detail"))[:80])
+        check.check("and it reports what it added",
+                    "added 2" in str(result.get("detail")),
+                    str(result.get("detail"))[:80])
+        check.check("the response carries the new view, so the page need not re-ask",
+                    any(row["source"] == "aether" for row in result.get("entries", [])),
+                    f"{len(result.get('entries', []))} rows back")
+
+        status, body = post(base + "/api/library/import",
+                            {"format": "json", "text": "{ not json"})
+        check.check("a broken upload is refused with the parser's reason",
+                    status == 400 and "JSON" in str(json.loads(body).get("detail")),
+                    str(json.loads(body).get("detail"))[:80])
+
+        # export: a real download, because that is what the point of exporting is
+        request = urllib.request.Request(base + "/api/library/export?format=csv&scope=user")
+        with urllib.request.urlopen(request, timeout=10) as response:
+            exported = response.read()
+            disposition = response.headers.get("Content-Disposition", "")
+            media = response.headers.get("Content-Type", "")
+        check.check("GET /api/library/export returns a file, not a JSON string",
+                    disposition.startswith("attachment") and "watashi-corpus-user.csv" in disposition,
+                    disposition)
+        check.check("as CSV", "text/csv" in media, media)
+        check.check("with a BOM, so a spreadsheet opens the Chinese correctly",
+                    exported.startswith(b"\xef\xbb\xbf"),
+                    str(exported[:8]))
+        text = exported.decode("utf-8-sig")
+        check.check("containing the header and the user's rows",
+                    text.startswith("source,target") and "aether" in text and "void sword" in text,
+                    text[:80])
+        check.check("and not the shipped rows, for scope=user",
+                    "sword intent" not in text,
+                    f"{len(text.splitlines())} line(s)")
+
+        request = urllib.request.Request(base + "/api/library/export?format=json&scope=effective")
+        with urllib.request.urlopen(request, timeout=10) as response:
+            effective = json.loads(response.read().decode("utf-8"))
+        check.check("scope=effective exports the whole corpus as a corpus file",
+                    "entries" in effective and len(effective["entries"]) > 50,
+                    f"{len(effective.get('entries', {}))} entr(ies)")
+
+        request = urllib.request.Request(base + "/api/library/export?format=xlsx&scope=user")
+        try:
+            with urllib.request.urlopen(request, timeout=10) as response:
+                status = response.status
+        except urllib.error.HTTPError as exc:
+            status = exc.code
+        check.check("an unsupported export format is refused, not silently substituted",
+                    status == 400, f"status={status}")
 
         # ---- the boundary: settings in, features refused ------------------ #
         print("")
-        print("-- the panel's boundary: settings only, no features --")
+        print("-- what the panel still refuses --")
         status, body = post(base + "/api/corpus",
                             {"source": "web panel probe", "target": "面板探针"})
         check.check("POST /api/corpus does not exist (no corpus authoring)",

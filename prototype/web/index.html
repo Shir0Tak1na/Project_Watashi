@@ -86,6 +86,7 @@
 </header>
 <nav>
   <button data-tab="view" class="active">阅览</button>
+  <button data-tab="corpus">语料库</button>
   <button data-tab="settings">全部设置</button>
   <button data-tab="look">外观与版式</button>
   <button data-tab="engine">引擎设置</button>
@@ -103,20 +104,104 @@
       <h2>双语对照历史</h2>
       <div id="historywrap"><table><tbody id="history"></tbody></table></div>
     </div>
+  </section>
+
+  <!--
+    语料库：项目里唯一需要"编辑"而不是"调参"的东西，所以它是一张表，不是一组开关。
+
+    这一页同时承担三件事，因为它们在用户眼里是同一件事：屏幕上这个词译错了（实时纠正）、
+    我的术语表里想加一条（你的词条）、出厂库里这条我不认（内置库）。
+    三者最终都落到用户私有层的同一个文件里，界面必须把"这条到底是谁写的、覆盖了谁"讲清楚，
+    否则用户改完不知道自己是改对了还是把出厂数据改坏了。
+  -->
+  <section id="corpus">
+    <style>
+      .libtable { width: 100%; border-collapse: collapse; font-size: 13px; }
+      .libtable th { text-align: left; color: var(--dim); font-weight: 500;
+                     padding: 6px 8px; border-bottom: 1px solid var(--line); }
+      .libtable td { padding: 5px 8px; border-bottom: 1px solid #141a20;
+                     vertical-align: middle; }
+      .libtable tr.mine td { background: #101a14; }
+      .libtable tr.hidden td { opacity: .55; }
+      .libtable input { width: 100%; }
+      .libtable .tgt { color: #e6eef5; }
+      .pill.mine { background: #12301f; color: #7dd39a; }
+      .pill.over { background: #16283d; color: #8fb8e0; }
+      .pill.ship { background: #1d2228; color: #8a9aa8; }
+      .pill.off { background: #3a2a12; color: #e0b070; }
+      .librow { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+      .librow input, .librow select { width: auto; }
+    </style>
+
     <div class="card">
-      <h2>已加载词条 <span class="pill" id="csize"></span></h2>
-      <p class="muted" style="margin:0 0 10px">
-        只读。词条是磁盘上的文件，直接改文件即可 —— 引擎按修改时间自动热加载，无需在此操作。
+      <h2>词条 <span class="pill" id="libsize">读取中…</span></h2>
+      <p class="muted" style="margin:0 0 8px" id="libfile"></p>
+      <p class="muted" style="margin:0 0 12px">
+        你写的一切只进用户私有层的 <code>library.json</code>，优先级最高。
+        <b>改出厂词条不会动出厂文件</b>：它写成一条同名覆盖，标为「已覆盖」，可一键还原；
+        「停用」则是让出厂的某条整条不生效。
+        改完立刻生效（引擎按修改时间热加载，这里写完后会强制重载一次），不需要重启。
       </p>
-      <p class="muted" style="margin:0 0 10px" id="clangs"></p>
-      <div class="row"><input id="cfilter" placeholder="筛选…" style="flex:1"></div>
-      <div id="entries"></div>
+      <div class="row">
+        <input id="libfilter" placeholder="筛选源词或译文…" style="flex:1">
+        <label class="muted"><input type="checkbox" id="libshowhidden"> 显示停用的</label>
+      </div>
+      <div id="libtable"></div>
     </div>
+
+    <div class="card">
+      <h2>新增 / 覆盖一条</h2>
+      <div class="librow">
+        <input id="libsource" placeholder="原文（要译的词或整句）" style="min-width:260px">
+        <input id="libtarget" placeholder="译文" style="min-width:220px">
+        <input id="liblang" placeholder="语言，如 zh-CN / ja（留空=任意目标）" style="min-width:220px">
+        <input id="libnote" placeholder="备注（可选）" style="min-width:180px">
+        <button class="act" id="libadd">写入</button>
+        <span class="muted" id="libmsg"></span>
+      </div>
+      <p class="muted" style="margin:8px 0 0">
+        原文填出厂库里已有的词，这里保存的就是一条覆盖；填新词就是新增。
+      </p>
+    </div>
+
+    <div class="card">
+      <h2>导入 / 导出</h2>
+      <div class="librow">
+        <input type="file" id="libfileinput" accept=".json,.csv,.tsv,.txt">
+        <select id="libimportfmt">
+          <option value="auto">按扩展名自动判断</option>
+          <option value="json">JSON</option>
+          <option value="csv">CSV</option>
+          <option value="tsv">TSV</option>
+        </select>
+        <label class="muted"><input type="checkbox" id="libreplace" checked> 覆盖同名词条</label>
+        <button class="act" id="libimport">导入</button>
+      </div>
+      <div class="librow" style="margin-top:10px">
+        <select id="libexportfmt">
+          <option value="json">JSON</option>
+          <option value="csv">CSV（Excel 可直接打开）</option>
+          <option value="tsv">TSV</option>
+        </select>
+        <select id="libexportscope">
+          <option value="user">只导出我写的</option>
+          <option value="effective">导出当前实际生效的全部</option>
+        </select>
+        <button class="act" id="libexport">下载</button>
+        <span class="muted" id="libexportmsg"></span>
+      </div>
+      <p class="muted" style="margin:10px 0 0">
+        导入的 JSON 支持语料库本身的写法（<code>{"lang": "zh-CN", "entries": {...}}</code> 或直接的键值表），
+        所以能当语料库用的文件都能直接导进来；CSV/TSV 认 <code>source,target,lang,pos,domain,note</code> 表头，
+        没有表头时按两列「原文,译文」读。
+        其它格式（例如从别处导出的术语表）由插件的 <code>corpus_loader</code> 扩展点处理。
+      </p>
+    </div>
+
     <div class="card">
       <h2>实时纠正 <span class="pill" id="xsize">—</span></h2>
       <p class="muted" style="margin:0 0 10px" id="xfile">
-        只读。纠正在看到错译的地方做：桌面窗口选中那一行改成你要的译文，
-        或给引擎发 <code>correct</code> 命令。记录写进用户语料库最高优先级的一层，
+        只读。纠正在看到错译的地方做：在字幕上选中那一行改成你要的译文，记录就写进同一个用户层文件，
         这一帧立刻改过来，以后同样的句子也用它。这里只用来查看。
       </p>
       <div id="xentries"></div>
@@ -618,42 +703,255 @@ function buildLook() {
   });
 }
 
-/* ---- read-only views ---- */
-async function loadCorpus() {
-  const data = await (await fetch("/api/corpus")).json();
-  $("csize").textContent = data.size + " 条";
-  // Which target languages these entries can answer for. A corpus is not
-  // language-neutral: an en->zh vocabulary answering a request for Japanese would
-  // show Chinese at full confidence, so the engine only uses entries whose declared
-  // language matches, and this line is how a user finds out why nothing matched.
-  $("clangs").textContent = data.languages
-    ? "语言：" + data.languages + "（只有匹配当前目标语言的词条会被使用）"
-    : "语言：未标注（对任何目标语言都可用）";
-  const filter = $("cfilter").value.trim().toLowerCase();
-  const box = $("entries");
+/* ---- 语料库：读、改、导入导出 ---- */
+
+// The engine's view of the corpus, one row per entry, keyed by source. Three states a
+// row can be in, and each needs a different action:
+//   mine + overrides  -> 你覆盖了出厂条目（可还原）
+//   mine              -> 你自己加的（可删除）
+//   shipped           -> 出厂条目（可覆盖，而且改它不会动出厂文件）
+//   shipped+suppressed-> 你停用的出厂条目（可还原）
+let LIBRARY = { entries: [] };
+
+async function loadLibrary() {
+  LIBRARY = await (await fetch("/api/library")).json();
+  renderLibrary();
+  loadCorrections();
+}
+
+function libMatches(entry, filter) {
+  if (!filter) return true;
+  return entry.source.toLowerCase().includes(filter) ||
+         entry.target.toLowerCase().includes(filter);
+}
+
+function renderLibrary() {
+  const data = LIBRARY;
+  const mine = (data.entries || []).filter((e) => e.user && !e.suppressed);
+  $("libsize").textContent =
+    (data.active || 0) + " 条生效 · " + mine.length + " 条是你的" +
+    (data.overriding ? "（其中 " + data.overriding + " 条覆盖了出厂）" : "") +
+    (data.suppressed ? " · 停用 " + data.suppressed + " 条" : "");
+  $("libfile").textContent =
+    "写入 " + (data.file || "?") + "；语料库语言：" + (data.languages || "未标注") +
+    "（只有匹配当前目标语言的词条会被使用）";
+
+  const filter = $("libfilter").value.trim().toLowerCase();
+  const showHidden = $("libshowhidden").checked;
+  const rows = (data.entries || [])
+    .filter((e) => (showHidden || !e.suppressed) && libMatches(e, filter))
+    .slice(0, 500);
+
+  const box = $("libtable");
   box.innerHTML = "";
   const table = document.createElement("table");
-  table.innerHTML = "<thead><tr><th>源词</th><th>译文</th><th>语言</th><th>层级</th><th>来源</th></tr></thead>";
+  table.className = "libtable";
+  table.innerHTML =
+    "<thead><tr><th style='width:24%'>原文</th><th style='width:24%'>译文</th>" +
+    "<th style='width:9%'>语言</th><th style='width:13%'>状态</th>" +
+    "<th>来源</th><th style='width:22%'></th></tr></thead>";
   const body = document.createElement("tbody");
-  (data.entries || [])
-    .filter((e) => !filter || e.source.toLowerCase().includes(filter) ||
-                             e.target.toLowerCase().includes(filter))
-    .slice(0, 400)
-    .forEach((e) => {
-      const tr = document.createElement("tr");
-      tr.innerHTML = "<td></td><td></td><td><span class='pill'></span></td><td><span class='pill'></span></td><td class='muted'></td>";
-      tr.children[0].textContent = e.source;
-      tr.children[1].textContent = e.target;
-      tr.children[2].firstChild.textContent = e.lang || "任意";
-      tr.children[3].firstChild.textContent = e.layer;
-      tr.children[4].textContent = e.origin;
-      body.appendChild(tr);
-    });
+  rows.forEach((entry) => body.appendChild(libraryRow(entry)));
   table.appendChild(body);
   box.appendChild(table);
+  if (!rows.length) {
+    const p = document.createElement("p");
+    p.className = "muted";
+    p.textContent = "没有匹配的词条。";
+    box.appendChild(p);
+  }
+}
+
+function libraryRow(entry) {
+  const tr = document.createElement("tr");
+  if (entry.user) tr.classList.add("mine");
+  if (entry.suppressed) tr.classList.add("hidden");
+
+  const source = document.createElement("td");
+  source.textContent = entry.source;
+  const target = document.createElement("td");
+  target.className = "tgt";
+  target.textContent = entry.target;
+  const lang = document.createElement("td");
+  lang.textContent = entry.lang || "任意";
+
+  const state = document.createElement("td");
+  if (entry.suppressed) {
+    const pill = document.createElement("span");
+    pill.className = "pill off";
+    pill.textContent = "已停用";
+    state.appendChild(pill);
+  } else if (entry.overrides) {
+    const pill = document.createElement("span");
+    pill.className = "pill over";
+    pill.textContent = entry.user ? "已覆盖出厂" : "出厂";
+    state.appendChild(pill);
+    if (entry.user) {
+      const note = document.createElement("div");
+      note.className = "muted";
+      note.textContent = "原为 " + (entry.overrides_target || "?");
+      state.appendChild(note);
+    }
+  } else {
+    const pill = document.createElement("span");
+    pill.className = entry.user ? "pill mine" : "pill ship";
+    pill.textContent = entry.user ? "你的" : "出厂";
+    state.appendChild(pill);
+  }
+
+  const origin = document.createElement("td");
+  origin.className = "muted";
+  origin.textContent = entry.origin;
+
+  const actions = document.createElement("td");
+  actions.appendChild(libButton("编辑", () => editLibraryRow(tr, entry)));
+  if (entry.user) {
+    actions.appendChild(libButton("删除", () => libraryCommand("library_delete",
+      { source: entry.source }, entry.source)));
+  } else if (entry.suppressed) {
+    actions.appendChild(libButton("恢复", () => libraryCommand("library_restore",
+      { source: entry.source }, entry.source)));
+  } else {
+    actions.appendChild(libButton("停用", () => libraryCommand("library_suppress",
+      { source: entry.source }, entry.source)));
+  }
+
+  tr.append(source, target, lang, state, origin, actions);
+  return tr;
+}
+
+function libButton(label, handler) {
+  const button = document.createElement("button");
+  button.className = "act";
+  button.textContent = label;
+  button.style.marginRight = "4px";
+  button.onclick = handler;
+  return button;
+}
+
+// Editing in place rather than in a separate dialog: the row being changed is the subject,
+// and a modal that hides the rest of the table makes it impossible to see whether the term
+// already exists under another layer.
+function editLibraryRow(tr, entry) {
+  tr.innerHTML = "";
+  const inputs = {};
+  ["source", "target", "lang"].forEach((field) => {
+    const cell = document.createElement("td");
+    const input = document.createElement("input");
+    input.value = entry[field] || "";
+    inputs[field] = input;
+    cell.appendChild(input);
+    tr.appendChild(cell);
+  });
+  const state = document.createElement("td");
+  state.className = "muted";
+  state.textContent = entry.overrides ? "将覆盖 " + entry.overrides : "新增";
+  tr.appendChild(state);
+  const origin = document.createElement("td");
+  origin.className = "muted";
+  origin.textContent = entry.origin;
+  tr.appendChild(origin);
+
+  const actions = document.createElement("td");
+  actions.appendChild(libButton("保存", () => libraryCommand("library_put", {
+    source: inputs.source.value,
+    target: inputs.target.value,
+    lang: inputs.lang.value,
+  }, inputs.source.value)));
+  actions.appendChild(libButton("取消", () => renderLibrary()));
+  tr.appendChild(actions);
+  inputs.target.focus();
+}
+
+async function libraryCommand(cmd, payload, label) {
+  const response = await fetch("/api/command", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ cmd, ...payload }),
+  });
+  const result = await response.json();
+  if (!response.ok || !result.ok) {
+    // Said in the editor as well as the log: a refused edit that only appears in a
+    // scrollback the user is not looking at reads as "the button does nothing".
+    $("libmsg").textContent = (label ? label + "：" : "") + (result.detail || response.status);
+    log("语料库 " + cmd + " 失败：" + (result.detail || response.status), true);
+    return false;
+  }
+  $("libmsg").textContent = (label ? label + " 已保存：" : "") + (result.detail || "ok");
+  log("语料库 " + cmd + "：" + result.detail);
+  await loadLibrary();
+  return true;
+}
+
+$("libfilter").oninput = renderLibrary;
+$("libshowhidden").onchange = renderLibrary;
+
+$("libadd").onclick = async () => {
+  const source = $("libsource").value.trim();
+  const target = $("libtarget").value.trim();
+  if (!source || !target) {
+    $("libmsg").textContent = "原文和译文都要填。";
+    return;
+  }
+  const ok = await libraryCommand("library_put", {
+    source, target,
+    lang: $("liblang").value.trim(),
+    note: $("libnote").value.trim(),
+  }, source);
+  if (ok) {
+    $("libsource").value = "";
+    $("libtarget").value = "";
+    $("libnote").value = "";
+  }
+};
+
+$("libimport").onclick = async () => {
+  const file = $("libfileinput").files[0];
+  if (!file) {
+    $("libmsg").textContent = "先选一个文件。";
+    return;
+  }
+  let format = $("libimportfmt").value;
+  if (format === "auto") {
+    const name = file.name.toLowerCase();
+    format = name.endsWith(".csv") ? "csv" : name.endsWith(".tsv") ? "tsv"
+           : name.endsWith(".json") ? "json" : (name.split(".").pop() || "json");
+  }
+  const text = await file.text();
+  $("libmsg").textContent = "导入中… " + file.name;
+  const response = await fetch("/api/library/import", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ text, format, replace: $("libreplace").checked }),
+  });
+  const result = await response.json();
+  if (!response.ok || !result.ok) {
+    $("libmsg").textContent = "导入失败：" + (result.detail || response.status);
+    log("导入失败：" + (result.detail || response.status), true);
+    return;
+  }
+  $("libmsg").textContent = "导入完成：" + result.detail;
+  log("导入 " + file.name + "：" + result.detail);
+  await loadLibrary();
+};
+
+$("libexport").onclick = () => {
+  const format = $("libexportfmt").value;
+  const scope = $("libexportscope").value;
+  // A plain navigation rather than fetch: the server sets Content-Disposition, so the
+  // browser writes the file and there is no blob plumbing in the page.
+  const url = "/api/library/export?format=" + encodeURIComponent(format) +
+              "&scope=" + encodeURIComponent(scope);
+  $("libexportmsg").textContent = "已开始下载";
+  window.location.href = url;
+  log("导出语料库：" + scope + " / " + format);
+};
+
+/* ---- 实时纠正（只读） ---- */
+async function loadCorrections() {
+  const data = await (await fetch("/api/corpus")).json();
   renderCorrections(data.corrections || []);
 }
-$("cfilter").oninput = loadCorpus;
 
 function renderCorrections(list) {
   $("xsize").textContent = list.length ? list.length + " 条" : "暂无";
@@ -752,7 +1050,8 @@ document.querySelectorAll("nav button").forEach((b) => {
     document.querySelectorAll("section").forEach((x) => x.classList.remove("active"));
     b.classList.add("active");
     $(b.dataset.tab).classList.add("active");
-    if (b.dataset.tab === "view") { renderPreview(); loadCorpus(); }
+    if (b.dataset.tab === "view") { renderPreview(); }
+    if (b.dataset.tab === "corpus") loadLibrary();
     if (b.dataset.tab === "diag") loadStats();
     if (b.dataset.tab === "look") { buildLook(); renderPreview(); }
     if (b.dataset.tab === "engine") { if (INFO) buildEngine(INFO); buildProfiles(INFO && INFO.profiles); }
@@ -775,7 +1074,7 @@ function connect() {
     $("statustext").textContent = (d.backend || "") + " · " + d.corpus_entries +
       " 词条 · " + d.memory_mib + " MiB";
     if (d.presentation) { SPEC = d.presentation; buildLook(); renderPreview(); }
-    buildEngine(d); buildProfiles(d.profiles); loadCorpus();
+    buildEngine(d); buildProfiles(d.profiles); loadLibrary();
   });
   on("presentation", (d) => { SPEC = d; buildLook(); renderPreview(); });
 
@@ -786,7 +1085,15 @@ function connect() {
     if (d.source && d.target) expectRepaint = d.source;
     log("纠正已记录：" + (d.source || d.removed || "") + " → " + (d.target || "（已删除）") +
         "（" + (d.path || "") + "）");
-    loadCorpus();
+    loadLibrary();
+  });
+
+  // The corpus was edited -- here, in the desktop window, or by the CLI. Re-read rather
+  // than trust the payload, for the same reason settings do: the file is the state, and
+  // a table that disagrees with the engine is worse than no table.
+  on("library", (d) => {
+    log("语料库已更新：" + (d.detail || "") + "（生效 " + (d.active ?? "?") + " 条）");
+    loadLibrary();
   });
 
   on("subtitle", (d) => {

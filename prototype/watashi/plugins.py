@@ -43,8 +43,8 @@ Extension points
 ``renderer``       see docs/presentation-spec.md        layouts the spec cannot express
 ``translator``     subclass ``translate.Translator``    an alternative backend
 
-Only ``postprocess`` and ``export`` are wired into the running engine today;
-``corpus_loader``, ``renderer`` and ``translator`` are reserved and reported by
+Only ``postprocess``, ``export`` and ``corpus_loader`` are wired into the running engine
+today; ``renderer`` and ``translator`` are reserved and reported by
 ``--list-plugins`` so an author can see what is not yet connected rather than
 discovering it by having their plugin ignored.
 """
@@ -65,7 +65,7 @@ PLUGIN_API_VERSION = 1
 #: Extension point name -> (contract signature, whether the engine calls it today)
 EXTENSION_POINTS: dict[str, tuple[str, bool]] = {
     "postprocess": ("(text, context) -> str | None", True),
-    "corpus_loader": ("(path) -> dict", False),
+    "corpus_loader": ("(path) -> dict", True),
     "export": ("(payload, options) -> str", True),
     "renderer": ("see docs/presentation-spec.md", False),
     "translator": ("a translate.Translator subclass", False),
@@ -300,6 +300,36 @@ class PluginRegistry:
                 continue
             result = produced
         return result
+
+    def load_corpus(self, path: Path) -> tuple[dict[str, Any] | None, str | None]:
+        """Read a corpus file in a format this application does not know.
+
+        Returns ``(payload, error)``. The first plugin to return an object wins: two
+        implementations claiming the same format would be ambiguous, and silently taking
+        one of them is worse than saying which was used.
+
+        This is the ``corpus_loader`` extension point, reserved in the API since the first
+        version and useless until the editor needed it: importing a glossary in someone
+        else's format was the case it was written for.
+        """
+        for info, implementation in self.implementations("corpus_loader"):
+            function = (
+                implementation
+                if callable(implementation)
+                else getattr(implementation, "load_corpus", None)
+            )
+            if not callable(function):
+                self._note_failure(info, "no callable load_corpus(path)")
+                continue
+            try:
+                produced = function(Path(path))
+            except Exception as exc:
+                self._note_failure(info, f"{type(exc).__name__}: {exc}")
+                continue
+            if isinstance(produced, dict):
+                return produced, None
+            self._note_failure(info, f"returned {type(produced).__name__}, expected dict")
+        return None, f"no corpus_loader plugin could read {Path(path).suffix or 'that file'}"
 
     def export(self, fmt: str, payload: Any, options: dict[str, Any] | None = None) -> str | None:
         """Render ``payload`` in the named format, or None when nobody provides it."""

@@ -8,6 +8,197 @@ described in `Project Watashi.md`. It is usable for testing and it is honest abo
 what it does not do yet -- see "Known limitations" below, which is part of the
 release rather than a footnote.
 
+## [0.0.6a] -- 2026-09-13 -- 测试版 (pre-release)
+
+Labelled `0.0.6a` because that is what it is from the outside: the first release after
+0.0.6, and a patch to it in the only sense that matters here — the two things the user
+reported after using 0.0.6. The work in between was developed as 0.0.7 and 0.0.8 and is
+folded in rather than published as separate versions, since none of it was ever released.
+
+The two reported defects, both of which were real and neither of which any check could
+have caught as written:
+
+- **The pause button never changed, so there was no way to tell whether it was
+  recognising.** Root cause: `_emit_stats()` is called at the end of a processed frame,
+  and a paused pipeline processes none — so the last stats event stayed `paused: False`
+  forever, and the window redrew its button and status line from that stale object eight
+  times a second. Pressing pause stopped the engine and the interface went on saying
+  "recognising", while the one message that did say 已暂停 was overwritten a moment later.
+  Fixed at three levels: pausing and resuming now publish a stats event of their own, the
+  button is set from the command result without waiting for any event, and the state is
+  shown next to the button rather than only inside a long counter line.
+- **The engine read its own windows.** "Screen recognition must exclude itself" is two
+  problems, and they needed different answers. A window this program owns — the overlay,
+  the control window — can be excluded from capture by Windows, and the control window now
+  asks for exactly that (`WDA_EXCLUDEFROMCAPTURE`, verified as `0x11`). A **browser showing
+  the web panel is not our window**, so there is nothing to ask: the engine now detects it,
+  refuses to start, and says which window is in the way and how much of the region it
+  covers. The user's stutter was change detection never settling on a window that repaints
+  its own counters.
+
+Both are covered by checks that would have caught them: `selfcheck_session` asserts that
+pausing publishes a stats event, `selfcheck_desktop` asserts the button flips on the click
+(and does not flip when the command is refused), and `selfcheck_selfcapture` covers the
+geometry, the window filter, the hold and the two switches that turn the guards off.
+`selfcheck_desktop` also asserts the exclusion really is applied, with the setting off as
+a control — `0x11` against `0x0`.
+
+### Added
+
+- **The 语料库 tab in the web panel.** One table of every entry from every layer, with the
+  three states an editable corpus actually has and the action each one needs: yours
+  (edit, delete), an override of a shipped entry (edit, revert), a shipped entry (edit →
+  becomes an override, or 停用). Plus a filter, an add form, and import/export.
+- **Editing a shipped entry never rewrites the shipped file.** It writes an override into
+  the user layer, which wins by layer precedence, and the UI says what it overrode and
+  what that entry used to say. The shipped corpora are demo data tracked by git;
+  rewriting them would dirty a working tree, conflict with the next pull, and destroy the
+  difference between "what shipped" and "what I changed". `selfcheck_library` asserts the
+  bytes are unchanged after an edit through the same code path the UI uses.
+- **Suppression**, for the other half of editing a shipped library: an entry can be turned
+  off without pretending to translate it (`_suppress` in the user layer). A row that
+  merely *vanished* would leave the user with no way to ask why or to undo it, so hidden
+  entries stay listed, marked, and one click from coming back.
+- **Import and export.** JSON in the corpus's own shapes, plus CSV and TSV with headers
+  (`source,target,lang,pos,domain,note`, Chinese headers understood; no header means two
+  columns). Text in, text out, so the browser does the file handling and the panel needs
+  no access to the machine it runs on. CSV downloads are written `utf-8-sig` so a
+  spreadsheet opens Chinese text instead of mojibake. Export can be the user's own entries
+  or everything in effect, the latter shaped so it can be dropped into another install.
+- **The `corpus_loader` plugin point is wired.** It has been reserved in the plugin API
+  since the first version, described as "read a corpus format other than JSON", and had no
+  caller until an editor needed to import a format it does not know. Reserved extension
+  points that nothing calls are indistinguishable from broken ones.
+- **`library_list` / `library_put` / `library_delete` / `library_suppress` /
+  `library_restore` / `library_import` / `library_export`**, plus a `library` event so a
+  second surface repaints its table instead of showing a stale one.
+
+### Changed
+
+- **The desktop window lost four tabs.** 设置, 呈现, 诊断 and 翻译 each duplicated something
+  the web panel already did better — one of them existed only to say "adjust this in the
+  web panel" — and two editors of one file is how two surfaces start disagreeing. What
+  remains is what a browser cannot do: the live view with its correction editor, the
+  region and window controls, plugins, and the target language in the top bar, which is
+  the one setting a user changes while watching. 「打开设置面板」 starts the panel
+  in-process and opens it, so the editing surface is one click away rather than a sentence
+  in a tooltip.
+- **The panel's command allowlist grew on purpose.** It was "settings and viewing only";
+  a vocabulary table, a file picker and a fifty-field form are things a browser does well
+  and tkinter does poorly. What is still refused is runtime control (`pause`, `resume`,
+  `shutdown`, `reload_corpus`), because a stray click in a browser tab must not stop the
+  subtitles.
+- A corpus entry's value may now be a **list**, which is how one file answers the same term
+  in two languages. A JSON object cannot hold two identical keys, so the alternative would
+  have been a file that looks correct and silently keeps one of them.
+
+### Fixed
+
+- **An untagged user override was defeated by a language-tagged shipped entry.** Entries
+  are keyed by (language, source), and the language view was merged with a plain dict
+  update, so the language-specific entry won *regardless of layer* — and the editor writes
+  overrides without a language by default, which made the default case the broken one.
+  Merging now goes through the same layer-and-priority rule as everything else. Found in
+  two places, because `lookup_exact` had it too, which means rule-based lookups did as
+  well.
+- **`selfcheck_web` wrote into the repository's own corpus layer.** Testing the editor
+  against the real config would have left `library.json` in someone's working tree; the
+  check now points the user layer at a scratch directory *before* the engine is built, and
+  asserts that it did.
+- **Hot reload could miss an edit made in the same 15.6 ms as the previous write.** NTFS
+  timestamps come from a clock that ticks at about that rate, so two writes inside one
+  tick get an *identical* mtime — and mtime was the only thing compared. It showed up as
+  `selfcheck_correct` failing roughly one run in ten with a reload counter of zero, on an
+  edit that had plainly happened. The snapshot now records size as well as time, which
+  catches the common case; the blind spot that remains (same tick, same length) is why an
+  explicit reload exists and why a correction forces one. The flake is now a
+  deterministic assertion: the check stamps an edit with the previous write's own mtime
+  and requires it to be seen, and removing the size from the snapshot makes that assertion
+  fail.
+- `selfcheck_web` now also verifies that the panel's page is *alive* — the inline script
+  parses (via Node, skipped when Node is absent) and every element the script looks up
+  exists in the markup. Every previous assertion read the page as text, so all of them
+  passed on a page whose script had a syntax error: served fine, endpoints fine, and not a
+  single tab or table in the browser.
+
+### Testing
+
+- New `selfcheck_library` (112 checks) asserts the safety properties rather than the
+  features: the shipped file is unchanged byte for byte after an edit through the same path
+  the UI uses, a hand-written corpus file beside it is untouched, override and suppress and
+  revert each mean exactly one thing, and every export format imports back to the same
+  entries and translations.
+- `selfcheck_web` grew from 64 to 94 checks: the editor's endpoints end to end (edit,
+  override, suppress, restore, import, export-as-a-real-download, and a refused byte
+  sequence), and the page-liveness assertions above.
+- `selfcheck_desktop` was rewritten for the slimmed window: it now asserts the four
+  duplicated tabs stay gone and that their widgets went with them, that the top bar holds
+  the target language and the panel button, and that the button really starts the panel and
+  opens its URL (with both effects stubbed, so no server and no browser in a test run).
+- New `selfcheck_selfcapture` (40 checks): the rectangle geometry, which windows count as
+  ours (by process and by title), that a window already excluded from capture is not
+  treated as a problem, the hold itself, and both switches.
+
+### Verified for the first time
+
+- The desktop window's text reaches the screen. A screenshot of the window was read back
+  by the project's OCR: the current translation, the source line, the 对照历史 label, the
+  实时纠正 frame title, the 原文 / 译文 field labels, the 保存纠正 button, a history
+  entry's provenance line, and the settings page's category headings, at 0.95-1.00
+  confidence. The negative control held: a nonce string that is not on screen was not
+  recognised.
+- The overlay's text reaches the screen, at 1.00 confidence, and is absent once the
+  overlay is hidden.
+- The exclusion asked for and granted: `GetWindowDisplayAffinity` returns
+  `WDA_EXCLUDEFROMCAPTURE` (`0x11`) for the control window, and `0x0` when the setting is
+  off — asserted both ways, so the first is not a coincidence.
+
+### Added: checking that the interface is alive
+
+- **`selfcheck_uirender`** (display only, 11 checks). Every other UI check asserts
+  *structure* -- a widget exists, its text variable is set, a canvas item sits inside the
+  canvas -- and none of them can notice a window that paints nothing, text the same
+  colour as its plate, or a control covering the label it belongs to. This one
+  photographs the real desktop window and the real overlay and reads them back **with the
+  project's own OCR**, which is also a fair test of the interface: the engine has to be
+  able to read it. The overlay's assertion is differential -- a probe string that exists
+  nowhere else must be read off a screenshot while the overlay is up and be gone once it
+  is hidden -- so it cannot be satisfied by another window's text.
+- **`Checker.skip`**. One class of check cannot run on every desktop, and the honest
+  outcome is neither pass nor failure. Skips are printed in `--summary` too, because a
+  check that quietly verified nothing is how a green run starts meaning less than it
+  appears to.
+- `selfcheck_deps` now walks the display checks as well, and follows sibling
+  `selfcheck_*.py` scripts instead of counting them as distributions -- which it did, on
+  its first run after the change.
+
+### Fixed: found while looking at the interface
+
+- **Closing the desktop window printed 13 Tcl errors to stderr**
+  (`invalid command name ..._pump`). `_pump` scheduled its next tick without cancelling
+  the previous one, so a driver that calls it directly -- which the self checks do, to
+  run the widget without a main loop -- queued a tick per call and only the last was
+  cancelled at teardown. Rescheduling is now idempotent: at most one tick is ever
+  pending.
+
+### Measured, and worth knowing before trusting a screenshot again
+
+- **Being the foreground window is not the same as being on top.** `GetForegroundWindow`
+  reported this project's own window while another application was painted over 70% of
+  it, and a check that trusted the API would have reported the resulting missing text as
+  a rendering bug. Visibility is now *measured*: hide the window, diff the screen, and
+  the share that changes is the share that was visible.
+- **A layered window is not what a screen capture returns.** At the bar preset's 0.72
+  alpha (`WS_EX_LAYERED` with per-window alpha) the overlay could not be photographed at
+  all — three attempts captured other applications and one of them nearly became a bug
+  report about a plate drawn without text. With the window forced opaque its text read
+  back at 1.00. `PrintWindow`, the usual answer to occlusion, returns solid black for a
+  layered window.
+- **Tk's window coordinates are correct.** An intermediate conclusion that they disagreed
+  with Win32 was my own arithmetic: `GetWindowRect` reports the same DPI-virtualised
+  space Tk uses for a DPI-unaware process, and dividing it by the display scale was
+  wrong.
+
 ## [0.0.6] -- 2026-09-13 -- 测试版 (pre-release)
 
 The first CI run would have failed on both platforms, at the same line, for a reason

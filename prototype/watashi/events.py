@@ -54,6 +54,10 @@ EVENT_SETTINGS = "settings"
 #: travels separately, so a surface that only wants to update its list of corrections
 #: need not re-render a frame.
 EVENT_CORRECTION = "correction"
+#: The corpus was edited through a UI: entries added, changed, hidden or imported. Sent
+#: so a second surface repaints its table without either knowing the other exists, the
+#: same reason EVENT_SETTINGS exists.
+EVENT_LIBRARY = "library"
 
 ALL_EVENTS = (
     EVENT_READY,
@@ -64,6 +68,7 @@ ALL_EVENTS = (
     EVENT_ERROR,
     EVENT_SETTINGS,
     EVENT_CORRECTION,
+    EVENT_LIBRARY,
     EVENT_COMMAND_RESULT,
     EVENT_STOPPED,
     EVENT_PRESENTATION,
@@ -93,6 +98,16 @@ CMD_LIST_CORRECTIONS = "list_corrections"
 CMD_REMOVE_CORRECTION = "remove_correction"
 #: {"auto_reload": bool, "reload_interval_ms": int}
 CMD_SET_CORPUS_RELOAD = "set_corpus_reload"
+#: {"exclude_self": bool, "hold_if_self_visible": bool}
+CMD_SET_SELF_CAPTURE = "set_self_capture"
+#: the corpus editor: reading it, and the four things a user can do to an entry
+CMD_LIBRARY_LIST = "library_list"
+CMD_LIBRARY_PUT = "library_put"
+CMD_LIBRARY_DELETE = "library_delete"
+CMD_LIBRARY_SUPPRESS = "library_suppress"
+CMD_LIBRARY_RESTORE = "library_restore"
+CMD_LIBRARY_IMPORT = "library_import"
+CMD_LIBRARY_EXPORT = "library_export"
 
 ALL_COMMANDS = (
     CMD_PAUSE,
@@ -113,6 +128,14 @@ ALL_COMMANDS = (
     CMD_LIST_CORRECTIONS,
     CMD_REMOVE_CORRECTION,
     CMD_SET_CORPUS_RELOAD,
+    CMD_SET_SELF_CAPTURE,
+    CMD_LIBRARY_LIST,
+    CMD_LIBRARY_PUT,
+    CMD_LIBRARY_DELETE,
+    CMD_LIBRARY_SUPPRESS,
+    CMD_LIBRARY_RESTORE,
+    CMD_LIBRARY_IMPORT,
+    CMD_LIBRARY_EXPORT,
 )
 
 

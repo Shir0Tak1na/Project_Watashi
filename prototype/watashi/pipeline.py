@@ -286,13 +286,21 @@ class Pipeline:
         Dropping the pending frame matters: without it a frame already queued
         would still be OCR'd and published, so a user who hits pause would see
         one more subtitle appear. Pause should be deterministic.
+
+        Announcing it matters just as much. Stats are emitted at the end of a
+        processed frame, and a paused pipeline processes none -- so without this the
+        last stats event stays ``paused: False`` forever, and every surface that draws
+        its state from stats keeps saying "recognising". That is exactly what the user
+        reported: pressing pause changed nothing they could see.
         """
         self._paused.set()
         self._slot.clear()
+        self._emit_stats()
 
     def resume(self) -> None:
         self._paused.clear()
         self.detector.reset()
+        self._emit_stats()
 
     def toggle_pause(self) -> bool:
         if self._paused.is_set():

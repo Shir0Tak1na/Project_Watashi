@@ -22,6 +22,7 @@ import json
 import os
 import queue
 import tkinter as tk
+import webbrowser
 from tkinter import filedialog, messagebox, ttk
 from typing import Any, Callable
 
@@ -30,17 +31,15 @@ from .correct import SCOPE_LINE, SCOPE_TERM
 from .events import (
     CMD_CORRECT,
     CMD_EXPORT,
-    CMD_LOAD_PROFILE,
     CMD_SET_DIFF_THRESHOLD,
     CMD_SET_FPS,
-    CMD_SET_PRESENTATION,
     CMD_SET_REGION,
     CMD_SET_TARGET_LANG,
     CMD_TOGGLE_PAUSE,
     CMD_USE_WINDOW,
     EVENT_CORRECTION,
     EVENT_ERROR,
-    EVENT_PRESENTATION,
+    EVENT_LIBRARY,
     EVENT_READY,
     EVENT_REFINEMENT,
     EVENT_SETTINGS,
@@ -51,7 +50,6 @@ from .events import (
     decode_stats,
     decode_update,
 )
-from .presentation import PresentationSpec
 
 #: Refreshed from a stats event. Kept short because a desktop window that lags is
 #: worse than one that updates plainly.
@@ -80,7 +78,10 @@ class DesktopApp:
         self.on_quit = on_quit
         self.history: list[tuple[str, str, bool]] = []
         self.stats: Any = None
-        self.spec: PresentationSpec | None = None
+        #: one line about the loaded vocabulary, for the status strip
+        self.corpus_summary = ""
+        #: the web panel, started on demand by 「打开设置面板」
+        self._panel: Any = None
         self._channel: "queue.Queue[dict[str, Any]]" = queue.Queue(maxsize=512)
         self._after_id: str | None = None
         self._closed = False
@@ -97,7 +98,45 @@ class DesktopApp:
         self.root.geometry("980x640")
         self.root.minsize(760, 520)
         self._build()
+        self._exclude_from_capture()
         self.root.protocol("WM_DELETE_WINDOW", self.close)
+
+    def _exclude_from_capture(self) -> None:
+        """Ask Windows to keep this window out of screen capture.
+
+        The engine photographs a rectangle of the screen; if this window is inside it, the
+        engine reads its own counters and status line, and change detection fires on every
+        repaint -- the stutter at startup. The overlay has always done this for itself
+        (it must, or it would read its own subtitles); the control window is the other
+        window we own that can end up in the region.
+
+        The cost is real and worth stating: ``WDA_EXCLUDEFROMCAPTURE`` hides the window
+        from *every* capture, including a screenshot the user takes on purpose. Hence the
+        setting, and hence the other half of the problem being handled by detection rather
+        than exclusion -- a browser showing the web panel is not our window, so there is
+        nothing to ask Windows to hide.
+        """
+        if not bool(self.session.config.capture.get("exclude_self", True)):
+            return
+        from .overlay import set_capture_exclusion
+
+        applied = set_capture_exclusion(self.root, True)
+        self.capture_affinity = applied
+        if applied == 0:
+            # Not fatal, and worth saying: the detection still catches this window.
+            self._append_history((
+                "",
+                "提示：无法把设置窗口排除在截屏之外，"
+                "如果采集区域覆盖它，引擎会先暂停并告诉你。",
+                True,
+            ))
+
+    @property
+    def excluded_from_capture(self) -> bool:
+        """Whether Windows is keeping this window out of screen capture."""
+        from .overlay import WDA_MONITOR, WDA_EXCLUDEFROMCAPTURE
+
+        return getattr(self, "capture_affinity", 0) in (WDA_MONITOR, WDA_EXCLUDEFROMCAPTURE)
 
     # ------------------------------------------------------------------ #
     # construction
@@ -121,6 +160,15 @@ class DesktopApp:
         ttk.Label(strip, textvariable=self.profile_var).pack(side="right")
 
         # ---- controls ---------------------------------------------------- #
+        #
+        # What is here, and what is deliberately not. The window is a desktop window, so
+        # it keeps the things only a native window can do -- a global pause, dragging a
+        # region on the real screen, picking a window, and the target language, which is
+        # the one setting a user changes while watching. Everything else that used to be
+        # a tab here (the full settings schema, the presentation spec editor, the raw
+        # counters, the memory tiers) duplicated the web panel and is gone: two surfaces
+        # editing the same state is how they start disagreeing, and a form of fifty
+        # described fields is something a browser does better than tkinter.
         controls = ttk.LabelFrame(self.root, text="控制", padding=(10, 6))
         controls.pack(fill="x", padx=10)
         self.pause_button = ttk.Button(controls, text="暂停识别", command=self.toggle_pause)
@@ -132,7 +180,26 @@ class DesktopApp:
             side="left", padx=(0, 6)
         )
         ttk.Button(controls, text="导出…", command=self.export).pack(side="left", padx=(0, 6))
-        ttk.Button(controls, text="重载语料库", command=self.reload_corpus).pack(side="left")
+        ttk.Button(controls, text="重载语料库", command=self.reload_corpus).pack(
+            side="left", padx=(0, 12)
+        )
+        # Next to the button it belongs to, because "is it recognising?" is the one thing
+        # a user asking about pause wants answered, and the long status line on the row
+        # above is where that answer got lost.
+        self.pause_hint = tk.StringVar(value="")
+        ttk.Label(controls, textvariable=self.pause_hint, foreground="#7fc4ff").pack(
+            side="left", padx=(0, 12)
+        )
+        ttk.Label(controls, text="目标语言").pack(side="left")
+        self.target_var = tk.StringVar(value="zh-CN")
+        ttk.Entry(controls, textvariable=self.target_var, width=10).pack(
+            side="left", padx=(4, 4)
+        )
+        ttk.Button(controls, text="应用", command=self.apply_target).pack(side="left")
+        self.panel_button = ttk.Button(
+            controls, text="打开设置面板", command=self.open_panel
+        )
+        self.panel_button.pack(side="right")
 
         # ---- tabs -------------------------------------------------------- #
         notebook = ttk.Notebook(self.root)
@@ -140,11 +207,7 @@ class DesktopApp:
         self.notebook = notebook
         self._build_subtitles(notebook)
         self._build_capture(notebook)
-        self._build_translation(notebook)
-        self._build_presentation(notebook)
         self._build_plugins(notebook)
-        self._build_settings(notebook)
-        self._build_diagnostics(notebook)
 
     def _tab(self, notebook: ttk.Notebook, title: str) -> ttk.Frame:
         frame = ttk.Frame(notebook, padding=10)
@@ -293,47 +356,6 @@ class DesktopApp:
             justify="left", foreground="#5f7386",
         ).pack(anchor="w", pady=(10, 0))
 
-    def _build_translation(self, notebook: ttk.Notebook) -> None:
-        frame = self._tab(notebook, "翻译")
-        self.target_var = tk.StringVar(value="zh-CN")
-        row = ttk.Frame(frame)
-        row.pack(fill="x", pady=2)
-        ttk.Label(row, text="目标语言", width=12).pack(side="left")
-        ttk.Entry(row, textvariable=self.target_var, width=14).pack(side="left")
-        ttk.Button(row, text="应用", command=self.apply_target).pack(side="left", padx=6)
-
-        ttk.Label(frame, text="内存档位 / 配置档").pack(anchor="w", pady=(12, 4))
-        self.profiles_frame = ttk.Frame(frame)
-        self.profiles_frame.pack(fill="x")
-        ttk.Label(
-            frame,
-            text="lean 不加载模型（约 175 MiB）；balanced 常规桌面用法（约 890 MiB）。",
-            foreground="#5f7386",
-        ).pack(anchor="w", pady=(6, 0))
-
-        ttk.Label(frame, text="语料库").pack(anchor="w", pady=(14, 4))
-        self.corpus_var = tk.StringVar(value="")
-        ttk.Label(frame, textvariable=self.corpus_var, foreground="#5f7386").pack(anchor="w")
-        ttk.Label(
-            frame,
-            text="词条是磁盘上的文件；直接改文件即可，引擎按修改时间自动热加载。",
-            foreground="#5f7386",
-        ).pack(anchor="w", pady=(4, 0))
-
-    def _build_presentation(self, notebook: ttk.Notebook) -> None:
-        frame = self._tab(notebook, "呈现")
-        ttk.Label(frame, text="预设").pack(anchor="w")
-        self.presets_frame = ttk.Frame(frame)
-        self.presets_frame.pack(fill="x", pady=(4, 10))
-        self.spec_var = tk.StringVar(value="")
-        ttk.Label(frame, textvariable=self.spec_var, foreground="#5f7386",
-                  justify="left").pack(anchor="w")
-        ttk.Label(
-            frame,
-            text="改动会立即广播给悬浮窗——两者共用同一份声明式呈现规格。",
-            foreground="#5f7386",
-        ).pack(anchor="w", pady=(8, 0))
-
     def _build_plugins(self, notebook: ttk.Notebook) -> None:
         frame = self._tab(notebook, "插件")
         self.plugins_box = tk.Text(
@@ -357,102 +379,6 @@ class DesktopApp:
                  "不适合分发给他人。失败会被报告并跳过，不会影响主程序。",
             justify="left", foreground="#5f7386",
         ).pack(anchor="w", pady=(8, 0))
-
-    def _build_settings(self, notebook: ttk.Notebook) -> None:
-        """Every setting, with the same explanation the web panel shows.
-
-        Read-only on purpose. The division of labour settled earlier is that the web
-        panel adjusts settings and this window controls and displays; a second editor
-        here would be a second place for the two to disagree. What this tab is for is
-        answering "what is this program doing and why", which is the complaint that
-        started this work -- so it shows all 49 settings with their descriptions,
-        their current values, and whether changing one needs a restart.
-
-        It refreshes whenever any surface changes a setting, so the reference cannot
-        go stale while the window is open.
-        """
-        frame = self._tab(notebook, "设置")
-        ttk.Label(
-            frame,
-            text="全部设置及其说明。调整请用 Web 面板（run.cmd --serve）；"
-                 "这里随任何界面的改动自动刷新。",
-            foreground="#5f7386", justify="left", wraplength=880,
-        ).pack(anchor="w", pady=(0, 6))
-        self.settings_header = tk.StringVar(value="")
-        ttk.Label(frame, textvariable=self.settings_header, foreground="#5f7386",
-                  justify="left", wraplength=880).pack(anchor="w", pady=(0, 6))
-        self.settings_box = tk.Text(
-            frame, wrap="word", bg="#0b0f13", fg="#c9d6e0", relief="flat",
-            insertwidth=0, font=("Microsoft YaHei UI", 10), padx=10, pady=8,
-        )
-        self.settings_box.pack(fill="both", expand=True)
-        self.settings_box.tag_configure("cat", foreground="#7fc4ff",
-                                        font=("Microsoft YaHei UI", 11, "bold"),
-                                        spacing1=10, spacing3=4)
-        self.settings_box.tag_configure("label", foreground="#e6eef5",
-                                        font=("Microsoft YaHei UI", 10, "bold"))
-        self.settings_box.tag_configure("desc", foreground="#93a6b5")
-        self.settings_box.tag_configure("meta", foreground="#5f7386")
-        self.settings_box.tag_configure("warn", foreground="#e0b070")
-        self.settings_box.configure(state="disabled")
-
-    def _refresh_settings(self) -> None:
-        if self._closed or self.session is None:
-            return
-        try:
-            payload = self.session.settings_payload()
-        except Exception as exc:  # a broken payload must not take the window down
-            self.settings_header.set(f"读取设置失败：{exc}")
-            return
-        overridden = set(payload.get("overridden") or [])
-        self.settings_header.set(
-            f"{payload.get('live_count', 0)} 项立即生效 · "
-            f"{payload.get('restart_count', 0)} 项需重启 · "
-            f"已修改 {len(overridden)} 项 · 配置文件 {payload.get('overrides_file')}"
-        )
-        box = self.settings_box
-        box.configure(state="normal")
-        box.delete("1.0", "end")
-        for category in payload.get("categories", []):
-            box.insert("end", f"{category['title']}\n", ("cat",))
-            if category.get("summary"):
-                box.insert("end", f"  {category['summary']}\n", ("meta",))
-            for field in category.get("fields", []):
-                value = (category.get("values") or {}).get(field["key"])
-                if isinstance(value, list):
-                    value = ", ".join(str(v) for v in value) or "(空)"
-                elif value is None:
-                    value = "(空)"
-                marker = "  [已修改]" if field["key"] in overridden else ""
-                needs = "需重启" if field.get("applies") == "restart" else "立即生效"
-                box.insert(
-                    "end",
-                    f"  {field['label']}  =  {value}{marker}   ({needs})\n",
-                    ("label",),
-                )
-                box.insert("end", f"      {field['description']}\n", ("desc",))
-                bits = [field["key"]]
-                if field.get("low") is not None and field.get("high") is not None:
-                    bits.append(
-                        f"范围 {field['low']}–{field['high']}{field.get('unit', '')}"
-                    )
-                bits.append(f"默认 {field.get('default')!r}")
-                if field.get("note"):
-                    bits.append(f"提示 {field['note']}")
-                box.insert("end", "      " + " · ".join(bits) + "\n", ("meta",))
-                if field.get("danger"):
-                    box.insert("end", f"      ⚠ {field['danger']}\n", ("warn",))
-            box.insert("end", "\n")
-        box.configure(state="disabled")
-
-    def _build_diagnostics(self, notebook: ttk.Notebook) -> None:
-        frame = self._tab(notebook, "诊断")
-        self.stats_box = tk.Text(
-            frame, height=18, wrap="none", bg="#0b0f13", fg="#c9d6e0",
-            insertwidth=0, relief="flat", font=("Consolas", 10),
-        )
-        self.stats_box.pack(fill="both", expand=True)
-        self.stats_box.configure(state="disabled")
 
     # -- small builders ---------------------------------------------------- #
 
@@ -491,6 +417,18 @@ class DesktopApp:
     def _pump(self) -> None:
         if self._closed:
             return
+        # Cancel any tick that is still queued before scheduling the next one, so the
+        # contract is "at most one pending" no matter how this is driven. Tk only ever
+        # calls it from `after`, but the self checks call it directly to drive the widget
+        # without a main loop, and each of those calls used to queue another tick -- 13
+        # leaked callbacks at teardown, each printing "invalid command name ..._pump" to
+        # stderr, which reads like a crash in the middle of a passing test run.
+        if self._after_id is not None:
+            try:
+                self.root.after_cancel(self._after_id)
+            except tk.TclError:
+                pass
+            self._after_id = None
         pending: list[tuple[str, Any]] = []
         while True:
             try:
@@ -512,15 +450,18 @@ class DesktopApp:
             elif kind == EVENT_STATS:
                 self.stats = decode_stats(data)
             elif kind == EVENT_SETTINGS:
-                # Some surface changed a setting. Re-read rather than trust the
-                # event's payload: the point of the linkage is that both surfaces
-                # show the same state, and the config is that state.
-                self._refresh_settings()
+                # Some surface changed a setting. Reported here rather than re-rendered:
+                # the settings form lives in the web panel now, and this window's job is
+                # to say that something changed, not to keep a second copy of the form.
                 self._append_history(
                     ("", "设置已由其他界面更新：" + "、".join(data.get("changed") or []), True)
                 )
-            elif kind == EVENT_PRESENTATION:
-                self._refresh_presentation(PresentationSpec.from_dict(data))
+            elif kind == EVENT_LIBRARY:
+                # Same reasoning for the corpus: the table is in the panel, the notice is
+                # here, so a user watching the subtitles knows their edit landed.
+                self._append_history(
+                    ("", "语料库已更新：" + str(data.get("detail") or ""), True)
+                )
             elif kind == EVENT_CORRECTION:
                 self._on_correction(data)
             elif kind == EVENT_STATUS:
@@ -555,20 +496,12 @@ class DesktopApp:
         self.target_var.set(str(info.get("target_lang", "")))
         self.fps_var.set(str(info.get("fps_target", "")))
         self.diff_var.set(str(info.get("diff_threshold", "")))
-        self.corpus_var.set(
-            f"{info.get('corpus_entries')} 条词条 · {info.get('rules')} 条规则 · "
-            f"{info.get('backend')} · 语料库语言：{info.get('corpus_languages') or '未标注'}"
+        # Kept for the status line rather than a tab of its own: how much vocabulary is
+        # loaded is something to see at a glance while using the window, not a page.
+        self.corpus_summary = (
+            f"{info.get('corpus_entries')} 词条({info.get('corpus_languages') or '未标注'})"
+            f" · {info.get('rules')} 规则"
         )
-        if isinstance(info.get("presentation"), dict):
-            self._refresh_presentation(PresentationSpec.from_dict(info["presentation"]))
-
-        for child in list(self.profiles_frame.winfo_children()):
-            child.destroy()
-        for name in info.get("profiles") or []:
-            ttk.Button(
-                self.profiles_frame, text=name,
-                command=lambda n=name: self.apply_profile(n),
-            ).pack(side="left", padx=(0, 6))
 
         plugins = info.get("plugins") or {}
         formats = plugins.get("export_formats") or []
@@ -576,7 +509,6 @@ class DesktopApp:
         if formats and not self.export_format_var.get():
             self.export_format_var.set(formats[0])
         self._render_plugin_status(plugins)
-        self._refresh_settings()
 
     def _on_subtitle(self, update: Any) -> None:
         # A frame republished by a correction, not a new one. It is the same sentence
@@ -677,53 +609,41 @@ class DesktopApp:
         if s is None:
             return
         paused = "⏸ 已暂停" if s.paused else "识别中"
+        # Everything the old 诊断 tab showed that is worth glancing at, on one line: the
+        # counters a user actually acts on. The full JSON dump moved to the web panel's
+        # 诊断 tab, which is where you go when you want all of it.
         self.status_var.set(
             f"{paused} · {s.backend} · {s.fps:.1f} FPS · OCR {s.ocr_ms:.0f} ms · "
             f"总 {s.total_ms:.0f} ms · 内存 {s.memory_mib:.0f} MiB · "
             f"识别 {s.frames} · 跳过 {s.skipped} · 精修 {s.refinements}"
+            + (f" · {self.corpus_summary}" if self.corpus_summary else "")
         )
-        self.pause_button.configure(text="继续识别" if s.paused else "暂停识别")
-        box = self.stats_box
-        if box is not None:
-            payload = {
-                "fps": round(s.fps, 2),
-                "ocr_ms": round(s.ocr_ms, 2),
-                "translate_ms": round(s.translate_ms, 2),
-                "total_ms": round(s.total_ms, 2),
-                "frames": s.frames,
-                "skipped_unchanged": s.skipped,
-                "corpus_entries": s.corpus_entries,
-                "rules": s.rules,
-                "cache_hit_rate": round(s.cache_hit_rate, 3),
-                "refinements": s.refinements,
-                "refinements_pending": s.refinements_pending,
-                "refinements_dropped": s.refinements_dropped,
-                "memory_mib": round(s.memory_mib, 1),
-                "paused": s.paused,
-                "backend": s.backend,
-                # the last engine status message, which is where a refused or
-                # unusual transition explains itself
-                "status": self._last_status,
-            }
-            box.configure(state="normal")
-            box.delete("1.0", "end")
-            box.insert("end", json.dumps(payload, ensure_ascii=False, indent=2))
-            box.configure(state="disabled")
+        self._apply_paused(bool(s.paused))
 
-    def _refresh_presentation(self, spec: PresentationSpec) -> None:
-        self.spec = spec
-        for child in list(self.presets_frame.winfo_children()):
-            child.destroy()
-        for name in PresentationSpec.preset_names():
-            ttk.Button(
-                self.presets_frame, text=name,
-                command=lambda n=name: self.apply_presentation(n),
-            ).pack(side="left", padx=(0, 6))
-        self.spec_var.set(
-            f"当前：{spec.name} · 布局 {spec.layout.mode} · "
-            f"锚点 {spec.layout.anchor} · 元素 "
-            f"{', '.join(e.role for e in spec.ordered_elements())}"
-        )
+    def open_panel(self) -> None:
+        """Start the web panel in-process and open it in the default browser.
+
+        The desktop window is no longer where settings and the corpus are edited, so it
+        has to be able to hand the user to the surface that is -- with one click, rather
+        than a sentence telling them to run a command. The panel shares this process's
+        engine, so the subtitles it shows are the ones being recognised right now.
+        """
+        from .web import WebPanel
+
+        panel = getattr(self, "_panel", None)
+        if panel is None:
+            panel = WebPanel(self.session)
+            self._panel = panel
+        if not panel.running:
+            if not panel.start():
+                self._append_history(("", "设置面板启动失败：无法绑定端口", True))
+                return
+        url = panel.url()
+        self._append_history(("", f"设置面板已启动：{url}", True))
+        try:
+            webbrowser.open(url)
+        except Exception as exc:
+            self._append_history(("", f"无法打开浏览器（{exc}）：请手动访问 {url}", True))
 
     def _render_plugin_status(self, status: dict[str, Any]) -> None:
         box = self.plugins_box
@@ -762,7 +682,21 @@ class DesktopApp:
         return result
 
     def toggle_pause(self) -> None:
-        self._command(CMD_TOGGLE_PAUSE)
+        """Pause or resume, and say so immediately.
+
+        The button is set from the command's own result rather than waiting for the next
+        stats event. Stats now carry the paused state too, but a control that only moves
+        when the engine gets round to reporting is a control the user presses twice --
+        and before that, a paused pipeline emitted no stats at all, so the button never
+        moved and the strip went on claiming it was recognising.
+        """
+        result = self._command(CMD_TOGGLE_PAUSE)
+        if result.get("ok") and "paused" in result:
+            self._apply_paused(bool(result["paused"]))
+
+    def _apply_paused(self, paused: bool) -> None:
+        self.pause_button.configure(text="继续识别" if paused else "暂停识别")
+        self.pause_hint.set("已暂停：不再识别屏幕" if paused else "正在识别屏幕")
 
     def reload_corpus(self) -> None:
         result = self._command("reload_corpus")
@@ -779,14 +713,6 @@ class DesktopApp:
             self._append_history(("", f"无效的数值：{raw!r}", True))
             return
         self._command(command, {"value": value})
-
-    def apply_profile(self, name: str) -> None:
-        result = self._command(CMD_LOAD_PROFILE, {"name": name})
-        if result.get("ok"):
-            self.profile_var.set(f"配置档：{name}")
-
-    def apply_presentation(self, name: str) -> None:
-        self._command(CMD_SET_PRESENTATION, {"preset": name})
 
     def select_region(self) -> None:
         """Drag a new region.

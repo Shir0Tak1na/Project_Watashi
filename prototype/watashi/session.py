@@ -38,11 +38,18 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Sequence
 
 from . import RELEASE_STAGE, __version__
-from .capture import Region, RegionCapturer
+from .capture import Region, RegionCapturer, list_monitors
 from .config import AppConfig
 from .events import (
     CMD_CORRECT,
     CMD_EXPORT,
+    CMD_LIBRARY_DELETE,
+    CMD_LIBRARY_EXPORT,
+    CMD_LIBRARY_IMPORT,
+    CMD_LIBRARY_LIST,
+    CMD_LIBRARY_PUT,
+    CMD_LIBRARY_RESTORE,
+    CMD_LIBRARY_SUPPRESS,
     CMD_LIST_CORRECTIONS,
     CMD_PAUSE,
     CMD_LOAD_PROFILE,
@@ -52,6 +59,7 @@ from .events import (
     CMD_SET_CORPUS_RELOAD,
     CMD_SET_DIFF_THRESHOLD,
     CMD_SET_FPS,
+    CMD_SET_SELF_CAPTURE,
     CMD_SET_PRESENTATION,
     CMD_SET_REGION,
     CMD_SET_TARGET_LANG,
@@ -61,6 +69,7 @@ from .events import (
     CMD_USE_WINDOW,
     EVENT_CORRECTION,
     EVENT_ERROR,
+    EVENT_LIBRARY,
     EVENT_PRESENTATION,
     EVENT_READY,
     EVENT_REFINEMENT,
@@ -85,6 +94,7 @@ from .ocr import RapidOcrEngine
 from .pipeline import Pipeline, PipelineConfig
 from .plugins import PluginRegistry, plugin_directories
 from . import correct as corrections
+from . import library as library_module
 from .translate import CorpusStore, LAYER_DOMAIN, LAYER_GENERAL, LAYER_USER, Translator
 
 #: How many pending events a slow subscriber may accumulate before old display
@@ -121,6 +131,8 @@ class Session:
         limit = int(config.plugins.get("history_limit", 2000) or 2000)
         self.history: deque[dict[str, Any]] = deque(maxlen=max(1, limit))
         self._last_export: str | None = None
+        #: the edited corpus file, created on first use by the corpus editor
+        self._library: Any | None = None
         #: the frame currently on screen, so a correction can repaint it without
         #: waiting for OCR to read the same text again (which it may never do)
         self._last_update: OverlayUpdate | None = None
@@ -262,7 +274,131 @@ class Session:
                 start_worker()
         self._running = True
         self.publish(EVENT_READY, self.info())
+        if self.hold_if_capturing_self():
+            return
         self.set_status("正在监测屏幕区域…")
+
+    # ------------------------------------------------------------------ #
+    # not reading our own output
+    # ------------------------------------------------------------------ #
+
+    def find_self_over_region(self) -> list[tuple[Any, float]]:
+        """Windows of this application sitting inside the region about to be recognised.
+
+        The setting is consulted here rather than inside the detection, so that turning it
+        off is a property of this method and not of whatever the detection happens to do --
+        a check that stubs the detection must still see the switch work.
+        """
+        if not bool(self.config.capture.get("hold_if_self_visible", True)):
+            return []
+        return self._detect_self_windows()
+
+    def _detect_self_windows(self) -> list[tuple[Any, float]]:
+        """The actual look at the desktop: which of our windows are in the region.
+
+        The overlay excludes itself from capture at the Windows level, which is the right
+        fix for a window we own. A browser showing the web panel is not ours, so there is
+        nothing to exclude -- the only honest options are to notice it or to read our own
+        settings page over and over, which is what the user's startup stutter was.
+        """
+        try:
+            from .winutil import own_ui_over
+        except Exception:  # pragma: no cover - winutil is importable everywhere
+            return []
+        region = self._capture_region()
+        if region is None:
+            return []
+        return own_ui_over(
+            region,
+            marker="Project Watashi",
+            own_pid=os.getpid(),
+            min_overlap=float(self.config.capture.get("self_overlap_warn", 0.15) or 0.15),
+        )
+
+    def _capture_region(self) -> Region | None:
+        """The rectangle that will actually be photographed, in screen coordinates."""
+        capturer = self._capturer
+        region = getattr(capturer, "region", None) if capturer is not None else None
+        if region is None:
+            region = self._region
+        if region is None:
+            # No region configured: the capturer derives a bottom strip from the monitor,
+            # and that is what has to be checked, not "nothing".
+            try:
+                monitor = list_monitors()[self.config.monitor - 1]
+            except Exception:
+                return None
+            region = Region.bottom_strip(
+                monitor,
+                height_ratio=float(self.config.capture.get("region_ratio", 0.18) or 0.18),
+            )
+        return region if getattr(region, "valid", False) else None
+
+    def hold_if_capturing_self(self) -> bool:
+        """Pause before reading our own window, and explain why.
+
+        Holding rather than warning-and-continuing is deliberate: the symptom of getting
+        this wrong is not "a wrong subtitle", it is the program stuttering from the first
+        frame because change detection never settles on a window that repaints its own
+        counters. A user cannot act on a warning they are not looking at; they can act on
+        "it did not start, and here is why".
+        """
+        findings = self.find_self_over_region()
+        if not findings:
+            return False
+        window, ratio = findings[0]
+        others = len(findings) - 1
+        detail = (
+            f"采集区域覆盖了本程序自己的窗口「{window.title}」"
+            f"（占区域 {ratio * 100:.0f}%）"
+            + (f"，另有 {others} 个" if others else "")
+            + "。继续识别会读到自己的界面，画面每变一次就重新识别一次，"
+            "所以先暂停；把该窗口移出区域后点「继续识别」即可。"
+        )
+        self._pause()
+        self.set_status(detail)
+        self.publish(EVENT_ERROR, {"command": "start", "message": detail})
+        return True
+
+    def warn_if_capturing_self(self) -> None:
+        """Say it without holding. Used when the user has explicitly asked to resume."""
+        findings = self.find_self_over_region()
+        if not findings:
+            return
+        window, ratio = findings[0]
+        self.set_status(
+            f"提醒：采集区域仍覆盖「{window.title}」（{ratio * 100:.0f}%），"
+            f"识别到的可能是本程序自己的界面。"
+        )
+
+    def _cmd_set_self_capture(self, payload: dict[str, Any]) -> str:
+        """Turn the two self-capture guards on or off at runtime.
+
+        ``hold_if_self_visible`` takes effect on the next check, which is now if it was
+        just switched on -- the point of turning it on is that the engine is currently
+        reading its own window.
+        """
+        parts: list[str] = []
+        if "exclude_self" in payload:
+            value = bool(payload["exclude_self"])
+            self.config.capture["exclude_self"] = value
+            # Said in both directions: a surface asks Windows for the flag when it creates
+            # its window, so neither turning this on nor off does anything to a window
+            # that is already up.
+            parts.append(
+                f"exclude_self={value} (takes effect for windows created from now on)"
+            )
+        if "hold_if_self_visible" in payload:
+            value = bool(payload["hold_if_self_visible"])
+            self.config.capture["hold_if_self_visible"] = value
+            parts.append(f"hold_if_self_visible={value}")
+            if value and self.hold_if_capturing_self():
+                parts.append("(paused: the region covers our own window)")
+        if not parts:
+            raise ValueError(
+                "set_self_capture needs 'exclude_self' and/or 'hold_if_self_visible'"
+            )
+        return " ".join(parts)
 
     def stop(self) -> None:
         if not self._running:
@@ -524,6 +660,14 @@ class Session:
             CMD_LIST_CORRECTIONS: self._cmd_list_corrections,
             CMD_REMOVE_CORRECTION: self._cmd_remove_correction,
             CMD_SET_CORPUS_RELOAD: self._cmd_set_corpus_reload,
+            CMD_SET_SELF_CAPTURE: self._cmd_set_self_capture,
+            CMD_LIBRARY_LIST: self._cmd_library_list,
+            CMD_LIBRARY_PUT: self._cmd_library_put,
+            CMD_LIBRARY_DELETE: self._cmd_library_delete,
+            CMD_LIBRARY_SUPPRESS: self._cmd_library_suppress,
+            CMD_LIBRARY_RESTORE: self._cmd_library_restore,
+            CMD_LIBRARY_IMPORT: self._cmd_library_import,
+            CMD_LIBRARY_EXPORT: self._cmd_library_export,
         }
 
     def _post_state(self) -> dict[str, Any]:
@@ -543,6 +687,11 @@ class Session:
 
     def _resume(self) -> str:
         self.pipeline.resume()
+        # Told, not held: the user has decided to resume, so blocking them again would be
+        # the program arguing with its user. They get the fact and can move the window.
+        self.warn_if_capturing_self()
+        if self._status.startswith("提醒："):
+            return "resumed (the capture region still covers our own window)"
         self.set_status("正在监测屏幕区域…")
         return "resumed"
 
@@ -566,6 +715,8 @@ class Session:
                 region=region, monitor=self.config.monitor
             )
             self.pipeline.set_capturer(self._capturer)
+            if self.hold_if_capturing_self():
+                return f"region={region} (left window capture; paused: covers our own window)"
             self.set_status(f"区域已切换为 {region}")
             return f"region={region} (left window capture)"
 
@@ -574,6 +725,11 @@ class Session:
             setter(region)
         # a new region invalidates the current frame comparison
         self.pipeline.detector.reset()
+        # A different rectangle can be a different answer to "does this cover our own
+        # window", so the question is asked again -- otherwise moving the region off our
+        # panel would leave the warning standing, and moving it on would say nothing.
+        if self.hold_if_capturing_self():
+            return f"region={region} (paused: the region covers our own window)"
         self.set_status(f"区域已切换为 {region}")
         return f"region={region}"
 
@@ -906,6 +1062,248 @@ class Session:
         )
         self.set_status(f"已删除纠正：{source}")
         return f"removed {source}"
+
+    # ------------------------------------------------------------------ #
+    # the corpus editor
+    # ------------------------------------------------------------------ #
+
+    def library(self) -> "library_module.Library | None":
+        """The edited corpus file, created on first use.
+
+        Held on the session rather than rebuilt per call: the file is small, but a UI
+        that lists and then edits wants the same object, and a reload after every write
+        keeps it in step with what the engine actually loaded.
+        """
+        if self._library is None:
+            self._library = library_module.Library(
+                library_module.library_path(self.config)
+            )
+        return self._library
+
+    def library_view(self) -> dict[str, Any]:
+        """Everything a corpus editor shows: entries from every layer, and what is hidden."""
+        store = self.library()
+        assert store is not None
+        return library_module.corpus_view(self.corpus, store)
+
+    def _after_library_change(self, detail: str) -> dict[str, Any]:
+        """Make an edited corpus take effect now, and tell every surface.
+
+        The same discipline as a correction: write, force a reload (the throttle is for
+        mtime changes noticed in passing, not for a change the user just made and is
+        watching for), and publish so the other surface repaints. Missing the reload is
+        how "I edited it and nothing happened" becomes a bug report about caching.
+        """
+        corpus = self.corpus
+        if corpus is not None:
+            corpus.load()
+        view = self.library_view()
+        self.publish(
+            EVENT_LIBRARY,
+            {"detail": detail, "active": view["active"], "user": view["user"]},
+            droppable=False,
+        )
+        return view
+
+    def _cmd_library_list(self, _payload: dict[str, Any]) -> str:
+        view = self.library_view()
+        return (
+            f"{view['active']} active ({view['user']} of them yours, "
+            f"{view['overriding']} overriding a shipped entry), "
+            f"{view['suppressed']} hidden"
+        )
+
+    def _cmd_library_put(self, payload: dict[str, Any]) -> str:
+        source = str(payload.get("source") or "").strip()
+        target = str(payload.get("target") or payload.get("translation") or "").strip()
+        if not source:
+            raise ValueError("library_put 需要 'source'：要改的词（原文）")
+        if not target:
+            raise ValueError("library_put 需要 'target'：这个词应该译成什么")
+        store = self.library()
+        assert store is not None
+        before = store.entries.get(source)
+        entry, created = store.put(
+            source,
+            target,
+            lang=str(payload.get("lang") or "").strip() or None,
+            pos=str(payload.get("pos") or "").strip() or None,
+            domain=str(payload.get("domain") or "").strip() or None,
+            note=str(payload.get("note") or "").strip() or None,
+        )
+        view = self._after_library_change(f"{'added' if created else 'updated'} {source}")
+        row = next(
+            (item for item in view["entries"] if item["source"] == entry.source), None
+        )
+        overrode = row["overrides"] if row else None
+        if overrode:
+            self.set_status(
+                f"已覆盖出厂词条：{source} → {target}（原为 {overrode}），"
+                f"出厂文件未被修改"
+            )
+        else:
+            self.set_status(f"已{'新增' if created else '修改'}词条：{source} → {target}")
+        return (
+            f"{'created' if created else 'updated'} {source!r} -> {target!r}"
+            + (f", overriding {overrode}" if overrode else "")
+            + (f" (was {before.target!r})" if before else "")
+        )
+
+    def _cmd_library_delete(self, payload: dict[str, Any]) -> str:
+        source = str(payload.get("source") or "").strip()
+        if not source:
+            raise ValueError("library_delete 需要 'source'")
+        store = self.library()
+        assert store is not None
+        if not store.delete(source):
+            raise ValueError(f"你的语料库里没有 {source!r}（出厂词条请用 library_suppress）")
+        view = self._after_library_change(f"deleted {source}")
+        row = next(
+            (item for item in view["entries"] if item["source"] == source), None
+        )
+        if row is not None:
+            # The shipped entry underneath is visible again: that is what a revert is.
+            self.set_status(f"已撤销覆盖：{source} 恢复为出厂译文「{row['target']}」")
+            return f"reverted {source} to {row['origin']} -> {row['target']!r}"
+        self.set_status(f"已删除词条：{source}")
+        return f"deleted {source}"
+
+    def _cmd_library_suppress(self, payload: dict[str, Any]) -> str:
+        source = str(payload.get("source") or "").strip()
+        if not source:
+            raise ValueError("library_suppress 需要 'source'")
+        store = self.library()
+        assert store is not None
+        if not store.suppress(source):
+            raise ValueError(f"{source!r} 已经是停用状态，或者本就不存在")
+        self._after_library_change(f"suppressed {source}")
+        self.set_status(f"已停用出厂词条：{source}")
+        return f"suppressed {source}"
+
+    def _cmd_library_restore(self, payload: dict[str, Any]) -> str:
+        source = str(payload.get("source") or "").strip()
+        if not source:
+            raise ValueError("library_restore 需要 'source'")
+        store = self.library()
+        assert store is not None
+        restored = store.unsuppress(source)
+        # An override is also a reason the shipped entry is not what you see, so restore
+        # clears both. Two buttons that each fix half the problem is how a user concludes
+        # the button does not work.
+        also = store.delete(source)
+        if not restored and not also:
+            raise ValueError(f"{source!r} 既没有停用也没有覆盖，无需还原")
+        self._after_library_change(f"restored {source}")
+        self.set_status(f"已还原为出厂状态：{source}")
+        return f"restored {source}"
+
+    def _cmd_library_import(self, payload: dict[str, Any]) -> str:
+        text = str(payload.get("text") or "")
+        fmt = str(payload.get("format") or payload.get("fmt") or "json").strip().lower()
+        if not text.strip():
+            raise ValueError("library_import 需要 'text'：文件内容")
+        store = self.library()
+        assert store is not None
+
+        entries, problems = library_module.parse_import(text, fmt)
+        if not entries and fmt not in library_module.EXPORT_FORMATS:
+            # A format we do not know: the reserved plugin hook is exactly this case.
+            entries, problems = self._import_via_plugin(text, fmt)
+        if not entries:
+            raise ValueError(
+                f"没能从这个文件里读出词条（{fmt}）："
+                + ("；".join(problems[:3]) if problems else "格式不支持")
+            )
+
+        # Entries that matter are protected by default, so an import is additive unless
+        # the caller says otherwise: replacing vocabulary is a deliberate act.
+        result = store.merge(
+            entries, replace=bool(payload.get("replace", True))
+        )
+        problems = list(problems) + [f"skipped {name}" for name in result["skipped_sources"]]
+        view = self._after_library_change(
+            f"imported {result['added']} added, {result['updated']} updated"
+        )
+        self.set_status(
+            f"已导入 {len(entries)} 条：新增 {result['added']}、更新 {result['updated']}"
+            + (f"、跳过 {result['skipped']}" if result["skipped"] else "")
+        )
+        return (
+            f"imported {len(entries)} entries: added {result['added']}, "
+            f"updated {result['updated']}, skipped {result['skipped']}, "
+            f"total {view['user']} of yours"
+            + (f"; notes: {'; '.join(result['skipped_sources'][:3])}"
+               if result["skipped"] else "")
+        )
+
+    def _import_via_plugin(
+        self, text: str, fmt: str
+    ) -> tuple[list[Any], list[str]]:
+        """Let a plugin read a format we do not know.
+
+        The text arrives from a file dialog, not from a path, so it is written to a
+        temporary file with the caller's suffix and handed to the plugin: that is what
+        ``corpus_loader(path) -> dict`` asks for, and rewiring the API to take text would
+        break every loader that wants to open a database next to it.
+        """
+        import tempfile
+
+        suffix = f".{fmt}" if fmt and fmt.isalnum() else ".corpus"
+        self.load_plugins()
+        handle = tempfile.NamedTemporaryFile(
+            "w", suffix=suffix, delete=False, encoding="utf-8"
+        )
+        try:
+            handle.write(text)
+            handle.close()
+            payload, error = self.plugins.load_corpus(Path(handle.name))
+        finally:
+            Path(handle.name).unlink(missing_ok=True)
+        if payload is None:
+            return [], [error or "the plugin returned nothing"]
+        entries, problems = library_module.entries_from_payload(payload)
+        return entries, problems
+
+    def _cmd_library_export(self, payload: dict[str, Any]) -> str:
+        fmt = str(payload.get("format") or payload.get("fmt") or "json").strip().lower()
+        scope = str(payload.get("scope") or "effective").strip().lower()
+        if fmt not in library_module.EXPORT_FORMATS:
+            raise ValueError(
+                f"导出格式不支持 {fmt!r}；可用：{', '.join(library_module.EXPORT_FORMATS)}"
+            )
+        if scope not in ("user", "effective"):
+            raise ValueError("scope 只能是 'user'（只导出你写的）或 'effective'（导出实际生效的）")
+        corpus = self.library()
+        assert corpus is not None
+        rows = library_module.effective_entries(self.corpus, corpus, scope)
+        text = library_module.to_export(rows, fmt)
+        path = payload.get("path")
+        if path:
+            target = Path(str(path))
+            if not target.is_absolute():
+                target = self.config.base_dir / target
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(text, encoding="utf-8")
+            return f"format={fmt} scope={scope} entries={len(rows)} written={target}"
+        return f"format={fmt} scope={scope} entries={len(rows)} chars={len(text)}"
+
+    def library_export_text(self, fmt: str = "json", scope: str = "effective") -> str:
+        """The exported corpus as text, for a surface that wants to hand it to the user.
+
+        Separate from the command because a download needs the *text*, and the command
+        result is a one-line detail string. Validated here so both paths reject the same
+        inputs, rather than the web endpoint being the only one that checks.
+        """
+        if fmt not in library_module.EXPORT_FORMATS:
+            raise ValueError(
+                f"导出格式不支持 {fmt!r}；可用：{', '.join(library_module.EXPORT_FORMATS)}"
+            )
+        if scope not in ("user", "effective"):
+            raise ValueError("scope 只能是 'user' 或 'effective'")
+        store = self.library()
+        assert store is not None
+        rows = library_module.effective_entries(self.corpus, store, scope)
+        return library_module.to_export(rows, fmt)
 
     def _cmd_set_presentation(self, payload: dict[str, Any]) -> str:
         """Swap the look at runtime, from any surface.

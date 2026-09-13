@@ -417,6 +417,34 @@ def main() -> int:
         live.translate("新的词条").target_text == "a new term",
     )
 
+    # The granularity blind spot, made deterministic instead of left as a flake: NTFS
+    # timestamps come from a clock that ticks every ~15.6 ms, so an edit landing in the
+    # same tick as the previous write has an *identical* mtime. This reproduces that
+    # exactly by forcing the mtime backwards to the value it already had -- the state a
+    # same-tick write leaves behind -- and asserts the edit is still seen, because the
+    # snapshot records size as well as time. Before that, this file failed roughly one
+    # run in ten with a reload counter of zero.
+    terms = live_dir / "terms.json"
+    same_tick = live_dir / "same_tick.json"
+    write_corpus(live_dir, "same_tick.json", {"同时": "same tick, short"})
+    live.translate(BAD_LINE)
+    original_mtime = same_tick.stat().st_mtime
+    write_corpus(live_dir, "same_tick.json", {"同时": "same tick, much longer translation"})
+    os.utime(same_tick, (original_mtime, original_mtime))
+    check.check(
+        "an edit stamped with the previous write's own mtime is still detected",
+        same_tick.stat().st_mtime == original_mtime
+        and live.translate("同时").target_text == "same tick, much longer translation",
+        f"mtime={same_tick.stat().st_mtime} original={original_mtime} "
+        f"-> {live.translate('同时').target_text!r}: size is what catches this",
+    )
+    check.check(
+        "and the reload counter saw it",
+        live.reloads >= 1,
+        f"reloads={live.reloads}",
+    )
+    check.check("the term the other file holds is still right", terms.exists())
+
     # ---------------------------------------------------------------- #
     check.section("the throttle, and the switches that turn reload off")
 

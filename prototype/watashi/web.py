@@ -47,10 +47,17 @@ from pathlib import Path
 from typing import Any, AsyncIterator
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, Response, StreamingResponse
 
 from .config import AppConfig
 from .events import (
+    CMD_LIBRARY_DELETE,
+    CMD_LIBRARY_EXPORT,
+    CMD_LIBRARY_IMPORT,
+    CMD_LIBRARY_LIST,
+    CMD_LIBRARY_PUT,
+    CMD_LIBRARY_RESTORE,
+    CMD_LIBRARY_SUPPRESS,
     CMD_LOAD_PROFILE,
     CMD_SET_DIFF_THRESHOLD,
     CMD_SET_FPS,
@@ -65,12 +72,17 @@ from .session import Session
 
 _INDEX = Path(__file__).resolve().parent.parent / "web" / "index.html"
 
-#: Commands the panel may issue. Everything else is a feature, not a setting, and
-#: belongs to the CLI or the engine itself.
+#: Commands the panel may issue. Everything else is runtime control, and belongs to the
+#: keyboard, a hotkey or the CLI.
 #:
-#: Deliberately absent: ``pause``/``resume``/``toggle_pause`` (runtime control),
-#: ``reload_corpus`` (hot reload already happens on mtime), ``shutdown`` (not a
-#: setting and too easy to hit by accident).
+#: **The boundary changed on purpose.** The panel was originally "settings and viewing
+#: only", and the corpus editor moved the editing surface here: a fifty-field form, a
+#: vocabulary table and a file picker are things a browser does well and a tkinter window
+#: does poorly, and having both surfaces edit the same file meant two editors to keep in
+#: step. What is still refused is what the panel has no business doing from a web page:
+#: ``pause``/``resume``/``toggle_pause`` (runtime control, and a browser tab is not where
+#: you want a stray click to stop the subtitles), ``shutdown``, and ``reload_corpus``
+#: (hot reload already happens on mtime).
 SETTINGS_COMMANDS: tuple[str, ...] = (
     CMD_SET_PRESENTATION,
     CMD_LOAD_PROFILE,
@@ -79,6 +91,13 @@ SETTINGS_COMMANDS: tuple[str, ...] = (
     CMD_SET_DIFF_THRESHOLD,
     CMD_SET_REGION,
     CMD_STATUS,
+    CMD_LIBRARY_LIST,
+    CMD_LIBRARY_PUT,
+    CMD_LIBRARY_DELETE,
+    CMD_LIBRARY_SUPPRESS,
+    CMD_LIBRARY_RESTORE,
+    CMD_LIBRARY_IMPORT,
+    CMD_LIBRARY_EXPORT,
 )
 
 #: Directives that disable every remote fetch, so the page cannot phone home
@@ -221,9 +240,77 @@ def create_app(session: Session) -> FastAPI:
             status_code=405,
         )
 
+    @app.get("/api/library")
+    async def api_library() -> JSONResponse:
+        """Every entry the corpus editor shows: all layers, plus what the user hid.
+
+        Separate from ``/api/corpus`` on purpose. That endpoint answers "what did the
+        engine load" and is the read-only view; this one answers "what can I edit, what
+        did I write, what am I overriding and what have I turned off", which is a
+        different question with three states per row rather than one.
+        """
+        return JSONResponse(session.library_view())
+
+    @app.post("/api/library/import")
+    async def api_library_import(request: Request) -> JSONResponse:
+        """Apply an uploaded file. The text arrives from the page's file picker.
+
+        Text rather than multipart on purpose: the browser already knows how to read a
+        file, the panel then has no filesystem access to the machine it is running on
+        (which matters because this panel can be reached over the LAN), and the engine
+        only ever needs the bytes.
+        """
+        body: Any = await request.json()
+        if not isinstance(body, dict):
+            raise HTTPException(status_code=400, detail="body must be a JSON object")
+        result = session.command(
+            CMD_LIBRARY_IMPORT,
+            {
+                "text": body.get("text") or "",
+                "format": body.get("format") or "json",
+                "replace": bool(body.get("replace", True)),
+            },
+        )
+        if not result.get("ok"):
+            return JSONResponse(
+                {"ok": False, "detail": result.get("detail", "")}, status_code=400
+            )
+        return JSONResponse({"ok": True, "detail": result.get("detail", ""), **session.library_view()})
+
+    @app.get("/api/library/export")
+    async def api_library_export(
+        format: str = "json", scope: str = "effective"
+    ) -> Response:
+        """Download the corpus as a file.
+
+        A download rather than a JSON string in the page, because the point of exporting
+        is to get a file onto disk -- and CSV/TSV are written as ``utf-8-sig`` so a
+        spreadsheet opens Chinese text correctly instead of mojibake. That BOM is the one
+        thing every user of this feature would otherwise have to discover for themselves.
+        """
+        try:
+            # Positional: the method's first parameter is deliberately not named `format`,
+            # because shadowing the builtin in a public engine API is a trap for whoever
+            # calls it next.
+            text = session.library_export_text(format, scope)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        encoding = "utf-8-sig" if format in ("csv", "tsv") else "utf-8"
+        media = {
+            "json": "application/json",
+            "csv": "text/csv",
+            "tsv": "text/tab-separated-values",
+        }.get(format, "text/plain")
+        name = f"watashi-corpus-{scope}.{format}"
+        return Response(
+            content=text.encode(encoding),
+            media_type=f"{media}; charset=utf-8",
+            headers={"Content-Disposition": f'attachment; filename="{name}"'},
+        )
+
     @app.post("/api/command")
     async def api_command(request: Request) -> JSONResponse:
-        """Apply a **setting**. Feature commands are refused here."""
+        """Apply a **setting**, or an edit from the corpus editor."""
         body: Any = await request.json()
         if not isinstance(body, dict):
             raise HTTPException(status_code=400, detail="command must be a JSON object")

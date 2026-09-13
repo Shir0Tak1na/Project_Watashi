@@ -163,6 +163,30 @@ def _load_json(path: Path) -> Any:
         return None
 
 
+def _coerce_entries(
+    source: str,
+    value: Any,
+    layer: str,
+    origin: str,
+    default_lang: str | None = None,
+) -> list[Entry]:
+    """Every entry one corpus value can describe.
+
+    A value may be a string, an object, or a **list of objects** -- the last one so that a
+    single file can answer the same term differently per target language. It has to be a
+    list rather than repeated keys, because a JSON object with two identical keys is not
+    a thing: whichever parser you use silently keeps one of them, and the file would look
+    correct while losing half its content.
+    """
+    if isinstance(value, list):
+        entries: list[Entry] = []
+        for item in value:
+            entries.extend(_coerce_entries(source, item, layer, origin, default_lang))
+        return entries
+    entry = _coerce_entry(source, value, layer, origin, default_lang=default_lang)
+    return [entry] if entry is not None else []
+
+
 def _coerce_entry(
     source: str,
     value: Any,
@@ -453,9 +477,13 @@ class CorpusStore:
         #: translated?" is almost always "the corpus is for a different target"
         self._languages: list[str] = []
         self._has_untagged = False
+        #: normalized sources the user layer asked to hide, and the entries they hid --
+        #: kept for introspection so an editor can list what is hidden and bring it back
+        self._suppressed: set[str] = set()
+        self._hidden_entries: list[Entry] = []
         self._rules: list[Rule] = []
         self._rule_files: list[Path] = [Path(p) for p in rule_files]
-        self._mtimes: dict[Path, float] = {}
+        self._mtimes: dict[Path, tuple[float, int]] = {}
         self._lock = threading.RLock()
         self._auto_reload = auto_reload
         self._reload_interval = max(0.0, float(reload_interval_s))
@@ -507,24 +535,38 @@ class CorpusStore:
             elif root.is_dir():
                 yield from sorted(root.rglob("*.json"))
 
-    def _snapshot_mtimes(self) -> dict[Path, float]:
-        seen: dict[Path, float] = {}
+    def _snapshot_mtimes(self) -> dict[Path, tuple[float, int]]:
+        """Every corpus and rule file, with the modification time *and its size*.
+
+        The size is not redundant. NTFS timestamps come from a system clock that ticks
+        every ~15.6 ms, so two writes inside one tick get the *identical* mtime -- and a
+        file edit that lands in the same tick as the previous one is then invisible to
+        mtime comparison alone. That is not hypothetical: it made ``selfcheck_correct``
+        fail about one run in ten, with an edit that had plainly happened on disk and a
+        reload counter of zero. Size catches the common case (an edit that changes the
+        length); a same-tick, same-length edit remains undetectable this way, which is
+        why an explicit reload exists and why a correction forces one.
+        """
+        seen: dict[Path, tuple[float, int]] = {}
         for layer in self._layers:
             for path in self._iter_corpus_files(layer):
                 try:
-                    seen[path] = path.stat().st_mtime
+                    info = path.stat()
                 except OSError:
                     continue
+                seen[path] = (info.st_mtime, info.st_size)
         for path in self._rule_files:
             try:
-                seen[path] = path.stat().st_mtime
+                info = path.stat()
             except OSError:
                 continue
+            seen[path] = (info.st_mtime, info.st_size)
         if self.corrections is not None:
             # normally inside a corpus directory and so already counted; listed again
             # because a corrections file that is not is the one that would be missed
             try:
-                seen[self.corrections.path] = self.corrections.path.stat().st_mtime
+                info = self.corrections.path.stat()
+                seen[self.corrections.path] = (info.st_mtime, info.st_size)
             except OSError:
                 pass
         return seen
@@ -558,6 +600,12 @@ class CorpusStore:
         # second, which made a ja entry impossible to express at all.
         entries: dict[tuple[str, str], Entry] = {}
         rule_specs: list[tuple[dict[str, Any], str]] = []
+        #: sources the user has hidden. Only the user layer may say this -- suppression is
+        #: the user's statement about the shipped corpora, and a shipped file that
+        #: suppressed entries would be shipping a hole. Collected as the first layer is
+        #: walked, which is what makes it apply to the ones below.
+        suppressed: set[str] = set()
+        hidden_entries: list[Entry] = []
 
         for layer in (LAYER_USER, LAYER_DOMAIN, LAYER_GENERAL):
             for path in self._iter_corpus_files(layer):
@@ -568,6 +616,14 @@ class CorpusStore:
                 # allow {"entries": {...}} as well as a bare mapping
                 wrapped = isinstance(data.get("entries"), dict)
                 body = data["entries"] if wrapped else data
+                if layer == LAYER_USER:
+                    raw_suppress = data.get("_suppress")
+                    if isinstance(raw_suppress, list):
+                        suppressed.update(
+                            normalize(str(item))
+                            for item in raw_suppress
+                            if str(item).strip()
+                        )
                 # A file may declare the language of everything in it. Only in the
                 # wrapped form, where the top level is already metadata: in the bare
                 # form a key is an entry, and the English word "lang" is a source term
@@ -593,13 +649,20 @@ class CorpusStore:
                 for key, value in body.items():
                     if key.startswith("_") or not isinstance(key, str) or not key.strip():
                         continue
-                    entry = _coerce_entry(key, value, layer, origin, default_lang=file_lang)
-                    if entry is None:
-                        continue
-                    slot = (_language_base(entry.lang), normalize(key))
-                    existing = entries.get(slot)
-                    if existing is None or _better(entry, existing):
-                        entries[slot] = entry
+                    for entry in _coerce_entries(
+                        key, value, layer, origin, default_lang=file_lang
+                    ):
+                        # "I do not want this shipped entry" -- kept out of every lookup,
+                        # and kept in a list of its own so an editor can still show it and
+                        # offer to bring it back. Dropping it silently would leave the user
+                        # with a row that vanished and no way to ask why.
+                        if layer != LAYER_USER and normalize(key) in suppressed:
+                            hidden_entries.append(entry)
+                            continue
+                        slot = (_language_base(entry.lang), normalize(key))
+                        existing = entries.get(slot)
+                        if existing is None or _better(entry, existing):
+                            entries[slot] = entry
 
         for path in self._rule_files:
             data = _load_json(path)
@@ -632,6 +695,8 @@ class CorpusStore:
             self._views = self._build_views(entries)
             self._languages = sorted({base for base, _ in entries if base})
             self._has_untagged = any(not base for base, _ in entries)
+            self._suppressed = suppressed
+            self._hidden_entries = hidden_entries
             self.revision += 1
         if self.corrections is not None:
             # one reload path for the whole vocabulary: a corpus file and a correction
@@ -645,16 +710,25 @@ class CorpusStore:
         """One merged view per declared language, ready for the translate path.
 
         ``""`` is the view of entries that declare no language, which are usable for
-        every target. Each language's view is that plus its own entries, so a lookup
-        never has to walk the corpus or test a condition per line.
+        every target. Each language's view is that plus its own entries.
+
+        Merged by *layer precedence*, not by which dictionary is written second. That
+        distinction is the whole reason this is a loop with ``_better`` in it rather than
+        two dict updates: an untagged entry and a language-tagged one are different slots
+        in ``entries``, so a plain merge lets the tagged one win regardless of layer --
+        and an untagged user override would silently lose to the shipped entry it was
+        written to replace.
         """
         untagged = {norm: entry for (base, norm), entry in entries.items() if not base}
         views: dict[str, tuple[dict[str, Entry], int]] = {}
         for base in {base for base, _ in entries if base}:
             merged = dict(untagged)
-            merged.update(
-                {norm: entry for (b, norm), entry in entries.items() if b == base}
-            )
+            for (entry_base, norm), entry in entries.items():
+                if entry_base != base:
+                    continue
+                existing = merged.get(norm)
+                if existing is None or _better(entry, existing):
+                    merged[norm] = entry
             views[base] = (merged, max((len(k) for k in merged), default=1))
         views[""] = (untagged, max((len(k) for k in untagged), default=1))
         return views
@@ -688,6 +762,20 @@ class CorpusStore:
     @property
     def has_untagged_entries(self) -> bool:
         return self._has_untagged
+
+    @property
+    def suppressed_sources(self) -> list[str]:
+        """What the user has hidden from the shipped corpora."""
+        return sorted(self._suppressed)
+
+    def hidden_entries(self) -> list[Entry]:
+        """The entries that suppression is keeping out of the lookup.
+
+        Returned rather than discarded because the alternative is an editor showing a row
+        that quietly disappeared, with no way to ask why or to undo it.
+        """
+        with self._lock:
+            return list(self._hidden_entries)
 
     def language_summary(self) -> str:
         """A one-line description of what the corpus can actually answer for."""
@@ -724,7 +812,17 @@ class CorpusStore:
         with self._lock:
             if target_lang is not None:
                 base = _language_base(target_lang)
-                return self._entries.get((base, norm)) or self._entries.get(("", norm))
+                # Both candidates, decided by layer and priority -- not by which slot the
+                # language happens to put them in. Preferring the language-tagged one is
+                # the same mistake as merging the language view with a plain dict update,
+                # and it defeats an untagged user override in exactly the same silence.
+                best: Entry | None = None
+                for candidate in (self._entries.get((base, norm)), self._entries.get(("", norm))):
+                    if candidate is None:
+                        continue
+                    if best is None or _better(candidate, best):
+                        best = candidate
+                return best
             if ("", norm) in self._entries:
                 return self._entries[("", norm)]
             for base in self._languages:

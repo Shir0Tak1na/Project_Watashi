@@ -1,7 +1,7 @@
 # Self checks that need a display, so they cannot run on a hosted CI runner.
 #
 # GitHub's runners have no graphical session, and there is no Windows equivalent of
-# `xvfb-run`, so these four are verified locally only. Listing them explicitly --
+# `xvfb-run`, so these five are verified locally only. Listing them explicitly --
 # rather than leaving them out of checks.txt and saying nothing -- keeps
 # `selfcheck_ci.py` able to prove that no check has simply been forgotten.
 #
@@ -10,7 +10,10 @@
 #   selfcheck_window     enumerates real top-level windows and captures one
 #   selfcheck_selector   draws the drag-to-select overlay and drives synthetic drags
 #   selfcheck_desktop    builds the whole tkinter main window and its seven tabs
+#   selfcheck_uirender   photographs the real windows and reads them back with the
+#                        project's own OCR; needs an unobstructed screen
 selfcheck_overlay
 selfcheck_window
 selfcheck_selector
 selfcheck_desktop
+selfcheck_uirender

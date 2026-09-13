@@ -97,6 +97,12 @@ def main(argv: list[str] | None = None) -> int:
     config = AppConfig.load()
     if not args.model:
         config.translation["nmt_model"] = None
+    # This check is about the engine boundary, not about the desktop it happens to run on:
+    # the self-capture guard would pause the pipeline if the user has a browser open on
+    # the web panel inside the default capture strip, and then every frame assertion below
+    # would fail for a reason that has nothing to do with the boundary. The guard has its
+    # own check.
+    config.capture["hold_if_self_visible"] = False
 
     capturer = SyntheticCapturer(hold_seconds=0.8, width=1280)
     session = Session(config, capturer=capturer)
@@ -192,17 +198,51 @@ def main(argv: list[str] | None = None) -> int:
     result = session.command(CMD_STATUS)
     check.check("status command succeeds", result.get("ok"), str(result.get("detail"))[:40])
 
+    # Cleared *before* the command, not after: the whole point of the assertion below is
+    # the event the pause itself publishes, and clearing afterwards threw it away -- which
+    # is how a check can pass while the thing it tests is broken.
+    channel.queue.clear()
     result = session.command(CMD_PAUSE)
     check.check("pause command succeeds", result.get("ok"))
     check.check("pause is reflected in state", session.pipeline.paused)
-    channel.queue.clear()
+    check.check(
+        "and the command result reports the state, so a UI need not wait to find out",
+        result.get("paused") is True,
+        f"result paused={result.get('paused')!r}",
+    )
     paused_events = collect(channel, 1.5)
     paused_subs = types_of(paused_events).count(EVENT_SUBTITLE)
     check.check("paused session stops producing subtitles", paused_subs == 0,
                 f"{paused_subs} subtitle(s) while paused")
+    # A paused pipeline processes no frames, and stats were only emitted at the end of a
+    # frame -- so before this the last stats event stayed paused: False forever and every
+    # surface went on saying "recognising". That is the bug the user reported as "the stop
+    # button does nothing".
+    paused_stats = [
+        event for event in paused_events if event.get("type") == EVENT_STATS
+    ]
+    check.check(
+        "pausing publishes a stats event, so surfaces can tell",
+        bool(paused_stats),
+        f"saw {len(paused_stats)} stats event(s) while paused",
+    )
+    check.check(
+        "and that event says paused",
+        bool(paused_stats) and paused_stats[-1]["data"].get("paused") is True,
+        f"{paused_stats[-1]['data'].get('paused') if paused_stats else 'no event'}",
+    )
 
     result = session.command(CMD_RESUME)
     check.check("resume command succeeds", result.get("ok") and not session.pipeline.paused)
+    resumed_events = collect(channel, 1.0)
+    check.check(
+        "resuming announces it too",
+        any(
+            event.get("type") == EVENT_STATS and event["data"].get("paused") is False
+            for event in resumed_events
+        ),
+        str(types_of(resumed_events)),
+    )
 
     result = session.command(CMD_SET_FPS, {"value": 6})
     check.check("set_fps applies to the pipeline",

@@ -156,6 +156,7 @@ def main() -> int:
         "use_window",
         "reload_corpus",
         "set_corpus_reload",
+        "set_self_capture",
         "correct",
         "list_corrections",
         "remove_correction",

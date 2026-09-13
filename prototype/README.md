@@ -67,8 +67,8 @@ Why this shape:
 | CLI (text) | `watashi_proto.py --mode none --print` | Human readable |
 | CLI (JSON lines) | `watashi_proto.py --json-lines` | One envelope per line, for scripts |
 | Floating overlay | `watashi_proto.py --mode bar\|panel\|both` | Native, click-through, 6 MiB |
-| Desktop window | `watashi_proto.py --desktop` | Controls, settings and live output in one window; shares one Tk root with the overlay |
-| Local web panel | `watashi_proto.py --serve` | Settings editor and read-only view; in-process, loopback only by default |
+| Desktop window | `watashi_proto.py --desktop` | The live view plus the controls that need a native window; shares one Tk root with the overlay |
+| Local web panel | `watashi_proto.py --serve`, or 「打开设置面板」 in the desktop window | Settings and the corpus editor; in-process, loopback only by default |
 | No screen at all | `--synthetic` | Drives the engine with rendered frames |
 
 The web panel runs **inside the engine process**, so it shares the loaded OCR
@@ -78,18 +78,36 @@ one-directional and SSE needs no extra dependency, and the page inlines all CSS
 and JS so it cannot reach the network — requirement R1 is about running offline,
 and one stray CDN link would quietly break that.
 
-**Scope of the panel: settings and viewing only.** It edits the presentation
-spec, the active profile, the target language, fps and the change-detection
-threshold; and it *views* subtitles, history, counters, the loaded corpus and the
-event stream. It does not implement features: no corpus authoring, and no runtime
-transport controls such as pause.
+**The division of labour between the two windows**, settled by removing what was
+duplicated rather than by documenting it:
 
-That boundary is enforced **server side** — `/api/command` allowlists
-`SETTINGS_COMMANDS` and answers 403 with an explanation for anything else — so
-posting `pause` directly is refused too. A boundary that lives only in the UI is
-one stray fetch away from being broken. Corpora are files; edit them and the
-engine's mtime hot reload picks it up, which is also why there is no reload
-button.
+| | Desktop window | Web panel |
+| --- | --- | --- |
+| Live subtitles | yes, with the correction editor | yes, rendered with the same spec |
+| Pause, region drag, window pick, target language | yes — these need a native window or a hotkey | no |
+| Plugins, export formats | yes | — |
+| The 50-field settings form | no | yes, editable, each field explained |
+| Presentation spec editor | no | yes, full editor |
+| Counters | one status line | full JSON plus the event log |
+| **Corpus: entries, override, suppress, import/export** | read-only notice | **yes** |
+
+Four tabs used to exist on the desktop window for the settings form, the
+presentation spec, the raw counters and the memory tiers. They were removed: each
+one was a second editor of state the panel already edited better, and two surfaces
+editing one file is how they start disagreeing. The desktop window keeps what a
+browser cannot do — dragging a region on the real screen, picking a window,
+`Escape`-able pause, and the target language, which is the one setting a user
+changes while watching — and 「打开设置面板」 starts the panel in-process and
+opens it, so the surface that edits is one click away rather than a sentence in a
+tooltip.
+
+The panel's command allowlist grew for the same reason: it was "settings and
+viewing only", and it now includes the corpus editor, because a vocabulary table,
+a file picker and a fifty-field form are things a browser does well and tkinter
+does poorly. What is still refused server side is runtime control — `pause`,
+`resume`, `shutdown`, `reload_corpus` — because a stray click in a browser tab must
+not be able to stop the subtitles. The allowlist is enforced in `/api/command`,
+which answers 403 with an explanation, so posting `pause` directly is refused too.
 
 ### Commands
 
@@ -106,6 +124,12 @@ Commands are validated, not silently ignored, and every one returns a result:
 | `correct` | `{"source", "target", "scope": "line\|term", "note"}` — records a human correction into the user corpus layer and applies it to the frame on screen now. See [Real time correction](#real-time-correction) |
 | `list_corrections` / `remove_correction` | Read the correction list, or undo one by its source text |
 | `set_corpus_reload` | `{"auto_reload": bool, "reload_interval_ms": int}` — the runtime form of two settings |
+| `library_list` | Every entry the editor shows, from every layer, with what is hidden |
+| `library_put` | `{"source", "target", "lang", "pos", "note"}` — add an entry, or override a shipped one |
+| `library_delete` | `{"source", "lang"}` — remove one of your entries; for an override this *is* the revert |
+| `library_suppress` / `library_restore` | Hide a shipped entry, or bring it back |
+| `library_import` | `{"text", "format", "replace"}` — apply an uploaded file |
+| `library_export` | `{"format", "scope", "path"}` — write the user's entries or everything in effect |
 | `set_presentation` | A preset name, or a partial spec merged over the current one |
 | `load_profile` | Applies a profile, including the memory tiers |
 | `status`, `shutdown` | Introspection and lifecycle |
@@ -130,7 +154,15 @@ A single window with seven tabs over the same `Session` the CLI uses:
 | 诊断 | Raw counters as JSON — the same numbers a `stats` event carries |
 
 Controls in the top bar: pause/resume, drag a new region, pick a window from a
-list, export, reload the corpus.
+list, export, reload the corpus, the target language, and 「打开设置面板」.
+
+The pause button changes the moment you click it, and says what it means next to itself
+(`已暂停：不再识别屏幕`). That sounds like nothing until you know the bug it replaced: stats
+were only published at the end of a processed frame, a paused pipeline processes none, so
+the last stats event stayed `paused: False` forever and every surface kept saying
+"recognising" — pressing stop changed nothing you could see. Now pausing and resuming
+publish a stats event of their own, and the window sets the button from the command result
+rather than waiting for any event at all.
 
 Three things worth knowing:
 
@@ -464,24 +496,85 @@ or names an unknown point is reported and skipped — never fatal, never silent.
 
 ## Verifying
 
-Thirteen self checks run without a display, and four more with one:
+Thirteen self checks run without a display, and five more with one:
 
 ```bash
 prototype\run.cmd selfcheck_presentation --summary   # spec and layout maths
-prototype\run.cmd selfcheck_session --summary        # engine boundary + language gate
-prototype\run.cmd selfcheck_web --summary            # the panel and its limits
+prototype\run.cmd selfcheck_session --summary        # engine boundary + pause reporting
+prototype\run.cmd selfcheck_web --summary            # the panel, its editor and its limits
 prototype\run.cmd selfcheck_correct --summary        # hot reload + real time correction
 prototype\run.cmd selfcheck_corpus --summary         # layering, language, rules, write-back
+prototype\run.cmd selfcheck_library --summary        # the corpus editor: override, suppress, import/export
+prototype\run.cmd selfcheck_selfcapture --summary    # not reading our own windows
 prototype\run.cmd selfcheck_deps --summary           # can a clean environment run these?
 prototype\run.cmd selfcheck_plugins --summary        # plugin contracts + failure handling
 prototype\run.cmd selfcheck_overlay --summary        # overlay, capture exclusion, hotkeys
 prototype\run.cmd selfcheck_window --summary         # window selection and following
 prototype\run.cmd selfcheck_selector --summary       # drag-to-select, driven synthetically
 prototype\run.cmd selfcheck_desktop --summary        # the desktop window, its tabs and commands
+prototype\run.cmd selfcheck_uirender --summary       # photographs the windows, reads them with OCR
 ```
 
-Counts as of the last full run: 45 / 17 / 29 / 138 / 79 / 17 / 35 / 49 / 21 / 60 /
-64 / 13 headless and 46 / 22 / 20 / 80 with a display — 735 checks, all passing.
+Counts as of the last full run: 45 / 17 / 29 / 141 / 84 / 112 / 40 / 35 / 49 / 21 / 64 /
+94 / 17 / 13 headless and 46 / 22 / 20 / 96 / 7 with a display — 952 checks, all
+passing. `selfcheck_uirender` reports 7 with one skip on this machine: its window is 70%
+covered by other applications, so the pixel section under that guard never runs. On a
+clear desktop it is 11.
+
+### Not reading our own output
+
+The engine photographs a rectangle of the screen. If one of our own windows is inside it,
+it reads its own output, and change detection never settles on a window that repaints its
+own counters — which is what "it stutters from the moment it starts" looks like. Two
+mechanisms, because the two cases are genuinely different:
+
+| Case | What happens |
+| --- | --- |
+| A window **we own** — the overlay, the control window | It asks Windows to keep it out of capture (`WDA_EXCLUDEFROMCAPTURE`). The overlay has always done this; the control window now does too, and `selfcheck_desktop` asserts the flag is really applied (`0x11`), with the setting off as a control (`0x0`). |
+| A window **we do not own** — a browser showing the panel | There is nothing to ask: the window belongs to another process. So the engine *detects* it, refuses to start, and names the window and how much of the region it covers. Resume is never blocked, just informed. |
+
+Two settings control this, both described in the panel: `capture.exclude_self` (the
+exclusion above — its cost is real, since an excluded window is invisible to *your* screen
+recordings too, hence the switch) and `capture.hold_if_self_visible` (the detection).
+`selfcheck_selfcapture` verifies the geometry, the window filter, the hold and both
+switches; it takes the window list as an argument, so it does not depend on what happens
+to be on the desktop.
+
+The one thing worth knowing when editing `selfcheck_uirender`: it **must** set
+`capture.exclude_self` to false, because a window that is excluded from capture cannot be
+photographed. That is not a workaround; it is the same fact from the other side.
+
+### Checks can skip, and a skip is not a pass
+
+`Checker.skip` exists because one class of check cannot run on every desktop:
+`selfcheck_uirender` photographs real windows, and a window that another application is
+painted over cannot be told apart from a window that renders nothing. It measures how
+much of its own window is actually uncovered and, below a threshold, records a **skip**
+that is printed in the summary — never a pass, because a check that silently verified
+nothing is how a green run starts meaning less than it appears to. On a clear desktop it
+runs in full.
+
+### What the UI checks can and cannot see
+
+Structural checks (`selfcheck_desktop`, and the overlay's canvas assertions) prove that
+widgets exist, that their text variables are set, and that canvas items sit inside the
+canvas. They cannot notice a window that paints nothing, text the same colour as its
+plate, or one control covering another. `selfcheck_uirender` covers that gap by
+photographing the window and reading it back **with the project's own OCR** — which is
+also a fair test of the interface: the engine has to be able to read it.
+
+Two things learned the hard way, both of which cost a wrong conclusion first:
+
+- **Being the foreground window is not the same as being on top.** `GetForegroundWindow`
+  returned this project's own window while another application was painted over 70% of
+  it. So visibility is *measured* (hide the window, diff the screen) rather than asked
+  for.
+- **A layered window is not what a screen capture returns.** At the bar preset's 0.72
+  alpha the overlay could not be photographed at all; with the window forced opaque its
+  text came back at 1.00 OCR confidence. `PrintWindow`, the usual way around occlusion,
+  returns solid black for a layered window. This is why the render check makes the
+  window opaque before photographing it, and why the overlay's *configured* opacity is
+  verified by the presentation checks instead.
 
 ### Running this in CI
 
@@ -517,12 +610,8 @@ Two checks protect that arrangement, from opposite sides. `selfcheck_deps` asser
 on the runner" is caught locally — it found `fastapi` and `uvicorn` missing on its first
 run, which would have failed both platforms. `selfcheck_ci` asserts that a new check
 cannot be added without being run here, by checking the two list files against the
-scripts on disk.
-`prototype/checks.txt` and `checks_display.txt` are the lists CI and the
-documentation both read; `selfcheck_ci` asserts they cover every
-`selfcheck_*.py`, so a new check cannot be added and then never run.
-`watashi_proto.py --selftest` covers the OCR + corpus + model path end to end with
-no screen.
+scripts on disk. `watashi_proto.py --selftest` covers the OCR + corpus + model path end
+to end with no screen.
 
 The correction check contains deliberate **mutation tests** worth knowing about:
 comment out the `reload_if_changed()` call in `CorpusStore.translate`, the cache
@@ -840,6 +929,60 @@ A file-level `lang` needs the `{"entries": {...}}` form, where the top level is
 metadata. In the bare form a key *is* an entry, so a bare `"lang"` would become a
 term named `lang`; the engine says so out loud rather than guessing which was meant.
 
+One more shape, used by the editor: a value may be a **list** of entries, which is how a
+single file answers the same term in two languages.
+
+```json
+{
+  "entries": {
+    "gate": [
+      { "target": "门", "lang": "zh-CN" },
+      { "target": "ゲート", "lang": "ja" }
+    ]
+  }
+}
+```
+
+It has to be a list rather than the same key twice, because a JSON object cannot hold two
+identical keys: whichever parser reads it silently keeps one of them, so the file would
+look correct and be missing half its content.
+
+### Editing the corpus in the UI
+
+The web panel's 语料库 tab is the editor. Three things a user does there, and each maps to
+exactly one operation on disk:
+
+| The user | What happens | What is written |
+| --- | --- | --- |
+| Changes a translation | the entry is added or updated in the user layer | `library.json` |
+| Edits a **shipped** entry | an override with the same source, which wins by layer | `library.json`; the shipped file is untouched |
+| Turns a shipped entry off | the source goes on the suppression list | `library.json`: `_suppress` |
+| Reverts either | the user-layer row or the suppression is removed | the shipped entry is what you see again |
+
+The shipped corpora are demo data tracked by git. **Nothing in this application writes to
+them** — an edit becomes an override in the user layer, and `selfcheck_library` asserts
+that byte for byte by reading the file before and after an edit through the same code path
+the UI uses. A user's own hand-written corpus file in the same directory is untouched for
+the same reason: this application writes exactly one file, and only one.
+
+Every edit takes effect immediately: the file is written, the corpus is force-reloaded
+(the mtime throttle is for changes noticed in passing, not for the one the user is
+watching for), and a `library` event tells the other surfaces to repaint their tables.
+
+**Import and export** are text in, text out, so the browser does the file handling and the
+panel needs no access to the machine it is running on — which matters, because this panel
+can be reached over the LAN.
+
+| | Formats | Notes |
+| --- | --- | --- |
+| Import | JSON, CSV, TSV | JSON accepts the corpus's own shapes, so any file that works as a corpus imports as one. CSV/TSV are header-driven (`source,target,lang,pos,domain,note`, Chinese headers understood); with no header they are read as two columns, `原文,译文` |
+| Import (other) | anything a plugin handles | the `corpus_loader` extension point, reserved in the plugin API from the first version and wired now that there is a reason to |
+| Export | JSON, CSV, TSV × `user` or `effective` | CSV/TSV downloads are written `utf-8-sig`, so a spreadsheet opens Chinese text instead of mojibake |
+| | | `user` is what you wrote; `effective` is everything the engine will actually use, as a corpus file you could drop into another install |
+
+A round trip is asserted, not assumed: `selfcheck_library` exports each format and imports
+it back, and checks the entries and their translations survive.
+
 Layer directories (`config.yaml`):
 
 | Layer | Paths |
@@ -964,6 +1107,9 @@ changes from `rule:affix` to `corpus:`, and the answer itself does not change.
 | `selfcheck_correct.py` | **Headless verification of corpus hot reload and real time correction**: the file format, loose matching, both scopes, cache invalidation, the repaint, and mutation-tested assertions. No screen needed. |
 | `selfcheck_corpus.py` | **Headless verification of the corpus and rule engine** (R2 / R3), which had no check of its own: layering and priority, longest match, entry forms, the target-language dimension, rule language identity, explainability, R3's write-back loop, hot reload and damaged files. No screen needed. |
 | `selfcheck_deps.py` | **Headless verification that a clean environment can run the other checks**: walks their import closures and requires every package to be declared in `requirements.txt` or exempted with a reason. Found `fastapi` and `uvicorn` missing, which would have failed the first CI run on both platforms. No screen needed. |
+| `selfcheck_library.py` | **Headless verification of the corpus editor**: that editing a shipped entry leaves the shipped file byte for byte unchanged, that a hand-written corpus beside it is untouched, that override/suppress/revert each mean one thing, and that every export format imports back to the same entries. No screen needed. |
+| `selfcheck_selfcapture.py` | **Headless verification that the engine does not read its own windows**: rectangle geometry, which windows count as ours, that a window already excluded from capture is not treated as a problem, the hold at startup, and the two switches that turn the guards off. It takes the window list as an argument, so it runs on a machine where nothing of ours is on screen. No screen needed. |
+| `selfcheck_uirender.py` | **Does the UI actually draw?** Photographs the real desktop window and the real overlay, and reads them back with the project's own OCR: the translation on screen, the history label, the correction editor's fields and button, the settings schema. Skips (never passes) when another window covers what it needs to photograph. Needs a display. |
 | `watashi_proto.py --list-monitors` | Enumerate monitors. |
 | `watashi_proto.py --select` | Drag to choose a region. |
 | `watashi_proto.py --print` | Echo recognised lines, translations and refinements to the console. |
@@ -1066,7 +1212,10 @@ prototype/
 ├── selfcheck_session.py  headless engine boundary verification
 ├── selfcheck_correct.py  headless corpus hot reload + correction verification
 ├── selfcheck_corpus.py   headless corpus/rule engine verification (R2 / R3)
+├── selfcheck_library.py  headless corpus editor verification (override, import, export)
+├── selfcheck_selfcapture.py  headless verification that we do not read our own windows
 ├── selfcheck_deps.py     headless check that a clean install can run the others
+├── selfcheck_uirender.py photographs the real windows and reads them with OCR
 ├── check_all.py          runs every check CI runs, locally (pre-push gate)
 ├── config.yaml           configuration (paths relative to this file)
 ├── requirements.txt      local-only dependencies
@@ -1082,6 +1231,7 @@ prototype/
     ├── events.py         THE BOUNDARY: event/command schema, no UI imports
     ├── session.py        engine facade: events out, commands in
     ├── correct.py        real time correction: the user-corpus file, atomic writes
+    ├── library.py        the corpus editor: entries, suppression, import/export
     ├── adapters.py       OverlayAdapter, ConsoleAdapter (in-process surfaces)
     ├── capture.py        mss region capture, window capture + change detection
     ├── ocr.py            RapidOCR wrapper, with the measured tuning

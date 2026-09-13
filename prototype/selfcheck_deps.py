@@ -40,6 +40,9 @@ HERE = Path(__file__).resolve().parent
 REPO = HERE.parent
 REQUIREMENTS = HERE / "requirements.txt"
 HEADLESS_LIST = HERE / "checks.txt"
+#: The display checks need packages too, and they are what a user runs locally, so they
+#: are held to the same standard even though CI never reaches them.
+DISPLAY_LIST = HERE / "checks_display.txt"
 
 #: import name -> the distribution that provides it. Anything not here is assumed to
 #: be its own distribution name, which is true for most modern packages.
@@ -87,7 +90,7 @@ OPTIONAL: dict[str, str] = {
 WINDOWS_ONLY_MODULES = {"winreg", "msvcrt", "_winapi"}
 
 
-def imports_unguarded_or_not(path: Path) -> set[str]:
+def imports_anywhere(path: Path) -> set[str]:
     """Every third-party module name a file imports, at any nesting level.
 
     Guarding is recorded but not used to exclude: a `try: import uvicorn` still means
@@ -130,8 +133,14 @@ def declared_distributions() -> dict[str, str]:
 
 
 def closure(script: Path) -> set[str]:
-    """The third-party modules reachable from a check, following watashi.* modules."""
-    todo = imports_unguarded_or_not(script)
+    """The third-party modules reachable from a check, following local modules.
+
+    Follows two kinds of local thing: the ``watashi`` package, and sibling
+    ``selfcheck_*.py`` scripts -- the render check drives `selfcheck_desktop`'s fakes
+    rather than copying them, so its imports are this check's imports too. Counting a
+    sibling script as a distribution was the first thing this walker got wrong.
+    """
+    todo = imports_anywhere(script)
     walked: set[str] = set()
     third: set[str] = set()
     while todo:
@@ -151,7 +160,11 @@ def closure(script: Path) -> set[str]:
                 continue
             target = HERE / "watashi" / f"{module.split('.')[1]}.py"
             if target.exists():
-                todo |= imports_unguarded_or_not(target)
+                todo |= imports_anywhere(target)
+            continue
+        sibling = HERE / f"{top}.py"
+        if sibling.exists() and top.startswith("selfcheck"):
+            todo |= imports_anywhere(sibling)
             continue
         if top in sys.stdlib_module_names or top in WINDOWS_ONLY_MODULES:
             continue
@@ -169,6 +182,11 @@ def main() -> int:
     checks = [
         line.split("#")[0].strip()
         for line in HEADLESS_LIST.read_text(encoding="utf-8").splitlines()
+        if line.split("#")[0].strip()
+    ]
+    display_checks = [
+        line.split("#")[0].strip()
+        for line in DISPLAY_LIST.read_text(encoding="utf-8").splitlines()
         if line.split("#")[0].strip()
     ]
 
@@ -189,7 +207,7 @@ def main() -> int:
     check.section("every check's imports are installable")
 
     needs: dict[str, set[str]] = {}
-    for name in checks:
+    for name in checks + display_checks:
         script = HERE / f"{name}.py"
         if not script.exists():
             needs[name] = set()
@@ -217,7 +235,7 @@ def main() -> int:
             f"{name} needs {', '.join(sorted(MODULE_TO_DIST.get(m, m) for m in gaps))}"
             for name, gaps in sorted(missing.items())
         )
-        or f"{len(checks)} checks, all satisfied",
+        or f"{len(checks)} headless and {len(display_checks)} display checks, all satisfied",
     )
 
     # ---------------------------------------------------------------- #

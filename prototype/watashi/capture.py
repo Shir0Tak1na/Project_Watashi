@@ -43,6 +43,29 @@ class Region:
     def as_tuple(self) -> tuple[int, int, int, int]:
         return (self.x, self.y, self.width, self.height)
 
+    def intersection(self, other: "Region") -> "Region | None":
+        """The overlapping rectangle, or None when they do not touch.
+
+        Needed to answer "is our own window inside what we are about to recognise",
+        which is a question about two rectangles and nothing more.
+        """
+        left = max(self.x, other.x)
+        top = max(self.y, other.y)
+        right = min(self.x + self.width, other.x + other.width)
+        bottom = min(self.y + self.height, other.y + other.height)
+        if right <= left or bottom <= top:
+            return None
+        return Region(left, top, right - left, bottom - top)
+
+    def overlap_ratio(self, other: "Region") -> float:
+        """How much of *this* region the other one covers, 0..1."""
+        if not self.valid:
+            return 0.0
+        shared = self.intersection(other)
+        if shared is None:
+            return 0.0
+        return (shared.width * shared.height) / float(self.width * self.height)
+
     def __str__(self) -> str:  # pragma: no cover - display only
         return f"{self.x},{self.y},{self.width},{self.height}"
 

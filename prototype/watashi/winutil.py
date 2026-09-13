@@ -24,7 +24,7 @@ import ctypes
 import ctypes.wintypes as wintypes
 import sys
 from dataclasses import dataclass
-from typing import Iterable
+from typing import Any, Iterable, Sequence
 
 _IS_WINDOWS = sys.platform.startswith("win")
 
@@ -110,6 +110,28 @@ def is_visible(hwnd: int) -> bool:
     return bool(_IS_WINDOWS and hwnd and _user32.IsWindowVisible(hwnd))
 
 
+#: Values returned by GetWindowDisplayAffinity, and the ones that mean "this window is
+#: hidden from screen capture".
+WDA_NONE = 0x00000000
+WDA_MONITOR = 0x00000001
+WDA_EXCLUDEFROMCAPTURE = 0x00000011
+_CAPTURE_EXCLUDED = (WDA_MONITOR, WDA_EXCLUDEFROMCAPTURE)
+
+
+def capture_affinity(hwnd: int) -> int:
+    """How this window relates to screen capture, as Windows sees it."""
+    if not _IS_WINDOWS or not hwnd:
+        return WDA_NONE
+    value = wintypes.DWORD(0)
+    if _user32.GetWindowDisplayAffinity(wintypes.HWND(hwnd), ctypes.byref(value)):
+        return int(value.value)
+    return WDA_NONE
+
+
+def is_capture_excluded(hwnd: int) -> bool:
+    return capture_affinity(hwnd) in _CAPTURE_EXCLUDED
+
+
 def list_windows(
     visible_only: bool = True,
     min_size: tuple[int, int] = (MIN_WIDTH, MIN_HEIGHT),
@@ -187,6 +209,59 @@ def list_windows(
 
     deduped.sort(key=lambda w: w.rect[2] * w.rect[3], reverse=True)
     return deduped
+
+
+def own_ui_over(
+    region: Any,
+    marker: str = "Project Watashi",
+    own_pid: int | None = None,
+    min_overlap: float = 0.15,
+    windows: Sequence["WindowInfo"] | None = None,
+) -> list[tuple["WindowInfo", float]]:
+    """Windows showing *this* application that sit inside the capture region.
+
+    The feedback loop this prevents is old and specific: the engine photographs a
+    rectangle of the screen, and if one of our own windows is in that rectangle it reads
+    its own output -- a subtitle bar showing the previous translation, or the settings
+    window with a page of dense text that changes every time a counter ticks. Change
+    detection then fires continuously and the recogniser is never idle, which the user
+    experiences as the program stuttering from the moment it starts.
+
+    The overlay solves it for itself by asking Windows to exclude it from capture. That
+    cannot work for a browser showing the web panel: the window belongs to another
+    process, so there is nothing to ask. This is the other half -- noticing, and saying
+    so, rather than OCR-ing our own settings page.
+
+    Matched two ways, because the two cases are different: a window created by this very
+    process (``own_pid``), and any window whose title carries the application's name --
+    which is what a browser tab holding the panel looks like from the outside. A terminal
+    window running the CLI is neither: it belongs to the terminal's own process.
+
+    ``windows`` lets a caller (or a check) supply the list instead of enumerating the
+    desktop, which is what makes the filtering testable without a screen.
+    """
+    if windows is None:
+        windows = list_windows(visible_only=True, min_size=(64, 48))
+    found: list[tuple[WindowInfo, float]] = []
+    needle = marker.strip().lower()
+    for window in windows:
+        if window.minimized:
+            continue
+        # A window that already excludes itself from capture cannot appear in the frame,
+        # so holding the engine for it would be a false alarm -- and the overlay and the
+        # desktop window both set that flag, which is the case this distinction exists for.
+        if is_capture_excluded(window.hwnd):
+            continue
+        ours_by_process = own_pid is not None and window.pid == own_pid
+        ours_by_title = bool(needle) and needle in window.title.lower()
+        if not (ours_by_process or ours_by_title):
+            continue
+        x, y, width, height = window.rect
+        ratio = region.overlap_ratio(type(region)(x, y, width, height))
+        if ratio >= min_overlap:
+            found.append((window, ratio))
+    found.sort(key=lambda pair: pair[1], reverse=True)
+    return found
 
 
 def resolve_window(

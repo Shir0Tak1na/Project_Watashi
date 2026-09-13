@@ -23,7 +23,14 @@ C++ core.
 #: It previously read 0.1.0, which was never tagged or released. Re-numbering into
 #: 0.0.x is deliberate: 0.1.0 would claim more maturity than a prototype that has
 #: not been ported deserves.
-__version__ = "0.0.6"
+#:
+#: ``0.0.6a`` rather than ``0.0.7``: the user asked for the release after 0.0.6 to be
+#: labelled as a patch to it, and this is that release -- the two defects they reported
+#: from using it, plus the corpus editor and the UI work that was developed alongside.
+#: Worth knowing: as a version *string* ``0.0.6a`` sorts before ``0.0.6`` under PEP 440
+#: (it reads as "0.0.6 alpha"), so anything that compares versions rather than reading
+#: them will treat it as older. Nothing in this project does; the git tag is a label.
+__version__ = "0.0.6a"
 
 #: Shown next to the version so no one has to guess what they are running.
 RELEASE_STAGE = "测试版 (pre-release prototype)"
