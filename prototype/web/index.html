@@ -108,6 +108,7 @@
       <p class="muted" style="margin:0 0 10px">
         只读。词条是磁盘上的文件，直接改文件即可 —— 引擎按修改时间自动热加载，无需在此操作。
       </p>
+      <p class="muted" style="margin:0 0 10px" id="clangs"></p>
       <div class="row"><input id="cfilter" placeholder="筛选…" style="flex:1"></div>
       <div id="entries"></div>
     </div>
@@ -621,11 +622,18 @@ function buildLook() {
 async function loadCorpus() {
   const data = await (await fetch("/api/corpus")).json();
   $("csize").textContent = data.size + " 条";
+  // Which target languages these entries can answer for. A corpus is not
+  // language-neutral: an en->zh vocabulary answering a request for Japanese would
+  // show Chinese at full confidence, so the engine only uses entries whose declared
+  // language matches, and this line is how a user finds out why nothing matched.
+  $("clangs").textContent = data.languages
+    ? "语言：" + data.languages + "（只有匹配当前目标语言的词条会被使用）"
+    : "语言：未标注（对任何目标语言都可用）";
   const filter = $("cfilter").value.trim().toLowerCase();
   const box = $("entries");
   box.innerHTML = "";
   const table = document.createElement("table");
-  table.innerHTML = "<thead><tr><th>源词</th><th>译文</th><th>层级</th><th>来源</th></tr></thead>";
+  table.innerHTML = "<thead><tr><th>源词</th><th>译文</th><th>语言</th><th>层级</th><th>来源</th></tr></thead>";
   const body = document.createElement("tbody");
   (data.entries || [])
     .filter((e) => !filter || e.source.toLowerCase().includes(filter) ||
@@ -633,11 +641,12 @@ async function loadCorpus() {
     .slice(0, 400)
     .forEach((e) => {
       const tr = document.createElement("tr");
-      tr.innerHTML = "<td></td><td></td><td><span class='pill'></span></td><td class='muted'></td>";
+      tr.innerHTML = "<td></td><td></td><td><span class='pill'></span></td><td><span class='pill'></span></td><td class='muted'></td>";
       tr.children[0].textContent = e.source;
       tr.children[1].textContent = e.target;
-      tr.children[2].firstChild.textContent = e.layer;
-      tr.children[3].textContent = e.origin;
+      tr.children[2].firstChild.textContent = e.lang || "任意";
+      tr.children[3].firstChild.textContent = e.layer;
+      tr.children[4].textContent = e.origin;
       body.appendChild(tr);
     });
   table.appendChild(body);

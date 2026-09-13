@@ -1053,6 +1053,7 @@ class HybridTranslator(Translator):
         data: dict[str, Any] = {
             "backend": self.name if self.model_available else "corpus+rules",
             "corpus_entries": self.corpus.size,
+            "corpus_languages": self.corpus.language_summary(),
             "rules": self.corpus.rule_count,
             "rule_ids": self.corpus.rule_ids(),
             "nmt_available": self.model_available,

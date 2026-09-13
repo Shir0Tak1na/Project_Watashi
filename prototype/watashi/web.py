@@ -174,12 +174,15 @@ def create_app(session: Session) -> FastAPI:
                 "layer": entry.layer,
                 "origin": entry.origin,
                 "priority": entry.priority,
+                #: which target language this entry is an answer for; empty means "any"
+                "lang": entry.lang or "",
             }
             for entry in corpus.entries_snapshot()
         ]
         return JSONResponse(
             {
                 "size": corpus.size,
+                "languages": corpus.language_summary(),
                 "rules": corpus.rule_ids(),
                 "entries": entries,
                 "corrections": corrections,

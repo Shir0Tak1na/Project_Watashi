@@ -557,7 +557,7 @@ class DesktopApp:
         self.diff_var.set(str(info.get("diff_threshold", "")))
         self.corpus_var.set(
             f"{info.get('corpus_entries')} 条词条 · {info.get('rules')} 条规则 · "
-            f"{info.get('backend')}"
+            f"{info.get('backend')} · 语料库语言：{info.get('corpus_languages') or '未标注'}"
         )
         if isinstance(info.get("presentation"), dict):
             self._refresh_presentation(PresentationSpec.from_dict(info["presentation"]))

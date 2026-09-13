@@ -464,13 +464,14 @@ or names an unknown point is reported and skipped — never fatal, never silent.
 
 ## Verifying
 
-Eleven self checks run without a display, and four more with one:
+Twelve self checks run without a display, and four more with one:
 
 ```bash
 prototype\run.cmd selfcheck_presentation --summary   # spec and layout maths
 prototype\run.cmd selfcheck_session --summary        # engine boundary + language gate
 prototype\run.cmd selfcheck_web --summary            # the panel and its limits
 prototype\run.cmd selfcheck_correct --summary        # hot reload + real time correction
+prototype\run.cmd selfcheck_corpus --summary         # layering, language, rules, write-back
 prototype\run.cmd selfcheck_plugins --summary        # plugin contracts + failure handling
 prototype\run.cmd selfcheck_overlay --summary        # overlay, capture exclusion, hotkeys
 prototype\run.cmd selfcheck_window --summary         # window selection and following
@@ -478,8 +479,8 @@ prototype\run.cmd selfcheck_selector --summary       # drag-to-select, driven sy
 prototype\run.cmd selfcheck_desktop --summary        # the desktop window, its tabs and commands
 ```
 
-Counts as of the last full run: 45 / 17 / 29 / 138 / 35 / 49 / 21 / 60 / 64 / 13
-headless and 46 / 22 / 20 / 80 with a display — 639 checks, all passing.
+Counts as of the last full run: 45 / 17 / 29 / 138 / 79 / 35 / 49 / 21 / 60 / 64 /
+13 headless and 46 / 22 / 20 / 80 with a display — 718 checks, all passing.
 `prototype/checks.txt` and `checks_display.txt` are the lists CI and the
 documentation both read; `selfcheck_ci` asserts they cover every
 `selfcheck_*.py`, so a new check cannot be added and then never run.
@@ -738,7 +739,8 @@ Turn it off with `corpus.auto_reload` if the corpus lives on a slow network shar
 
 Any `.json` file under the configured directories. Layered lookup, highest
 priority first: `user` > `domain` > `general`. Longest match wins within a
-layer, so `"gg wp"` beats `"gg"`.
+layer, so `"gg wp"` beats `"gg"`, and a match is never made inside a longer word
+(`gg` does not fire inside `eggs`).
 
 ```json
 {
@@ -748,7 +750,58 @@ layer, so `"gg wp"` beats `"gg"`.
 }
 ```
 
-Both the short string form and the richer object form are accepted.
+Both the short string form and the richer object form are accepted, as is the
+`{"entries": {...}}` wrapper.
+
+#### Every entry has a target language, and it is not optional in practice
+
+A corpus is **not** language-neutral. An English→Chinese vocabulary asked for
+Japanese used to answer *with Chinese, at full confidence* — the same failure the
+language gate catches when source == target, and harder to notice, because the text
+is foreign either way and nothing looks wrong. The engine cannot infer the language
+of a translation it is handed; only whoever wrote the entry knows.
+
+So an entry says. Either once per file:
+
+```json
+{
+  "lang": "zh-CN",
+  "entries": {
+    "sword intent": "剑意"
+  }
+}
+```
+
+or per entry, which wins over the file and is what makes a mixed file possible:
+
+```json
+{
+  "sword intent": { "target": "剣意", "lang": "ja" }
+}
+```
+
+- A file that declares nothing is treated as **usable for any target**, so every
+  corpus written before this existed keeps working unchanged.
+- The same source term can appear once per language. Both are loaded; each answers
+  only for its own target.
+- `lang` is compared as a *language*, not as a string: `zh`, `zh-CN`, `zh-TW`,
+  `zho_Hans` and `zh_CN` all reach an entry tagged `zh-CN`. Script is deliberately
+  ignored — refusing Simplified data for a Traditional target would be a judgement
+  call the entry author has not made, and some Chinese beats none.
+- An unknown tag matches only itself, so it cannot leak into every target.
+- The shipped corpora declare `"lang": "zh-CN"`. Asking for Japanese therefore gets
+  *nothing* from them (the line is reported as untranslated, and the model answers),
+  instead of Chinese presented as Japanese. Add a second file with `"lang": "ja"`
+  for the same terms and both languages work.
+- Which languages the loadable corpus can answer for is published in the `ready`
+  event as `corpus_languages`, shown in the desktop 翻译 tab and the web panel, and
+  returned by `/api/corpus` — because "nothing is being translated" is almost always
+  "the vocabulary is for another language", and a user staring at untranslated
+  subtitles has no other way to find that out.
+
+A file-level `lang` needs the `{"entries": {...}}` form, where the top level is
+metadata. In the bare form a key *is* an entry, so a bare `"lang"` would become a
+term named `lang`; the engine says so out loud rather than guessing which was meant.
 
 Layer directories (`config.yaml`):
 
@@ -838,6 +891,30 @@ dims output below 50% coverage. `--print-trace` shows the full provenance:
 'sword intent'->'剑意'[corpus:demo_terms 0.95]  'antidragon'->'反龙'[affix-en-to-zh 0.55]
 ```
 
+A rule's `target` is compared as a **language, not a string**: `zh`, `zh-CN`,
+`zh_CN` and `zho_Hans` all activate a rule tagged `zh-CN`. Equality there meant
+typing `zh` instead of `zh-CN` switched off every Chinese rule in the shipped set,
+with no diagnostic — the rule engine just looked broken. A rule's own corpus
+lookups respect its language too, so a Chinese rule cannot assemble its answer out
+of Japanese entries. A rule that omits `target` applies to every target, which is
+what the transliterate fallback does.
+
+A rule with a pattern that cannot compile is disabled and reported, rather than
+counted among the loaded rules: a rule that can never fire should not appear in a
+number a user reads as "these rules are working".
+
+**R3's write-back loop is implemented** — the requirement that a rule's guess can be
+written into the corpus in one step. A rule answers at its declared confidence
+(`antidragon` → `反龙` at 0.55); accept it as a correction and the same word is then
+answered by the corpus at confidence 1.0, with the same translation:
+
+```
+{"cmd": "correct", "source": "antidragon", "target": "反龙", "scope": "term"}
+```
+
+`selfcheck_corpus` asserts the whole loop: the confidence rises, the provenance
+changes from `rule:affix` to `corpus:`, and the answer itself does not change.
+
 ---
 
 ## Tools
@@ -847,6 +924,7 @@ dims output below 50% coverage. `--print-trace` shows the full provenance:
 | `watashi_proto.py --selftest` | Headless end-to-end check of OCR + corpus + rules + model. No screen needed. |
 | `selfcheck_session.py` | **Headless verification of the engine boundary**: events, envelope integrity, every command, adapter pass-through. No screen needed. |
 | `selfcheck_correct.py` | **Headless verification of corpus hot reload and real time correction**: the file format, loose matching, both scopes, cache invalidation, the repaint, and mutation-tested assertions. No screen needed. |
+| `selfcheck_corpus.py` | **Headless verification of the corpus and rule engine** (R2 / R3), which had no check of its own: layering and priority, longest match, entry forms, the target-language dimension, rule language identity, explainability, R3's write-back loop, hot reload and damaged files. No screen needed. |
 | `watashi_proto.py --list-monitors` | Enumerate monitors. |
 | `watashi_proto.py --select` | Drag to choose a region. |
 | `watashi_proto.py --print` | Echo recognised lines, translations and refinements to the console. |
@@ -879,9 +957,12 @@ Be aware of these before judging the prototype.
    nonsense (`voidsword` -> `无效的字符`, "invalid character"). That is precisely
    why corpora and rules are the project's core, not the model.
 4. **Latency drifts a lot between runs on this machine.** The same 1280x304 OCR
-   frame measured 157 ms, 170 ms and 218 ms in different sessions, and 414 ms
-   once while another process was loading. Treat the budget numbers as
-   best-case under a quiet machine, and re-measure with `bench_ocr.py`.
+   frame measured 157 ms, 170 ms and 218 ms in different sessions; the same self
+   test reported a 156.9 ms median, then three consecutive runs around 400-430 ms
+   while test suites were running, then 156.9 ms again once the machine was quiet.
+   Treat the budget numbers as best-case under a quiet machine, and re-measure with
+   `bench_ocr.py` before concluding that a change made anything slower — that
+   experiment cost an afternoon of suspicion and turned out to be load.
 5. **Latency is region dependent.** ~89-120 ms for realistic short subtitle
    lines, but a large region or a frame with several long lines costs 200-350 ms
    and misses the R4 budget. Region size is the primary control.
@@ -925,6 +1006,16 @@ Be aware of these before judging the prototype.
     protected as one term, so the refinement path declines it and the line stays at
     corpus quality until the next frame brings a fresh refinement of the sentence
     around it. That is the intended trade: the human's answer outranks fluency.
+17. **A corpus must declare its language to be usable for a non-Chinese target.**
+    Untagged entries are used for every target (that is what keeps every existing
+    corpus file working), so leaving them untagged means a Japanese target will be
+    answered with Chinese again. The shipped demo data is tagged `zh-CN` for exactly
+    that reason; a Japanese corpus is a file the user writes, and
+    `"lang": "ja"` is the whole of the syntax.
+18. **Japanese written only in kanji still reads as Chinese** (`lang.py`'s script
+    heuristic), because the scripts are genuinely identical. Kana anywhere in the
+    line settles it; a kanji-only title does not. Declaring the source language with
+    `--source ja` is the workaround.
 
 ---
 
@@ -935,6 +1026,7 @@ prototype/
 ├── watashi_proto.py      CLI entry point (thin client of Session)
 ├── selfcheck_session.py  headless engine boundary verification
 ├── selfcheck_correct.py  headless corpus hot reload + correction verification
+├── selfcheck_corpus.py   headless corpus/rule engine verification (R2 / R3)
 ├── config.yaml           configuration (paths relative to this file)
 ├── requirements.txt      local-only dependencies
 ├── fetch_model.py        one-time, resume-safe model download
@@ -952,7 +1044,7 @@ prototype/
     ├── adapters.py       OverlayAdapter, ConsoleAdapter (in-process surfaces)
     ├── capture.py        mss region capture, window capture + change detection
     ├── ocr.py            RapidOCR wrapper, with the measured tuning
-    ├── translate.py      corpus + rule engine, explainable spans
+    ├── translate.py      corpus + rule engine, explainable spans, target languages
     ├── local_nmt.py      CTranslate2 model, term protection, hybrid translator
     ├── overlay.py        subtitle bar + bilingual panel (tkinter)
     ├── desktop.py        desktop control window (tkinter, shares the Tk root)

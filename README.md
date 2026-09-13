@@ -203,6 +203,16 @@ Entries may be extended with part of speech, domain tag, priority, source, and
 update time. Lookup order is user private > domain > general, with longest match
 winning inside a layer.
 
+**A corpus is not language-neutral.** An entry declares the language of its
+translation — once per file with `"lang": "zh-CN"` plus an `"entries"` object, or
+per entry with its own `lang` — because an English→Chinese vocabulary asked for
+Japanese would otherwise answer *with Chinese, at full confidence*. An entry that
+declares nothing is usable for any target, so every corpus written before this
+existed keeps working. The same source term may appear once per language. Languages
+are compared as languages (`zh` = `zh-CN` = `zho_Hans`), and the languages a corpus
+can answer for are reported in the `ready` event, the desktop window and the web
+panel.
+
 Corpus edits take effect while the program is running: the engine checks file
 modification times before each translation and reloads on change, throttled to once
 per 500 ms (`corpus.auto_reload`, `corpus.reload_interval_ms`).

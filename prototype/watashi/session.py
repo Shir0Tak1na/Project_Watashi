@@ -359,6 +359,11 @@ class Session:
             "source_lang": self.config.source_lang,
             "target_lang": self.config.target_lang,
             "corpus_entries": int(backend_stats.get("corpus_entries", 0)),
+            #: which target languages the corpus can actually answer for. Published
+            #: rather than kept internal, because "nothing is being translated" is
+            #: almost always "the vocabulary is for another language", and a user
+            #: staring at untranslated subtitles has no other way to find that out.
+            "corpus_languages": str(backend_stats.get("corpus_languages", "")),
             "rules": int(backend_stats.get("rules", 0)),
             "rule_ids": list(backend_stats.get("rule_ids", [])),
             "backend": backend_stats.get("backend", ""),

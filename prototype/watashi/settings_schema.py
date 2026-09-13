@@ -461,18 +461,23 @@ CORPUS = Category(
     id="corpus",
     title="⑤ 语料库与规则 · 让生词可译",
     summary="这是本项目区别于通用翻译工具的地方。词条是磁盘上的普通文件，"
-            "改完按修改时间自动热加载，不需要重启。桌面的「字幕」页里选中一行、"
-            "改成你要的译文，就会写进用户库最高优先级的那一层，同一帧立刻改过来。",
+            "改完按修改时间自动热加载，不需要重启。注意词条是分语言的："
+            "文件里写 \"lang\": \"zh-CN\"（或每条自己写 lang），引擎只会用"
+            "匹配当前目标语言的词条 —— 否则设成日语也会给你中文，而且是满置信度地给。"
+            "桌面的「字幕」页里选中一行、改成你要的译文，就会写进用户库最高优先级的那一层，"
+            "同一帧立刻改过来。",
     fields=(
         Field(
             key="corpus.user",
             label="用户私有库目录",
             description="你自己的术语表放在这里，优先级最高，会压过其他所有层。"
-                        "「实时纠正」写入的 corrections.json 也在这一层；目录不存在时会自动创建。",
+                        "「实时纠正」写入的 corrections.json 也在这一层；目录不存在时会自动创建。"
+                        "词条要标语言：文件级 \"lang\": \"zh-CN\"，或每条词自己的 lang 字段；"
+                        "不标等于「任何目标语言都能用」。",
             kind="path_list",
             default=["../plugins/user/custom_rules"],
             applies=RESTART,
-            note="目录内所有 .json 都会被加载",
+            note="目录内所有 .json 都会被加载；文件级 lang 需要写成 {\"lang\":…, \"entries\":{…}} 形式",
         ),
         Field(
             key="corpus.domain",
@@ -495,11 +500,12 @@ CORPUS = Category(
             key="rules.files",
             label="规则文件",
             description="语料库没命中时的推演规则：词根词缀拆分、构词模板、"
-                        "音译兜底。改完热加载即可生效。",
+                        "音译兜底。改完热加载即可生效。规则里的 target 按语言比较，"
+                        "写 zh、zh-CN、zho_Hans 都算中文。",
             kind="path_list",
             default=["rules/engine_rules.json"],
             applies=RESTART,
-            note="当前有 8 条规则：affix/morpheme/template/transliterate 四类",
+            note="当前有 8 条规则：affix/morpheme/template/transliterate 四类；正则写错的规则会被停用并报告",
         ),
         Field(
             key="corpus.auto_reload",

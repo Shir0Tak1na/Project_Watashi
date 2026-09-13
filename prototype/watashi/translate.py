@@ -29,6 +29,7 @@ from pathlib import Path
 from typing import Any, Iterable, Sequence
 
 from .correct import Corrections, resolve_corrections_path
+from .lang import same_language, to_nllb_code
 
 # --------------------------------------------------------------------------- #
 # layers
@@ -41,6 +42,10 @@ LAYER_GENERAL = "general"
 #: lower rank wins when two layers offer the same source term
 _LAYER_RANK = {LAYER_USER: 0, LAYER_DOMAIN: 1, LAYER_GENERAL: 2}
 
+#: Keys that declare the language of a whole corpus file. They only mean anything in
+#: the ``{"lang": ..., "entries": {...}}`` form, where the top level is metadata.
+_FILE_LANGUAGE_KEYS = ("lang", "target_lang", "language")
+
 
 # --------------------------------------------------------------------------- #
 # data model
@@ -49,7 +54,15 @@ _LAYER_RANK = {LAYER_USER: 0, LAYER_DOMAIN: 1, LAYER_GENERAL: 2}
 
 @dataclass(frozen=True)
 class Entry:
-    """One corpus entry."""
+    """One corpus entry.
+
+    ``lang`` is the language the *target* is written in, and it is not optional
+    bookkeeping: without it a corpus is language-blind, so an English->Chinese
+    vocabulary answers a request for Japanese with Chinese, at full confidence. The
+    engine cannot infer the language of a translation it is handed -- only whoever
+    wrote the entry knows -- so an entry that does not say is treated as usable for
+    every target, which is exactly the behaviour every existing corpus file has.
+    """
 
     source: str
     target: str
@@ -58,6 +71,8 @@ class Entry:
     priority: int = 0
     pos: str | None = None
     domain: str | None = None
+    #: language of ``target``: "zh-CN", "ja", "en", or an NLLB code. None = any.
+    lang: str | None = None
 
 
 @dataclass
@@ -148,10 +163,23 @@ def _load_json(path: Path) -> Any:
         return None
 
 
-def _coerce_entry(source: str, value: Any, layer: str, origin: str) -> Entry | None:
-    """Accept both ``{"word": "译"}`` and the richer object form."""
+def _coerce_entry(
+    source: str,
+    value: Any,
+    layer: str,
+    origin: str,
+    default_lang: str | None = None,
+) -> Entry | None:
+    """Accept both ``{"word": "译"}`` and the richer object form.
+
+    ``default_lang`` is the language declared by the file as a whole, so a corpus that
+    is entirely one language says so once instead of on every entry. An entry may still
+    override it, which is what makes a mixed file possible.
+    """
     if isinstance(value, str):
-        return Entry(source=source, target=value, layer=layer, origin=origin)
+        return Entry(
+            source=source, target=value, layer=layer, origin=origin, lang=default_lang
+        )
     if isinstance(value, dict):
         target = (
             value.get("target")
@@ -160,6 +188,7 @@ def _coerce_entry(source: str, value: Any, layer: str, origin: str) -> Entry | N
         )
         if not isinstance(target, str) or not target:
             return None
+        raw_lang = value.get("lang") or value.get("target_lang") or value.get("language")
         return Entry(
             source=source,
             target=target,
@@ -168,8 +197,30 @@ def _coerce_entry(source: str, value: Any, layer: str, origin: str) -> Entry | N
             priority=int(value.get("priority", 0) or 0),
             pos=value.get("pos"),
             domain=value.get("domain"),
+            lang=str(raw_lang) if raw_lang else default_lang,
         )
     return None
+
+
+def _language_base(tag: str | None) -> str:
+    """The language part of a tag or NLLB code: ``zh-CN`` and ``zho_Hans`` -> ``zho``.
+
+    Script is deliberately dropped: an entry written in Simplified Chinese is not the
+    right answer for a Traditional Chinese target either, but refusing it would be a
+    judgement call the entry author has not made, and *some* Chinese beats none. The
+    comparison that matters here is "is this the language that was asked for", and
+    ``zho`` answers it.
+    """
+    if not tag:
+        return ""
+    try:
+        return to_nllb_code(tag).split("_")[0]
+    except ValueError:
+        # An unknown tag is compared as written rather than dropped: a corpus entry
+        # tagged with something this project does not know is still an entry the
+        # author meant to be language specific, and matching it literally is the
+        # least surprising reading.
+        return tag.strip().lower().replace("_", "-")
 
 
 # --------------------------------------------------------------------------- #
@@ -194,7 +245,19 @@ class Rule:
         self.target: str | None = spec.get("target")
 
     def matches_language(self, target_lang: str) -> bool:
-        return self.target is None or self.target == target_lang
+        """Does this rule apply when translating into ``target_lang``?
+
+        Compared as a *language*, not as a string. A rule tagged ``zh-CN`` must apply
+        when the user asks for ``zh``, ``zho_Hans`` or ``zh_CN`` -- they are the same
+        language, and every one of those spellings is a tag this project accepts
+        elsewhere (``lang.NLLB_CODES``, the NLLB passthrough, the settings field). An
+        equality test here meant that typing ``zh`` instead of ``zh-CN`` silently
+        switched off every Chinese rule in the shipped rule set, with no diagnostic:
+        the rule engine simply looked broken.
+        """
+        if self.target is None:
+            return True
+        return same_language(self.target, target_lang)
 
     def apply(self, token: str, corpus: "CorpusStore", target_lang: str) -> str | None:
         raise NotImplementedError
@@ -225,7 +288,7 @@ class AffixRule(Rule):
             stem = token[len(affix) :]
             if len(stem) < self.min_stem:
                 continue
-            hit = corpus.lookup_exact(stem)
+            hit = corpus.lookup_exact(stem, target_lang)
             if hit is None:
                 continue
             return f"{self.prefixes[affix]}{hit.target}"
@@ -237,7 +300,7 @@ class AffixRule(Rule):
             stem = token[: len(token) - len(affix)]
             if len(stem) < self.min_stem:
                 continue
-            hit = corpus.lookup_exact(stem)
+            hit = corpus.lookup_exact(stem, target_lang)
             if hit is None:
                 continue
             return f"{hit.target}{self.suffixes[affix]}"
@@ -262,7 +325,7 @@ class MorphemeRule(Rule):
             hit = None
             for end in range(len(low), i, -1):
                 candidate = low[i:end]
-                hit = corpus.lookup_exact(candidate)
+                hit = corpus.lookup_exact(candidate, target_lang)
                 if hit is not None:
                     pieces.append(hit.target)
                     i = end
@@ -289,6 +352,12 @@ class TemplateRule(Rule):
         except re.error as exc:
             print(f"[translate] bad regex in rule {self.id}: {exc}")
             self.regex = None
+        if self.regex is None:
+            # A template with no usable pattern can never match anything, so it is
+            # disabled rather than left in the rule list. Keeping it made the loaded
+            # rule count -- which the UI shows and a user reads as "these rules are
+            # working" -- include a rule that cannot fire.
+            self.enabled = False
 
     def apply(self, token: str, corpus: "CorpusStore", target_lang: str) -> str | None:
         if self.regex is None:
@@ -302,7 +371,7 @@ class TemplateRule(Rule):
         # translate each captured group through the corpus when possible
         resolved: dict[str, str] = {}
         for name, value in groups.items():
-            hit = corpus.lookup_exact(value)
+            hit = corpus.lookup_exact(value, target_lang)
             resolved[name] = hit.target if hit else value
         try:
             return self.replacement.format(**resolved)
@@ -375,6 +444,15 @@ class CorpusStore:
 
         self._entries: dict[str, Entry] = {}
         self._max_key = 1
+        #: language base -> (entries usable for that target, longest key). Built at
+        #: load rather than filtered per frame: this is the hot path, called once per
+        #: recognised line, and it must not walk the corpus to answer a question that
+        #: only changes when the files do.
+        self._views: dict[str, tuple[dict[str, Entry], int]] = {}
+        #: language bases any entry declares, for diagnostics: "why is nothing being
+        #: translated?" is almost always "the corpus is for a different target"
+        self._languages: list[str] = []
+        self._has_untagged = False
         self._rules: list[Rule] = []
         self._rule_files: list[Path] = [Path(p) for p in rule_files]
         self._mtimes: dict[Path, float] = {}
@@ -474,7 +552,11 @@ class CorpusStore:
         return True
 
     def load(self) -> None:
-        entries: dict[str, Entry] = {}
+        # Keyed by (language, source): two entries for the same source word in different
+        # target languages are not duplicates, they are the two answers this project
+        # exists to keep apart. Keying on the source alone discarded whichever came
+        # second, which made a ja entry impossible to express at all.
+        entries: dict[tuple[str, str], Entry] = {}
         rule_specs: list[tuple[dict[str, Any], str]] = []
 
         for layer in (LAYER_USER, LAYER_DOMAIN, LAYER_GENERAL):
@@ -484,17 +566,40 @@ class CorpusStore:
                     continue
                 origin = f"corpus:{path.stem}"
                 # allow {"entries": {...}} as well as a bare mapping
-                body = data.get("entries") if isinstance(data.get("entries"), dict) else data
+                wrapped = isinstance(data.get("entries"), dict)
+                body = data["entries"] if wrapped else data
+                # A file may declare the language of everything in it. Only in the
+                # wrapped form, where the top level is already metadata: in the bare
+                # form a key is an entry, and the English word "lang" is a source term
+                # someone could legitimately be translating.
+                file_lang: str | None = None
+                if wrapped:
+                    raw_lang = (
+                        data.get("lang") or data.get("target_lang") or data.get("language")
+                    )
+                    file_lang = str(raw_lang) if raw_lang else None
+                elif any(k in data for k in _FILE_LANGUAGE_KEYS):
+                    # In the bare form a key *is* an entry, so "lang" here would become a
+                    # term called "lang" whose translation is "zh-CN" -- silently, and
+                    # the file's language would stay unset. Said out loud rather than
+                    # guessed at: reading the intent would mean either losing a
+                    # legitimate entry for the English word "lang" or inventing a rule
+                    # about which values "look like" a language.
+                    print(
+                        f"[translate] {path.name}: a file-level language needs the "
+                        '{"lang": ..., "entries": {...}} form; ignoring the bare '
+                        f'"lang" key, which is being read as an entry'
+                    )
                 for key, value in body.items():
                     if key.startswith("_") or not isinstance(key, str) or not key.strip():
                         continue
-                    entry = _coerce_entry(key, value, layer, origin)
+                    entry = _coerce_entry(key, value, layer, origin, default_lang=file_lang)
                     if entry is None:
                         continue
-                    norm = normalize(key)
-                    existing = entries.get(norm)
+                    slot = (_language_base(entry.lang), normalize(key))
+                    existing = entries.get(slot)
                     if existing is None or _better(entry, existing):
-                        entries[norm] = entry
+                        entries[slot] = entry
 
         for path in self._rule_files:
             data = _load_json(path)
@@ -521,20 +626,75 @@ class CorpusStore:
 
         with self._lock:
             self._entries = entries
-            self._max_key = max((len(k) for k in entries), default=1)
+            self._max_key = max((len(slot[1]) for slot in entries), default=1)
             self._rules = rules
             self._mtimes = self._snapshot_mtimes()
+            self._views = self._build_views(entries)
+            self._languages = sorted({base for base, _ in entries if base})
+            self._has_untagged = any(not base for base, _ in entries)
             self.revision += 1
         if self.corrections is not None:
             # one reload path for the whole vocabulary: a corpus file and a correction
             # arrive through the same call, so there is no way to get one without the other
             self.corrections.load()
 
+    @staticmethod
+    def _build_views(
+        entries: dict[tuple[str, str], Entry]
+    ) -> dict[str, tuple[dict[str, Entry], int]]:
+        """One merged view per declared language, ready for the translate path.
+
+        ``""`` is the view of entries that declare no language, which are usable for
+        every target. Each language's view is that plus its own entries, so a lookup
+        never has to walk the corpus or test a condition per line.
+        """
+        untagged = {norm: entry for (base, norm), entry in entries.items() if not base}
+        views: dict[str, tuple[dict[str, Entry], int]] = {}
+        for base in {base for base, _ in entries if base}:
+            merged = dict(untagged)
+            merged.update(
+                {norm: entry for (b, norm), entry in entries.items() if b == base}
+            )
+            views[base] = (merged, max((len(k) for k in merged), default=1))
+        views[""] = (untagged, max((len(k) for k in untagged), default=1))
+        return views
+
+    def view_for(self, target_lang: str | None) -> tuple[dict[str, Entry], int]:
+        """The entries usable for this target, and the longest source key among them."""
+        base = _language_base(target_lang)
+        with self._lock:
+            if base in self._views:
+                return self._views[base]
+            # No entry declares this language, so only the language-neutral ones apply.
+            # Falling back is deliberate: a corpus that has never heard of languages
+            # keeps working exactly as it did before this dimension existed.
+            return self._views.get("", ({}, 1))
+
     # -- queries ---------------------------------------------------------- #
 
     @property
     def size(self) -> int:
         return len(self._entries)
+
+    @property
+    def languages(self) -> list[str]:
+        """The target languages entries actually declare, for diagnostics.
+
+        The honest answer to "why is nothing being translated?": almost always because
+        the corpus is written for a different target than the one selected.
+        """
+        return list(self._languages)
+
+    @property
+    def has_untagged_entries(self) -> bool:
+        return self._has_untagged
+
+    def language_summary(self) -> str:
+        """A one-line description of what the corpus can actually answer for."""
+        parts = list(self._languages)
+        if self._has_untagged:
+            parts.append("未标注(任意目标)")
+        return "、".join(parts) if parts else "空"
 
     @property
     def rule_count(self) -> int:
@@ -546,13 +706,32 @@ class CorpusStore:
     def entries_snapshot(self) -> list[Entry]:
         """A stable copy of the loaded entries, for listings and the web panel."""
         with self._lock:
-            return sorted(self._entries.values(), key=lambda e: (e.layer, e.source))
+            return sorted(
+                self._entries.values(), key=lambda e: (e.layer, e.lang or "", e.source)
+            )
 
-    def lookup_exact(self, term: str) -> Entry | None:
+    def lookup_exact(self, term: str, target_lang: str | None = None) -> Entry | None:
+        """The entry for ``term``, restricted to ``target_lang`` when one is given.
+
+        Without a language the language-neutral entries win, and failing that the
+        answer is deterministic (the first language, in sorted order) rather than
+        whichever happened to be loaded last -- a corpus that answers differently
+        between runs is worse than one that answers imperfectly.
+        """
         if not term:
             return None
+        norm = normalize(term)
         with self._lock:
-            return self._entries.get(normalize(term))
+            if target_lang is not None:
+                base = _language_base(target_lang)
+                return self._entries.get((base, norm)) or self._entries.get(("", norm))
+            if ("", norm) in self._entries:
+                return self._entries[("", norm)]
+            for base in self._languages:
+                hit = self._entries.get((base, norm))
+                if hit is not None:
+                    return hit
+            return None
 
     # -- translation ------------------------------------------------------ #
 
@@ -588,9 +767,13 @@ class CorpusStore:
                 )
 
         with self._lock:
-            entries = self._entries
-            max_key = self._max_key
             rules = list(self._rules)
+        # The entries usable for *this* target. An English->Chinese vocabulary must not
+        # answer a request for Japanese: without this the user reads a third language
+        # back at full confidence, which is the same failure the echo gate catches for
+        # source == target and is harder to notice, because the text is foreign either
+        # way.
+        entries, max_key = self.view_for(target_lang)
 
         norm = normalize(text)
         spans: list[Span] = []
@@ -748,6 +931,7 @@ class CorpusTranslator(Translator):
         return {
             "backend": self.name,
             "corpus_entries": self.corpus.size,
+            "corpus_languages": self.corpus.language_summary(),
             "rules": self.corpus.rule_count,
             "rule_ids": self.corpus.rule_ids(),
             "cache_hit_rate": (self._hits / total) if total else 0.0,

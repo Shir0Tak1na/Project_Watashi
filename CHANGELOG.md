@@ -8,6 +8,66 @@ described in `Project Watashi.md`. It is usable for testing and it is honest abo
 what it does not do yet -- see "Known limitations" below, which is part of the
 release rather than a footnote.
 
+## [0.0.5] -- 2026-09-13 -- 测试版 (pre-release)
+
+The corpus engine had no self check of its own, and two real defects were sitting in
+it. Both are about the same thing: the engine did not know what language it was
+translating *into*.
+
+### Fixed
+
+- **A corpus had no target-language dimension.** An English->Chinese vocabulary
+  answered a request for Japanese **with Chinese, at full confidence** — `coverage`
+  1.0, nothing dimmed, nothing counted. This is the failure the 0.0.3 echo fix
+  addressed for source == target, and it is worse, because the text is foreign either
+  way so nothing looks wrong. An entry now declares its language (once per file with
+  `"lang"`, or per entry), the engine uses only entries whose language matches the
+  target, and the shipped corpora declare `zh-CN`. A corpus written before this
+  existed declares nothing and keeps working unchanged, because an untagged entry is
+  treated as usable for any target.
+  Measured end to end, `--selftest --target ja` before/after: the corpus tier used to
+  produce 「剑意」/「虚空」/「境界」 for English input; it now leaves the line
+  untranslated (reported as such) and the model answers 「この宗派の剣の意図は神話だ」.
+- **Rule language matching was string equality.** `target: "zh-CN"` did not match a
+  request for `zh`, `zho_Hans`, `zh_CN` or `ZH-cn` — every spelling this project
+  accepts elsewhere. Typing `zh` instead of `zh-CN` silently switched off all six
+  Chinese rules in the shipped set, and the rule engine simply looked broken. It is
+  now a language comparison (`lang.same_language`), and a rule's own corpus lookups
+  respect the rule's language, so a Chinese rule cannot assemble an answer out of
+  Japanese entries.
+- **One source term could only exist in one language.** Entries were deduplicated on
+  the source alone, so a `ja` entry for a term the `zh` corpus already had was
+  discarded as a duplicate — which made a Japanese corpus impossible to express at
+  all. They are now keyed by (language, source).
+- **A rule whose regex failed to compile was still counted as loaded.** It could
+  never fire, but it appeared in the rule count a user reads as "these rules are
+  working". It is now disabled and reported.
+
+### Added
+
+- **`selfcheck_corpus`**, 79 checks: the corpus engine is the core of this project and
+  had no dedicated check — it was verified indirectly through the session boundary and
+  through benchmark numbers, which is exactly how these two defects stayed invisible.
+  It covers layering and priority, longest match and the word-boundary rule, every
+  accepted entry form (and the ones that must be refused), the target-language
+  dimension, rule language identity, the explainability contract, R3's write-back
+  loop, hot reload, and damaged files. Verified by mutation: making the language
+  dimension language-blind again (one line) fails 20 of its checks and reproduces the
+  original bug in the failure output.
+- **R3's write-back loop, asserted.** The requirement that a rule's guess can be
+  written into the corpus in one step is now implemented *and* verified: the rule
+  answers `antidragon` -> `反龙` at confidence 0.55, accepting it as a correction
+  makes the same word come from the corpus at confidence 1.0, with the same answer.
+- **The corpus's languages are published** in the `ready` event as
+  `corpus_languages`, in the desktop 翻译 tab, in the web panel's corpus card (with a
+  per-entry language column), and in `/api/corpus`. "Nothing is being translated" is
+  almost always "the vocabulary is for another language", and a user staring at
+  untranslated subtitles had no way to discover that.
+- **A warning for the one ambiguous spelling.** A file-level `"lang"` needs the
+  `{"lang": ..., "entries": {...}}` form, where the top level is metadata. In the bare
+  form a key is an entry, so a bare `"lang"` would silently become a term named
+  `lang`; the engine now says so instead of guessing.
+
 ## [0.0.4] -- 2026-09-13 -- 测试版 (pre-release)
 
 Two things: the correction loop, and the hot reload it depends on -- which turned out
