@@ -627,6 +627,13 @@ class DesktopApp:
         has to be able to hand the user to the surface that is -- with one click, rather
         than a sentence telling them to run a command. The panel shares this process's
         engine, so the subtitles it shows are the ones being recognised right now.
+
+        Uses ``WebPanel``'s public surface only: ``running``, ``start``,
+        ``wait_until_ready``, ``url`` and ``stop``. An earlier version read
+        ``panel.running`` (which did not exist, so every click raised AttributeError) and
+        then called ``panel.url()`` (a property, so it would have raised TypeError next).
+        Both mistakes survived review because the check used a hand-written stand-in that
+        had exactly the attributes this function guessed at instead of the real ones.
         """
         from .web import WebPanel
 
@@ -634,11 +641,24 @@ class DesktopApp:
         if panel is None:
             panel = WebPanel(self.session)
             self._panel = panel
+        # A second click has to reuse the live server, so the question is whether the
+        # panel is up -- not what ``start()`` returned. ``start()`` returns False for a
+        # panel that is already running just as it does for one that cannot bind.
         if not panel.running:
             if not panel.start():
-                self._append_history(("", "设置面板启动失败：无法绑定端口", True))
+                self._append_history(
+                    ("", "设置面板启动失败：请确认已安装 uvicorn，且端口 8765 未被占用", True)
+                )
                 return
-        url = panel.url()
+            # Blocks the click for at most this long; uvicorn normally binds in well
+            # under a tenth of a second, and opening the browser before the socket
+            # accepts would show the user a connection error instead of the panel.
+            if not panel.wait_until_ready(timeout=3.0):
+                self._append_history(
+                    ("", f"设置面板启动超时：端口 8765 可能已被占用，请稍后再试（{panel.url}）", True)
+                )
+                return
+        url = panel.url
         self._append_history(("", f"设置面板已启动：{url}", True))
         try:
             webbrowser.open(url)
@@ -792,6 +812,22 @@ class DesktopApp:
                 self.on_quit()
             except Exception:
                 pass
+        # The panel runs uvicorn on a daemon thread and keeps port 8765 bound. Left
+        # alone it would outlive this window inside a still-running process: the port
+        # stays taken and the next launch reports "port in use" for a server nobody can
+        # see. Stop it explicitly, and tolerate a panel that never started.
+        panel = getattr(self, "_panel", None)
+        if panel is not None:
+            try:
+                stopped = panel.stop()
+            except Exception:
+                stopped = False
+            # Only forget the panel if it really went down. A panel whose thread refused
+            # to stop still owns the port and still serves *this* session, so keeping the
+            # handle lets a later click reopen the server that is actually alive instead
+            # of building a second one that cannot bind.
+            if stopped:
+                self._panel = None
         try:
             self.root.quit()
             self.root.destroy()

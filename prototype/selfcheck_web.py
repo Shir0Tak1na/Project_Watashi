@@ -104,10 +104,27 @@ def main() -> int:
     session.start()
 
     panel = WebPanel(session, host="127.0.0.1", port=PORT, log_level="error")
+    # The session was started above, so this also pins the separation: panel state and
+    # session state are different questions, and a panel that has not been started must
+    # not inherit the session's "running". (An earlier version of this file asserted the
+    # opposite -- that session.running was False -- inside a dead `if ...: pass`, so the
+    # claim was never tested and was simply wrong.)
+    check.check(
+        "a panel that has not been started reports False while its session runs",
+        panel.running is False and panel.session.running is True,
+        f"panel.running={panel.running} session.running={panel.session.running}",
+    )
     started = panel.start()
     check.check("panel starts", started and panel.wait_until_ready(), panel.url)
-    if not started or not panel.session.running is False:
-        pass
+    # `running` is what the desktop window keys off to decide whether to start the
+    # panel, and it is the attribute desktop.py used to invent (it read `panel.running`
+    # before this property existed, which raised AttributeError on every click). Public
+    # and asserted, so removing it breaks here instead of in the user's face.
+    check.check(
+        "and reports itself running once started",
+        panel.running is True,
+        f"running={panel.running}",
+    )
 
     base = f"http://127.0.0.1:{PORT}"
     try:
@@ -497,6 +514,11 @@ def main() -> int:
 
     finally:
         panel.stop()
+        check.check(
+            "a stopped panel reports itself stopped, so a caller can start it again",
+            panel.running is False,
+            f"running={panel.running}",
+        )
         session.stop()
 
     # ------------------------------------------------------------------ #

@@ -642,55 +642,139 @@ def main() -> int:
 
         # The one control that hands the user to the surface that edits: it has to
         # actually start the panel, and it must not open a browser window in a test run.
+        #
+        # This runs against the *real* WebPanel, on a real port, and then fetches the
+        # page over HTTP. The previous version of this section swapped in a hand-written
+        # stand-in, and that stand-in is exactly why a broken button shipped: it defined
+        # `running` (which WebPanel does not have, so every click raised AttributeError)
+        # and made `url` a method (it is a property, so the next line raised TypeError).
+        # The check agreed with the code because both were written from the same wrong
+        # idea. A contract this function invents is not a contract; the class is.
         import watashi.desktop as desktop_module
         import watashi.web as web_module
 
-        started: list[str] = []
         opened: list[str] = []
-
-        class _Panel:
-            """Stands in for the web panel, so the check starts no server and no browser."""
-
-            running = False
-
-            def __init__(self, session: Any) -> None:
-                self.session = session
-
-            def start(self) -> bool:
-                self.running = True
-                started.append("started")
-                return True
-
-            def url(self) -> str:
-                return "http://127.0.0.1:9999/"
-
-        original_panel = web_module.WebPanel
         original_open = desktop_module.webbrowser.open
-        web_module.WebPanel = _Panel  # type: ignore[assignment]
+        desktop_module.webbrowser.open = (  # type: ignore[assignment]
+            lambda url: opened.append(url) or True
+        )
+
+        real_panel = None
+        panel_error: str | None = None
+        real_cls = web_module.WebPanel
+        try:
+            # A free port, so a stray uvicorn from another session cannot make this fail
+            # for a reason that has nothing to do with the wiring. Only the port is
+            # overridden -- this is still the real class, constructed by open_panel
+            # itself, so what comes back is what the button would really build.
+            import functools
+            import socket as _socket
+
+            with _socket.socket() as probe:
+                probe.bind(("127.0.0.1", 0))
+                free_port = int(probe.getsockname()[1])
+            web_module.WebPanel = functools.partial(real_cls, port=free_port)  # type: ignore[assignment]
+            app._panel = None
+            # Timed, not asserted: open_panel blocks the click while the socket comes up,
+            # so the number behind the 3 s timeout should be a measurement rather than a
+            # guess. A hard bound here would flake the way the latency bench does when
+            # the machine is busy.
+            started_monotonic = time.perf_counter()
+            app.open_panel()
+            panel_up_ms = (time.perf_counter() - started_monotonic) * 1000.0
+            print(f"      panel up in {panel_up_ms:.0f} ms (open_panel blocks the click)")
+            real_panel = getattr(app, "_panel", None)
+        except Exception as exc:
+            panel_error = f"{type(exc).__name__}: {exc}"
+        finally:
+            web_module.WebPanel = real_cls  # type: ignore[assignment]
+            desktop_module.webbrowser.open = original_open  # type: ignore[assignment]
+
+        check.check(
+            "clicking 打开设置面板 does not raise, running against the real WebPanel",
+            panel_error is None,
+            panel_error or "no exception",
+        )
+        check.check(
+            "the panel the button builds is a real one, on the port it was given",
+            isinstance(real_panel, real_cls),
+            f"got {type(real_panel).__name__ if real_panel is not None else None}",
+        )
+        # "Linked up" is the whole point of the button: the panel has to read and write the
+        # session this window is displaying. A panel built around a copy of the session
+        # would serve a page that looks right and shows nothing happening.
+        check.check(
+            "and it is wired to this window's own session, not a copy",
+            real_panel is not None and real_panel.session is app.session,
+            f"panel.session is app.session: "
+            f"{real_panel is not None and real_panel.session is app.session}",
+        )
+        check.check(
+            "the button starts a server that is actually accepting connections",
+            real_panel is not None and real_panel.running,
+            f"running={getattr(real_panel, 'running', None)}",
+        )
+        check.check(
+            "and hands the browser that server's URL",
+            real_panel is not None and opened == [real_panel.url],
+            f"opened={opened} url={getattr(real_panel, 'url', None)}",
+        )
+
+        # Serving the page is the point of the button; a URL that 404s is not success.
+        page_status: Any = None
+        page_title = ""
+        if real_panel is not None:
+            import urllib.error
+            import urllib.request
+
+            try:
+                with urllib.request.urlopen(real_panel.url, timeout=5.0) as response:
+                    page_status = response.status
+                    body = response.read().decode("utf-8", "replace")
+                page_title = body.split("<title>", 1)[1].split("</title>", 1)[0] if "<title>" in body else ""
+            except urllib.error.URLError as exc:
+                page_status = f"URLError: {exc}"
+        check.check(
+            "the URL the button opens really serves the settings page",
+            page_status == 200 and "Project Watashi" in page_title,
+            f"status={page_status} title={page_title!r}",
+        )
+
+        # A second click must reuse that server: start() returns False for an already
+        # running panel too, so a check on the return value would report a bogus
+        # "port in use" to a user who just clicked the button twice.
+        opened.clear()
+        second_error: str | None = None
         desktop_module.webbrowser.open = (  # type: ignore[assignment]
             lambda url: opened.append(url) or True
         )
         try:
             app.open_panel()
+        except Exception as exc:
+            second_error = f"{type(exc).__name__}: {exc}"
         finally:
-            web_module.WebPanel = original_panel  # type: ignore[assignment]
             desktop_module.webbrowser.open = original_open  # type: ignore[assignment]
 
         check.check(
-            "the panel button starts the panel in this process",
-            started == ["started"],
-            f"started={started}",
+            "clicking a second time reopens the same live server",
+            second_error is None and real_panel is not None and opened == [real_panel.url],
+            f"error={second_error} opened={opened}",
         )
         check.check(
-            "and opens its URL rather than telling the user to run something",
-            opened == ["http://127.0.0.1:9999/"],
-            f"opened={opened}",
+            "and does not report a port problem for a panel it is already serving",
+            not any("启动失败" in e[1] or "超时" in e[1] for e in app.history),
+            [e[1] for e in app.history[-3:]],
         )
         check.check(
             "the URL is also written into the history, for when the browser does not open",
-            any("127.0.0.1:9999" in entry[1] for entry in app.history),
+            real_panel is not None
+            and any(real_panel.url in entry[1] for entry in app.history),
             [entry[1] for entry in app.history[-3:]],
         )
+
+        # Closing the window releases the port; that is asserted at the end, where this
+        # app is closed anyway -- calling close() here would destroy the Tk root and take
+        # the rest of this check with it.
 
         # a refused command must be visible, not silently ignored
         session.fail_names.add("reload_corpus")
@@ -921,6 +1005,31 @@ def main() -> int:
             double_close_ok = False
             print(f"      second close raised: {type(exc).__name__}: {exc}")
         check.check("closing twice is harmless", double_close_ok)
+
+        # The panel started earlier in this check must have gone down with the window.
+        # A panel left running keeps port 8765 bound inside a process that no longer
+        # shows anything, and the next launch reports "port in use" for a server the
+        # user cannot see or stop.
+        check.check(
+            "closing the window stopped the web panel it started",
+            real_panel is not None and not real_panel.running,
+            f"panel={real_panel!r} running={getattr(real_panel, 'running', None)}",
+        )
+        if real_panel is not None:
+            import socket as _rebind_socket
+
+            try:
+                with _rebind_socket.socket() as rebind:
+                    rebind.setsockopt(_rebind_socket.SOL_SOCKET, _rebind_socket.SO_REUSEADDR, 1)
+                    rebind.bind(("127.0.0.1", real_panel.port))
+                port_free: Any = True
+            except OSError as exc:
+                port_free = f"OSError: {exc}"
+            check.check(
+                "and the port is genuinely free again, not merely reported free",
+                port_free is True,
+                f"port {real_panel.port}: {port_free}",
+            )
 
     finally:
         if not app.closed:

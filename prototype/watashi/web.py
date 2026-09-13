@@ -476,6 +476,18 @@ class WebPanel:
         """True when bound to something other than loopback."""
         return self.host not in ("127.0.0.1", "localhost", "::1")
 
+    @property
+    def running(self) -> bool:
+        """Whether the server thread is alive.
+
+        Separate from readiness on purpose: the thread is alive as soon as it is
+        started, but only ``wait_until_ready`` says the socket is accepting. Callers
+        that own the panel need to ask "should I start it?" without starting a second
+        server, and ``start()`` cannot answer that -- it returns False for a panel that
+        is already up *and* for one that failed to come up.
+        """
+        return self._thread is not None and self._thread.is_alive()
+
     def start(self) -> bool:
         """Launch the server thread. Readiness is ``wait_until_ready``.
 

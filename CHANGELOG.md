@@ -11,12 +11,18 @@ release rather than a footnote.
 ## [0.0.6a] -- 2026-09-13 -- 测试版 (pre-release)
 
 Labelled `0.0.6a` because that is what it is from the outside: the first release after
-0.0.6, and a patch to it in the only sense that matters here — the two things the user
-reported after using 0.0.6. The work in between was developed as 0.0.7 and 0.0.8 and is
-folded in rather than published as separate versions, since none of it was ever released.
+0.0.6, and a patch to it in the only sense that matters here — the things the user reported
+after using 0.0.6. The work in between was developed as 0.0.7 and 0.0.8 and is folded in
+rather than published as separate versions, since none of it was ever released.
 
-The two reported defects, both of which were real and neither of which any check could
-have caught as written:
+The three reported defects, all of them real, and the third one reported against this very
+release before it was pushed:
+
+- **「打开设置面板」 was broken outright** — see *Fixed*. It is written up there rather than
+  here because the interesting part is not the two wrong lines but that a check built on a
+  stand-in had been certifying them.
+
+The other two, neither of which any check could have caught as written:
 
 - **The pause button never changed, so there was no way to tell whether it was
   recognising.** Root cause: `_emit_stats()` is called at the end of a processed frame,
@@ -115,6 +121,29 @@ a control — `0x11` against `0x0`.
   deterministic assertion: the check stamps an edit with the previous write's own mtime
   and requires it to be seen, and removing the size from the snapshot makes that assertion
   fail.
+- **「打开设置面板」 raised `AttributeError` on every click, so the desktop window never
+  reached the web panel at all.** `open_panel` read `panel.running`, which `WebPanel` did
+  not have, and then called `panel.url()` — a property, so the line after the crash would
+  have raised `TypeError: 'str' object is not callable`. Both were repairs to a function
+  written from memory of a class rather than from the class. `WebPanel` now exposes
+  `running` (a property, distinct from readiness, and asserted in `selfcheck_web` so it
+  cannot quietly disappear), the button keys off it rather than off `start()`'s return
+  value — which is `False` both for "already running" and for "cannot bind", so a second
+  click used to report a port problem to a user whose server was fine — and it waits for
+  the socket to accept before handing the URL to the browser, because opening a browser
+  first shows a connection error. Closing the window now stops the panel too; it used to
+  keep port 8765 bound inside a process showing nothing, so the next launch reported the
+  port in use.
+- **The check that covered that button could not have caught it, and that is the deeper
+  fix.** `selfcheck_desktop` replaced `WebPanel` with a hand-written `_Panel` class that
+  defined `running` and made `url` a method — it was written from the same wrong idea as
+  the code, so it agreed with the bug on every run. It now instantiates the **real**
+  `WebPanel` on a free port, stubs only the browser, and then fetches the page over HTTP
+  to assert it is served. Three mutations confirm it has teeth: calling `url()`, trusting
+  `start()`'s return value, and dropping `stop()` from `close()` each fail it. It also
+  asserts that the panel the button builds is bound to *this window's own session* rather
+  than a copy — "linked up" is the whole point of the button, and a panel built around a
+  duplicate session would serve a page that looks right and shows nothing happening.
 - `selfcheck_web` now also verifies that the panel's page is *alive* — the inline script
   parses (via Node, skipped when Node is absent) and every element the script looks up
   exists in the markup. Every previous assertion read the page as text, so all of them
@@ -128,13 +157,16 @@ a control — `0x11` against `0x0`.
   the UI uses, a hand-written corpus file beside it is untouched, override and suppress and
   revert each mean exactly one thing, and every export format imports back to the same
   entries and translations.
-- `selfcheck_web` grew from 64 to 94 checks: the editor's endpoints end to end (edit,
+- `selfcheck_web` grew from 64 to 97 checks: the editor's endpoints end to end (edit,
   override, suppress, restore, import, export-as-a-real-download, and a refused byte
-  sequence), and the page-liveness assertions above.
+  sequence), the panel's `running` contract, and the page-liveness assertions above.
 - `selfcheck_desktop` was rewritten for the slimmed window: it now asserts the four
   duplicated tabs stay gone and that their widgets went with them, that the top bar holds
   the target language and the panel button, and that the button really starts the panel and
-  opens its URL (with both effects stubbed, so no server and no browser in a test run).
+  opens its URL. That last part runs the real `WebPanel` and fetches the served page — it
+  is the one effect this check cannot stub, because stubbing it is what let a broken button
+  ship — and it prints how long the click blocks (`panel up in N ms`), which is the number
+  behind the 3 s readiness timeout.
 - New `selfcheck_selfcapture` (40 checks): the rectangle geometry, which windows count as
   ours (by process and by title), that a window already excluded from capture is not
   treated as a problem, the hold itself, and both switches.

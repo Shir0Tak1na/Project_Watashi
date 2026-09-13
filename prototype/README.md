@@ -99,7 +99,10 @@ browser cannot do — dragging a region on the real screen, picking a window,
 `Escape`-able pause, and the target language, which is the one setting a user
 changes while watching — and 「打开设置面板」 starts the panel in-process and
 opens it, so the surface that edits is one click away rather than a sentence in a
-tooltip.
+tooltip. It waits for the socket to accept before opening the browser (102 ms
+measured; the timeout is 3 s), a second click reopens the panel that is already
+running rather than reporting a port error, and closing the window stops the
+server, so the port is free for the next launch.
 
 The panel's command allowlist grew for the same reason: it was "settings and
 viewing only", and it now includes the corpus editor, because a vocabulary table,
@@ -511,12 +514,12 @@ prototype\run.cmd selfcheck_plugins --summary        # plugin contracts + failur
 prototype\run.cmd selfcheck_overlay --summary        # overlay, capture exclusion, hotkeys
 prototype\run.cmd selfcheck_window --summary         # window selection and following
 prototype\run.cmd selfcheck_selector --summary       # drag-to-select, driven synthetically
-prototype\run.cmd selfcheck_desktop --summary        # the desktop window, its tabs and commands
+prototype\run.cmd selfcheck_desktop --summary        # the desktop window, and the real panel it starts
 prototype\run.cmd selfcheck_uirender --summary       # photographs the windows, reads them with OCR
 ```
 
 Counts as of the last full run: 45 / 17 / 29 / 141 / 84 / 112 / 40 / 35 / 49 / 21 / 64 /
-94 / 17 / 13 headless and 46 / 22 / 20 / 96 / 7 with a display — 952 checks, all
+97 / 17 / 13 headless and 46 / 22 / 20 / 104 / 7 with a display — 963 checks, all
 passing. `selfcheck_uirender` reports 7 with one skip on this machine: its window is 70%
 covered by other applications, so the pixel section under that guard never runs. On a
 clear desktop it is 11.
@@ -553,6 +556,15 @@ much of its own window is actually uncovered and, below a threshold, records a *
 that is printed in the summary — never a pass, because a check that silently verified
 nothing is how a green run starts meaning less than it appears to. On a clear desktop it
 runs in full.
+
+The coverage measure is not a complete guard, and the way it fails is worth recognising:
+on a busy screen it can photograph the window with the *taskbar or another application*
+visible inside the region it reads, and then fail with OCR text that is obviously not the
+interface (observed once in a full `--display` run as a jumble of window titles where the
+subtitle line should be, passing on the next run and when run alone). Exit code alone is
+not the diagnosis here — read the compared text: if it is not your window's content at
+all, the check photographed the wrong thing, and that is a screen-state problem rather
+than a regression.
 
 ### What the UI checks can and cannot see
 
