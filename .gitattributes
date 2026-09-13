@@ -1,0 +1,52 @@
+# Line-ending and text rules, stored IN the repository.
+#
+# Why this exists even though this machine has `core.autocrlf = true`:
+# `autocrlf` is a *local* setting that does not travel with the repository. The
+# project targets Linux and macOS as first-class platforms (milestone M5), and a
+# shell script committed with CRLF fails there with
+#
+#     /bin/bash^M: bad interpreter: No such file or directory
+#
+# With these rules the answer is the same on every machine, whatever each
+# contributor's git config happens to be.
+
+# Default: normalise to LF in the repository, and let git decide the working-copy
+# form from the platform.
+* text=auto
+
+# --- must be LF in the repository, on every platform ---
+# Shell scripts break outright with CRLF; source and data files merely churn
+# noisily in diffs, but normalising them keeps the history readable.
+*.sh    text eol=lf
+*.py    text eol=lf
+*.cmd   text eol=crlf
+*.bat   text eol=crlf
+*.md    text eol=lf
+*.json    text eol=lf
+*.yaml    text eol=lf
+*.yml     text eol=lf
+*.txt     text eol=lf
+*.tsv     text eol=lf
+*.cmake   text eol=lf
+CMakeLists.txt text eol=lf
+.gitattributes text eol=lf
+
+# --- binary: never diff, never convert ---
+# The OCR and NMT weights are gitignored, but a model or image that a user drops
+# in by hand must not be mangled by line-ending conversion.
+*.onnx  binary
+*.bin   binary
+*.model binary
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.ico   binary
+*.woff  binary
+*.woff2 binary
+*.docx  binary
+*.pdf   binary
+
+# --- excluded from `git archive` and release tarballs ---
+.github/       export-ignore
+.gitignore     export-ignore
+.gitattributes export-ignore

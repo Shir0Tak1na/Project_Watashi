@@ -1,0 +1,140 @@
+# Project Watashi -- prototype configuration
+#
+# All paths are resolved relative to THIS file's directory (prototype/).
+
+capture:
+  # 0 = all monitors combined, 1 = primary, 2 = secondary ...
+  monitor: 1
+
+  # Fixed region as "x,y,w,h" in virtual screen coordinates.
+  # null => automatically use a strip across the lower part of the monitor,
+  # which is where subtitles usually live.
+  region: null
+
+  # Height of the automatic strip, as a fraction of monitor height.
+  region_ratio: 0.18
+
+  # Target capture rate. The capture thread never queues frames up: if OCR is
+  # slower than this, stale frames are dropped rather than processed late.
+  fps: 10
+
+  # Skip OCR entirely when the frame changed less than this (mean absolute
+  # difference of a 96px wide grayscale signature, 0-255 scale).
+  # Raise it if the overlay keeps redrawing noise; lower it if brief subtitles
+  # are being missed.
+  diff_threshold: 2.0
+  signature_width: 96
+
+  # Downscale frames wider than this before OCR, scaling the boxes back.
+  # 0 = native resolution, which is the measured best default.
+  #
+  # Downscaling is a trap: it does NOT reliably save time (the detector's
+  # behaviour on a squeezed frame varies) and it costs accuracy. Measured on a
+  # fixed 1600x304 region: native 354 ms, 960 -> 246 ms, 640 -> 286 ms, and at
+  # 640 the words merge ("he broke through" became "hebrokethroughtothevoidrealm").
+  #
+  # The real latency lever is the REGION SIZE, not the pixel scale. A 1280 px
+  # wide strip is ~117 ms; 640 px is ~89 ms. Pick the smallest region that
+  # still contains the whole subtitle line.
+  max_width: 0
+
+  # Hard floor between two OCR runs, in seconds. 0 = no floor.
+  min_ocr_interval: 0.0
+
+# ONNX Runtime / RapidOCR tuning.
+#
+# These three settings are the difference between ~3580 ms and ~61 ms per
+# frame. RapidOCR's stock values are tuned for full page documents and are
+# actively harmful for a wide, short subtitle strip. See watashi/ocr.py for the
+# full explanation, and bench_ocr.py / diagnose_ort.py to re-measure.
+ocr:
+  # ORT default = all cores. On a 20 core machine that is ~5x SLOWER than 4
+  # because the threads thrash over a small model. Measured sweep (640 px):
+  #   1 -> 133 ms, 2 -> 80 ms, 3 -> 61 ms, 4 -> 168 ms, 6 -> 261 ms, 8 -> 384 ms
+  intra_op_threads: 4
+  inter_op_threads: 1
+
+  # RapidOCR sets this to false, forcing a fresh buffer allocation per run.
+  use_mem_arena: true
+
+  # RapidOCR's default is "min" with limit_side_len 736, which scales a
+  # 1280x176 strip up to 5344x736 -- a 17x pixel blowup. "max" keeps wide
+  # strips at native resolution (it only ever downscales).
+  det_limit_type: max
+  det_limit_side_len: null
+
+  # Direction classification. Subtitles are horizontal, so this is pure cost.
+  use_cls: false
+
+translation:
+  source: auto
+  target: zh-CN
+
+  # Drop results below this mean confidence (0 = keep everything).
+  min_confidence: 0.0
+
+  # --- local translation model (requirement R1 / M3) ------------------- #
+  #
+  # Path to a local CTranslate2 model directory, or null to run corpus+rules
+  # only. Nothing here is a cloud API: after a one-time download the model runs
+  # entirely on this machine.
+  #
+  #   prototype\run.cmd fetch_model      # fetches it once (~617 MiB)
+  #
+  # The model is NLLB-200-distilled-600M (int8), a purpose-built translator
+  # rather than a chat LLM: much faster on CPU and far better at sentences.
+  # If the directory is missing or incomplete the app still runs, on the corpus
+  # path alone.
+  nmt_model: ../models/llm/nllb-200-distilled-600M-ct2-int8
+
+  nmt_compute_type: int8      # int8 | int8_float32 | float32
+  nmt_beam_size: 1            # beam 4 measured worse here, not better
+  nmt_intra_threads: 4        # 4 is fastest on a 20 core machine, as with OCR
+
+  # Term protection: the corpus stays authoritative and the model only fills the
+  # gaps. When a term's placeholder does not survive the model, or the output is
+  # a repetition loop, the corpus result is used instead -- keeping terminology
+  # correct matters more than fluency.
+  protect_terms: true
+  protect_min_confidence: 0.4
+
+corpus:
+  # Layered, highest priority first. Any .json file in these directories is
+  # loaded; see prototype/corpus/demo_terms.json for the format.
+  user:
+    - ../plugins/user/custom_rules
+  domain:
+    - corpus
+    - ../rules/slang
+    - ../rules/fiction
+  general:
+    - ../rules/dictionaries
+
+rules:
+  # Rule definitions for words missing from the corpus (requirement R3).
+  files:
+    - rules/engine_rules.json
+
+overlay:
+  # bar | panel | both | none
+  mode: both
+
+  # plate = semi transparent dark plate (robust)
+  # bare  = true transparency with outlined text (real subtitle look)
+  subtitle_style: plate
+
+  font_family: null      # null = auto detect a CJK capable font
+  subtitle_size: 24
+  panel_size: 13
+  bar_height: 96
+  bar_alpha: 0.72
+  bar_bottom_margin: 90
+  panel_width: 540
+  panel_height: 320
+  panel_history: 12
+  dim_low_confidence: true
+
+logging:
+  print_lines: false     # echo each recognised line + translation to the console
+  print_trace: false     # include per span provenance (corpus/rule ids)
+  print_refined: true    # echo the improved translation when the model finishes

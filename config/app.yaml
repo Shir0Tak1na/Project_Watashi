@@ -1,0 +1,22 @@
+app:
+  name: ProjectWatashi
+  mode: local
+  logging: true
+
+translation:
+  default_source: auto
+  default_target: zh-CN
+  cache_enabled: true
+  use_llm: true
+  llm_backend: llama_cpp
+
+ocr:
+  provider: paddleocr
+  capture_area_enabled: true
+
+rules:
+  slang_file: rules/slang/internet_slang.json
+  fiction_file: rules/fiction/fantasy_terms.json
+
+storage:
+  db_path: data/project_watashi.db

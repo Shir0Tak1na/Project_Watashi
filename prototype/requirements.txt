@@ -1,0 +1,33 @@
+# Local-only stack for the Project Watashi prototype.
+#
+# Everything here runs offline. The ONNX weights ship inside
+# rapidocr-onnxruntime, so no model download is needed and no cloud call is
+# made (requirement R1).
+#
+# tkinter is used for the overlay and is part of the Python standard library,
+# so it is intentionally not listed.
+
+rapidocr-onnxruntime>=1.4.4
+onnxruntime>=1.17
+opencv-python>=4.8
+numpy>=1.24
+mss>=9.0
+pillow>=10.0
+pyyaml>=6.0
+
+# Optional: local LLM backend for M3 (requirement R1). Requires a local GGUF
+# model file and is enabled by setting translation.llm_model in config.yaml.
+# No cloud API is used.
+# llama-cpp-python>=0.2.0
+
+# Local neural machine translation (requirement R1 / M3). CTranslate2 runs the
+# model on CPU and tokenizers reads the NLLB tokenizer. Model weights are
+# fetched separately by fetch_model.py, not by pip.
+ctranslate2>=4.5
+sentencepiece>=0.2
+tokenizers>=0.20
+
+# Used by fetch_model.py for the one-time model download only; the running
+# application never needs the network.
+requests>=2.31
+

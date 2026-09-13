@@ -1,69 +1,45 @@
-# Prerequisites
-*.d
+# Build and run artefacts.
+#
+# The two entries that matter most are `models/` and `.venv/`: the local NLLB
+# model is 617 MiB and the virtual environment is a few hundred MiB more, so a
+# careless `git add .` would commit the better part of a gigabyte and the whole
+# repository would become impractical to clone. Everything else here is
+# regenerable.
 
-# Compiled Object files
-*.slo
-*.lo
-*.o
-*.obj
+# --- Python prototype ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
 
-# Precompiled Headers
-*.gch
-*.pch
+# The virtual environment is machine specific: paths, compiled extensions and the
+# interpreter version. `prototype/requirements.txt` is the reproducible record.
+.venv/
+venv/
 
-# Linker files
-*.ilk
+# --- local models ---
+# Fetched by prototype/fetch_model.py; the download is resume-safe and documented,
+# which is a better distribution mechanism than a binary in the history.
+models/
 
-# Debugger Files
-*.pdb
-
-# Compiled Dynamic libraries
-*.so
-*.dylib
-*.dll
-*.so.*
-
-
-# Fortran module files
-*.mod
-*.smod
-
-# Compiled Static libraries
-*.lai
-*.la
-*.a
-*.lib
-
-# Executables
-*.exe
-*.out
-*.app
-
-# Build directories
+# --- generated outputs ---
 build/
-Build/
-build-*/
+dist/
 
-# CMake generated files
-CMakeFiles/
-CMakeCache.txt
-cmake_install.cmake
-Makefile
-install_manifest.txt
-compile_commands.json
+# --- measurement output (written by --stats-json and the benchmark tools) ---
+stats.json
+*.stats.json
+bench_*.json
 
-# Temporary files
-*.tmp
-*.log
-*.bak
+# --- editor / OS ---
+# `.vscode/settings.json` is deliberately NOT shared. VS Code reads it from the
+# workspace, so committing it hands every cloner this machine's terminal
+# auto-approve allowlist, plus absolute paths containing a local username
+# (C:/Users/<name>/...). `extensions.json` is the one file that is genuinely
+# useful to share, since it only recommends extensions.
+.vscode/*
+!.vscode/extensions.json
+.idea/
 *.swp
-
-# vcpkg
-vcpkg_installed/
-
-# debug information files
-*.dwo
-
-# test output & cache
-Testing/
-.cache/
+Thumbs.db
+desktop.ini

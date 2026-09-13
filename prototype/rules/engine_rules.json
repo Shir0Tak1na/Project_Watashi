@@ -1,0 +1,144 @@
+{
+  "_comment": [
+    "Rule definitions for out-of-corpus words (requirement R3).",
+    "These are DATA, not code: edit this file and the running prototype picks",
+    "the change up on the next frame (mtime based hot reload) -- no restart,",
+    "no recompile, which is exactly what R3 asks for.",
+    "",
+    "type       : affix | morpheme | template | transliterate",
+    "priority   : lower runs first",
+    "confidence : reported per span so the overlay can dim uncertain output",
+    "target     : optional language filter; omit to apply to every target",
+    "enabled    : set false to keep a rule on disk but inactive"
+  ],
+
+  "rules": [
+    {
+      "id": "affix-en-to-zh",
+      "type": "affix",
+      "priority": 10,
+      "confidence": 0.55,
+      "target": "zh-CN",
+      "min_stem": 3,
+      "prefixes": {
+        "anti": "反",
+        "auto": "自动",
+        "super": "超",
+        "ultra": "极",
+        "hyper": "超",
+        "over": "超",
+        "under": "次",
+        "pre": "前",
+        "post": "后",
+        "non": "非",
+        "un": "不",
+        "re": "重",
+        "sub": "亚",
+        "neo": "新",
+        "proto": "原",
+        "meta": "元",
+        "multi": "多",
+        "poly": "多",
+        "mono": "单",
+        "omni": "全",
+        "cyber": "赛博"
+      },
+      "suffixes": {
+        "less": "无",
+        "like": "般",
+        "ness": "性",
+        "ism": "主义",
+        "ist": "主义者",
+        "ful": "满",
+        "ship": "关系",
+        "hood": "期"
+      }
+    },
+
+    {
+      "id": "affix-zh-to-en",
+      "type": "affix",
+      "priority": 10,
+      "confidence": 0.5,
+      "target": "en",
+      "min_stem": 1,
+      "prefixes": {
+        "反": "anti-",
+        "超": "super-",
+        "非": "non-",
+        "不": "un-",
+        "前": "pre-",
+        "后": "post-",
+        "次": "sub-",
+        "极": "ultra-",
+        "多": "multi-",
+        "单": "mono-",
+        "双": "bi-",
+        "全": "omni-",
+        "新": "neo-",
+        "原": "proto-",
+        "元": "meta-",
+        "赛博": "cyber-"
+      },
+      "suffixes": {
+        "性": "-ness",
+        "化": "-ize",
+        "者": "-er",
+        "主义": "-ism"
+      }
+    },
+
+    {
+      "id": "template-cultivation-zh-to-en",
+      "type": "template",
+      "priority": 20,
+      "confidence": 0.6,
+      "target": "en",
+      "pattern": "(?P<base>.+)(境|界)",
+      "replacement": "{base} Realm"
+    },
+    {
+      "id": "template-technique-zh-to-en",
+      "type": "template",
+      "priority": 21,
+      "confidence": 0.6,
+      "target": "en",
+      "pattern": "(?P<base>.+)(诀|法)",
+      "replacement": "{base} Art"
+    },
+    {
+      "id": "template-sect-zh-to-en",
+      "type": "template",
+      "priority": 22,
+      "confidence": 0.6,
+      "target": "en",
+      "pattern": "(?P<base>.+)(宗|门)",
+      "replacement": "{base} Sect"
+    },
+
+    {
+      "id": "morpheme-en-to-zh",
+      "type": "morpheme",
+      "priority": 30,
+      "confidence": 0.45,
+      "target": "zh-CN",
+      "separator": ""
+    },
+    {
+      "id": "morpheme-zh-to-en",
+      "type": "morpheme",
+      "priority": 31,
+      "confidence": 0.45,
+      "target": "en",
+      "separator": " "
+    },
+
+    {
+      "id": "transliterate-fallback",
+      "type": "transliterate",
+      "priority": 999,
+      "confidence": 0.1,
+      "_comment": "Always matches. Keeps proper nouns readable and makes it obvious that nothing better was found."
+    }
+  ]
+}
