@@ -34,7 +34,22 @@ from watashi.session import Session
 from watashi.synth import SyntheticCapturer
 from watashi.web import WebPanel
 
-PORT = 8791
+def _free_port() -> int:
+    """A port nothing is listening on, chosen at run time.
+
+    This used to be a fixed 8791. A crashed earlier run could leave a server thread
+    holding that port, and the next run would fail to bind and then talk to the
+    zombie -- which is a large part of why this self check failed intermittently.
+    Letting the OS pick makes a leftover server irrelevant.
+    """
+    import socket
+
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        return int(probe.getsockname()[1])
+
+
+PORT = _free_port()
 
 
 
@@ -275,6 +290,14 @@ def main() -> int:
     if not panel.wait_until_ready(timeout=1.0):
         panel.start()
         restarted = panel.wait_until_ready(timeout=10.0)
+        # Checked, not assumed. The previous version restarted the panel and then
+        # fired requests regardless of whether it came back up, so a failed restart
+        # surfaced as a ConnectionRefused several lines later instead of here.
+        check.check(
+            "the panel restarts for this section after the earlier stop()",
+            restarted,
+            "without this the requests below would fail with a confusing connection error",
+        )
     try:
         config.base_dir = tmp_base
 
@@ -403,6 +426,77 @@ def main() -> int:
         shutil.rmtree(tmp_base, ignore_errors=True)
         if restarted:
             panel.stop()
+
+    # ------------------------------------------------------------------ #
+    print("")
+    print("-- stop() actually stops, even with a stream open --")
+    #
+    # This reproduces the failure that made this self check unreliable rather than
+    # just re-running it and hoping. uvicorn's graceful shutdown waits for in-flight
+    # connections, and an open SSE stream is exactly such a connection. The old
+    # stop() joined once, gave up, cleared its handles anyway, and left a server
+    # thread holding the port; the next start() then failed to bind and requests
+    # went to that zombie. Every later section became a coin flip.
+    import socket as _socket
+
+    zombie_port = _free_port()
+    first = WebPanel(session, host="127.0.0.1", port=zombie_port, log_level="error")
+    check.check("a second panel starts on its own port", first.start() and first.wait_until_ready())
+
+    stream_opened = {"ok": False}
+
+    def hold_stream_open() -> None:
+        try:
+            with urllib.request.urlopen(
+                f"http://127.0.0.1:{zombie_port}/api/events", timeout=20
+            ) as response:
+                stream_opened["ok"] = True
+                response.read(64)  # prove data actually flows
+                time.sleep(3.0)    # and stay connected while stop() is called
+        except Exception:
+            pass
+
+    holder = threading.Thread(target=hold_stream_open, daemon=True)
+    holder.start()
+    deadline = time.time() + 5
+    while not stream_opened["ok"] and time.time() < deadline:
+        time.sleep(0.05)
+    check.check(
+        "an SSE stream is genuinely open before the stop",
+        stream_opened["ok"],
+        "otherwise this reproduces nothing",
+    )
+
+    stopped_cleanly = first.stop(timeout=5.0)
+    check.check(
+        "stop() reports that it stopped (it used to clear its handles regardless)",
+        stopped_cleanly is True,
+    )
+    check.check(
+        "and the server thread is really gone",
+        first._thread is None,  # noqa: SLF001 - the invariant under test
+    )
+
+    # The decisive one: the port must be free, because a held port is what made the
+    # next start() fail and sent requests to a server with a different session.
+    try:
+        with _socket.socket() as probe:
+            probe.setsockopt(_socket.SOL_SOCKET, _socket.SO_REUSEADDR, 1)
+            probe.bind(("127.0.0.1", zombie_port))
+        port_free = True
+    except OSError as exc:
+        port_free = False
+        print(f"      port still held: {exc}")
+    check.check("the port is released, so a restart cannot silently fail to bind", port_free)
+
+    again = WebPanel(session, host="127.0.0.1", port=zombie_port, log_level="error")
+    check.check(
+        "and a fresh panel can bind that same port again",
+        again.start() and again.wait_until_ready(),
+    )
+    status, _ = get(f"http://127.0.0.1:{zombie_port}/api/info")
+    check.check("and it serves requests rather than refusing them", status == 200, f"HTTP {status}")
+    again.stop()
 
     return check.report()
 

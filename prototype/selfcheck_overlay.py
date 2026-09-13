@@ -292,7 +292,15 @@ def main() -> int:
         check.check("a synthesized ctrl+alt+F11 reaches the handler",
                     fired["count"] > 0, f"fired {fired['count']} time(s)")
         manager.stop()
-        check.check("hotkeys unregister cleanly", True)
+        # This used to read `check.check("hotkeys unregister cleanly", True)`, which
+        # asserts nothing at all. It matters that it is a real check: a global hotkey
+        # that is not released stays grabbed system-wide, so after this program exits
+        # Ctrl+Alt+P would still be swallowed and belong to nobody.
+        check.check(
+            "stopping actually releases every hotkey back to Windows",
+            not any(b.registered for b in manager._bindings),
+            "; ".join(manager.describe()),
+        )
     else:
         print(f"  [skip] hotkeys unavailable: {'; '.join(manager.failures)}")
 

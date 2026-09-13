@@ -345,6 +345,16 @@ class WebPanel:
         return self.host not in ("127.0.0.1", "localhost", "::1")
 
     def start(self) -> bool:
+        """Launch the server thread. Readiness is ``wait_until_ready``.
+
+        Refuses to start a second server on top of a live one. Two servers sharing a
+        port is not a race that resolves itself: the second fails to bind, its thread
+        exits, and the first quietly keeps serving -- with the *old* session attached,
+        so requests appear to succeed while reading stale state.
+        """
+        if self._thread is not None and self._thread.is_alive():
+            print("[web] refusing to start: a server thread is already running")
+            return False
         try:
             import uvicorn
         except ImportError:
@@ -376,10 +386,38 @@ class WebPanel:
             time.sleep(0.05)
         return False
 
-    def stop(self, timeout: float = 5.0) -> None:
+    def stop(self, timeout: float = 5.0) -> bool:
+        """Shut the server down and **confirm** it stopped. Returns whether it did.
+
+        The old version set ``should_exit``, joined once, and cleared its handles
+        regardless of the outcome. When the join timed out -- which is what an open
+        SSE stream causes, because uvicorn's graceful shutdown waits for in-flight
+        connections -- the panel reported itself stopped while the thread kept
+        running and kept the port bound. The next ``start()`` then failed to bind and
+        every request went to the zombie, whose session was a different one. That is
+        the flakiness: a refused connection at one moment, an aborted one at another,
+        on whichever line happened to be running.
+
+        So: escalate to ``force_exit`` (uvicorn's "abandon the connections") and join
+        again, and only clear the handles once the thread is genuinely gone.
+        """
+        stopped = True
         if self._server is not None:
             self._server.should_exit = True
         if self._thread is not None:
             self._thread.join(timeout=timeout)
+            if self._thread.is_alive():
+                # graceful shutdown is not going to finish; abandon the connections
+                if self._server is not None:
+                    self._server.force_exit = True
+                self._thread.join(timeout=timeout)
+            if self._thread.is_alive():
+                stopped = False
+                print(
+                    "[web] warning: the server thread did not stop within "
+                    f"{timeout * 2:.0f}s; port {self.port} may still be held"
+                )
+        if stopped:
+            self._server = None
             self._thread = None
-        self._server = None
+        return stopped

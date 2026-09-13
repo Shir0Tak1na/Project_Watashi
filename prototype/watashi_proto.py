@@ -46,6 +46,7 @@ from watashi.overlay import Overlay  # noqa: E402
 from watashi.presentation import PresentationSpec, resolve_presentation  # noqa: E402
 from watashi.profiles import apply_profile, describe_profiles, find_profile  # noqa: E402
 from watashi.selftest import run_selftest  # noqa: E402
+from watashi import RELEASE_STAGE, __version__  # noqa: E402
 from watashi.session import Session  # noqa: E402
 
 
@@ -138,6 +139,12 @@ def build_parser() -> argparse.ArgumentParser:
                        help="web panel bind address; defaults to 127.0.0.1. "
                             "Anything else exposes the panel on the network")
 
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"Project Watashi {__version__} -- {RELEASE_STAGE}",
+        help="print the version and exit",
+    )
     run = parser.add_argument_group("run")
     run.add_argument("--duration", type=float, default=None, help="stop after N seconds")
     run.add_argument("--print", dest="print_lines", action="store_true", default=None, help="echo lines to the console")

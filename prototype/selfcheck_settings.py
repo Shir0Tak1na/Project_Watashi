@@ -389,13 +389,24 @@ def main() -> int:
         try:
             reloaded.save_overrides({"overlay.mode": "sideways"})
             check.check("an invalid value is refused", False, "no error raised")
-        except ValueError:
-            check.check("an invalid value is refused", True)
+        except ValueError as exc:
+            # Asserting the *reason* rather than merely that something was raised:
+            # any stray ValueError would satisfy "it was refused", including one
+            # from a typo in this very test.
+            check.check(
+                "an invalid value is refused, and the reason names the field",
+                "显示方式" in str(exc),
+                str(exc),
+            )
         try:
             reloaded.save_overrides({"not.a.setting": 1})
             check.check("an unknown setting is refused", False, "no error raised")
-        except ValueError:
-            check.check("an unknown setting is refused", True)
+        except ValueError as exc:
+            check.check(
+                "an unknown setting is refused, naming the key",
+                "not.a.setting" in str(exc),
+                str(exc),
+            )
         check.check(
             "a refused write leaves no file behind",
             not AppConfig.overrides_path(tmp).exists(),
@@ -403,7 +414,52 @@ def main() -> int:
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
+    # ---------------------------------------------------------------- #
+    check.section("the running version is reported, not just declared")
+    from watashi import RELEASE_STAGE, __version__
+
+    check.check(
+        "the package declares a pre-release version",
+        __version__.startswith("0.0."),
+        f"version={__version__}",
+    )
+    check.check(
+        "and a release stage, so a build cannot be mistaken for the finished thing",
+        bool(RELEASE_STAGE),
+        RELEASE_STAGE,
+    )
+    check.check(
+        "the session reports both, so every surface can show them",
+        session_version_ok(),
+    )
+    check.check(
+        "the changelog documents this version",
+        _changelog_mentions(__version__),
+        "CHANGELOG.md must have an entry for the version being released",
+    )
+
     return check.report()
+
+
+def session_version_ok() -> bool:
+    """`info()` must carry the version the package declares."""
+    from watashi import __version__
+    from watashi.config import AppConfig
+    from watashi.session import Session
+    from watashi.synth import SyntheticCapturer
+
+    config = AppConfig.load()
+    config.translation["nmt_model"] = None
+    session = Session(config, capturer=SyntheticCapturer(frames=[("x",)], hold_seconds=99))
+    session.build()
+    return session.info().get("version") == __version__
+
+
+def _changelog_mentions(version: str) -> bool:
+    path = Path(__file__).resolve().parent.parent / "CHANGELOG.md"
+    if not path.exists():
+        return False
+    return f"[{version}]" in path.read_text(encoding="utf-8")
 
 
 if __name__ == "__main__":

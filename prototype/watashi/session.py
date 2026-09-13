@@ -37,6 +37,7 @@ from collections import deque
 from pathlib import Path
 from typing import Any, Callable, Iterable, Sequence
 
+from . import RELEASE_STAGE, __version__
 from .capture import Region, RegionCapturer
 from .config import AppConfig
 from .events import (
@@ -323,6 +324,10 @@ class Session:
         )
         return {
             "schema_version": SCHEMA_VERSION,
+            #: so every surface can show what it is talking to, instead of a user
+            #: having to guess which build is running
+            "version": __version__,
+            "release_stage": RELEASE_STAGE,
             "mode": self.config.overlay.get("mode"),
             "capture_mode": capture_mode,
             "capture_window": window_title,

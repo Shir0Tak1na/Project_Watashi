@@ -16,7 +16,17 @@ the pipeline and the latency numbers before committing the same design to the
 C++ core.
 """
 
-__version__ = "0.1.0"
+#: Pre-release. This is the Python validation prototype, not the C++ product the
+#: requirements describe, and the version says so rather than implying otherwise:
+#: 0.0.x means "usable for testing", not "feature complete".
+#:
+#: It previously read 0.1.0, which was never tagged or released. Re-numbering into
+#: 0.0.x is deliberate: 0.1.0 would claim more maturity than a prototype that has
+#: not been ported deserves.
+__version__ = "0.0.2"
+
+#: Shown next to the version so no one has to guess what they are running.
+RELEASE_STAGE = "测试版 (pre-release prototype)"
 
 __all__ = [
     "capture",
