@@ -827,16 +827,22 @@ class HybridTranslator(Translator):
         self.max_lines_per_refinement = max_lines_per_refinement
         self.max_chars_per_refinement = max_chars_per_refinement
         self.skipped_too_long = 0
+        self._cache_revision = self._revision()
 
-        self._latest: tuple[list[str], str] | None = None
+        self._latest: tuple[list[str], str, int] | None = None
         self._condition = threading.Condition()
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._cache: dict[tuple[str, str], Refinement] = {}
+        self._cache_revision = 0
         self._lock = threading.Lock()
         self.refinements = 0
         self.dropped = 0
         self.deferred = 0
+        #: refinements thrown away because the corpus changed while the model was
+        #: working on them. Counted rather than silent: a correction that keeps being
+        #: discarded looks exactly like a correction that does not work.
+        self.stale_dropped = 0
         #: Optional predicate: while it returns True the worker holds off.
         #: Set by the pipeline so the model does not steal memory bandwidth
         #: from OCR. Bounded by ``max_defer_seconds`` so a constantly changing
@@ -860,7 +866,20 @@ class HybridTranslator(Translator):
         return outcome
 
     def _cached(self, text: str, target_lang: str) -> Refinement | None:
+        """The cached refinement for this text, if it is still valid.
+
+        A refined answer describes the vocabulary it was computed against. Once the
+        corpus changes -- a correction, a reload, or an edit the mtime check noticed --
+        every cached answer is an answer to a question that has been re-answered, so
+        the cache is emptied rather than checked entry by entry. Serving one would
+        mean a hand edit to a corpus file appearing not to work, because the model's
+        older answer for the same line was still being handed back.
+        """
         with self._lock:
+            if self._cache_revision != self._revision():
+                self._cache.clear()
+                self._cache_revision = self._revision()
+                return None
             return self._cache.get((text, target_lang))
 
     def submit(self, texts: "str | Sequence[str]", target_lang: str) -> bool:
@@ -901,9 +920,35 @@ class HybridTranslator(Translator):
         with self._condition:
             if self._latest is not None:
                 self.dropped += 1
-            self._latest = (selected, target_lang)
+            # The vocabulary revision travels with the job: reading the corpus now and
+            # comparing later is the only way to notice that a human corrected one of
+            # these lines while the model was still thinking about it.
+            self._latest = (selected, target_lang, self._revision())
             self._condition.notify()
         return True
+
+    def _revision(self) -> int:
+        return int(getattr(self.corpus, "revision", 0))
+
+    def forget(self, source: str | None = None, contains: str | None = None) -> int:
+        """Drop cached refinements the vocabulary has moved past.
+
+        A refined answer is cached against the exact source text and reused for the
+        next frame that reads it. After a correction that cached answer is the one the
+        user rejected, so it has to go -- otherwise the correction would be applied by
+        the corpus and then immediately overwritten by the cache on the very next
+        frame, which is indistinguishable from the correction not working.
+        """
+        with self._lock:
+            doomed = [
+                key
+                for key in self._cache
+                if (source is not None and key[0] == source)
+                or (contains is not None and contains in key[0])
+            ]
+            for key in doomed:
+                del self._cache[key]
+        return len(doomed)
 
     # -- worker ----------------------------------------------------------- #
 
@@ -933,7 +978,7 @@ class HybridTranslator(Translator):
                 self._latest = None
             if job is None:
                 continue
-            texts, target_lang = job
+            texts, target_lang, revision = job
             self._wait_for_quiet_period()
             if self._stop.is_set():
                 return
@@ -943,6 +988,13 @@ class HybridTranslator(Translator):
                 print(f"[nmt] refinement failed: {exc}")
                 continue
             if not refinements:
+                continue
+            if revision != self._revision():
+                # The vocabulary was replaced while this batch was being computed -- a
+                # correction, a reload, or an edit noticed by the mtime check. Discarding
+                # it is the point: publishing would put the pre-correction answer back on
+                # screen, and caching it would keep serving it to later frames.
+                self.stale_dropped += len(refinements)
                 continue
             with self._lock:
                 if len(self._cache) >= self.cache_size:
@@ -1007,6 +1059,7 @@ class HybridTranslator(Translator):
             "refinements": self.refinements,
             "refinements_dropped": self.dropped,
             "refinements_deferred": self.deferred,
+            "refinements_stale": self.stale_dropped,
             #: whether a job is queued right now -- distinct from "dropped",
             #: which counts requests superseded before they ran
             "refinements_pending": 1 if self._latest is not None else 0,

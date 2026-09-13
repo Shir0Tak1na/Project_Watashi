@@ -118,6 +118,37 @@ class RecentTranslations:
         while len(self._entries) > self.limit:
             self._entries.popitem(last=False)
 
+    # -- invalidation ------------------------------------------------------ #
+
+    def drop(self, *sources: str) -> int:
+        """Forget these sources. Returns how many entries went.
+
+        Exists for corrections. A memory that keeps serving the translation a human
+        just rejected is worse than having no memory at all: the corrected corpus
+        entry is ready and the cache would hide it for the rest of the TTL -- which
+        is exactly the ten seconds in which the user is looking at the screen to
+        check whether their correction worked.
+        """
+        removed = 0
+        for source in sources:
+            if self._entries.pop(normalize(source), None) is not None:
+                removed += 1
+        return removed
+
+    def drop_containing(self, fragment: str) -> int:
+        """Forget every remembered source that contains ``fragment``.
+
+        For term corrections: the term is one word inside a line, and the stale entry
+        is the whole line's translation, so there is no single key to drop.
+        """
+        needle = normalize(fragment)
+        if not needle:
+            return 0
+        doomed = [key for key in self._entries if needle in key]
+        for key in doomed:
+            del self._entries[key]
+        return len(doomed)
+
     # -- introspection ----------------------------------------------------- #
 
     def clear(self) -> None:

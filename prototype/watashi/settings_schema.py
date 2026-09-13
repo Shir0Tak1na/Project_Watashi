@@ -461,12 +461,14 @@ CORPUS = Category(
     id="corpus",
     title="⑤ 语料库与规则 · 让生词可译",
     summary="这是本项目区别于通用翻译工具的地方。词条是磁盘上的普通文件，"
-            "改完按修改时间自动热加载，不需要重启。",
+            "改完按修改时间自动热加载，不需要重启。桌面的「字幕」页里选中一行、"
+            "改成你要的译文，就会写进用户库最高优先级的那一层，同一帧立刻改过来。",
     fields=(
         Field(
             key="corpus.user",
             label="用户私有库目录",
-            description="你自己的术语表放在这里，优先级最高，会压过其他所有层。",
+            description="你自己的术语表放在这里，优先级最高，会压过其他所有层。"
+                        "「实时纠正」写入的 corrections.json 也在这一层；目录不存在时会自动创建。",
             kind="path_list",
             default=["../plugins/user/custom_rules"],
             applies=RESTART,
@@ -498,6 +500,32 @@ CORPUS = Category(
             default=["rules/engine_rules.json"],
             applies=RESTART,
             note="当前有 8 条规则：affix/morpheme/template/transliterate 四类",
+        ),
+        Field(
+            key="corpus.auto_reload",
+            label="自动热加载语料库",
+            description="开着：每次翻译前检查一遍词条文件的修改时间，你在编辑器里"
+                        "存一下盘就生效。关掉：只有点「重载语料库」或重启才生效，"
+                        "适合词条文件放在网络盘、每次 stat 都很慢的情况。",
+            kind="bool",
+            default=True,
+            applies=LIVE,
+            command="set_corpus_reload",
+            note="关掉之后「实时纠正」仍然会立刻生效：它走的是强制重载，不等这个开关",
+        ),
+        Field(
+            key="corpus.reload_interval_ms",
+            label="热加载检查间隔",
+            description="两次检查修改时间之间至少隔多久。检查本身只是几次 stat，"
+                        "远小于一帧的识别耗时；调大只在词条目录非常庞大时才有意义。",
+            kind="int",
+            default=500,
+            low=0,
+            high=60000,
+            unit="ms",
+            applies=LIVE,
+            command="set_corpus_reload",
+            cost="每 N 毫秒多几次 stat 调用，量级为微秒；0 表示每次翻译都检查",
         ),
     ),
 )

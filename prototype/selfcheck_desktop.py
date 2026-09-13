@@ -39,11 +39,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from watashi.checks import Checker  # noqa: E402
 
-from watashi.desktop import DesktopApp  # noqa: E402
+from watashi.desktop import SCOPE_LABELS, DesktopApp  # noqa: E402
 from watashi.events import (  # noqa: E402
+    CMD_CORRECT,
     CMD_SET_REGION,
     CMD_TOGGLE_PAUSE,
     CMD_USE_WINDOW,
+    EVENT_CORRECTION,
     EVENT_PRESENTATION,
     EVENT_READY,
     EVENT_REFINEMENT,
@@ -125,6 +127,7 @@ class FakeSession:
         self.channel: "queue.Queue[dict[str, Any]]" = queue.Queue()
         self.commands: list[tuple[str, dict[str, Any]]] = []
         self.fail_names: set[str] = set()
+        self.corrections: list[dict[str, Any]] = []
         self.presentation = PresentationSpec.preset("bar")
         self.presentation_sinks: list[Any] = []
 
@@ -145,6 +148,9 @@ class FakeSession:
         if name in self.fail_names:
             return {"cmd": name, "ok": False, "detail": "refused by the fake session"}
         return {"cmd": name, "ok": True, "detail": "ok"}
+
+    def correction_listing(self) -> list[dict[str, Any]]:
+        return list(self.corrections)
 
     def info(self) -> dict[str, Any]:
         return dict(INFO)
@@ -351,6 +357,151 @@ def main() -> int:
             app.history[1][1] == "完全另一句（精修）",
             app.history[1][1],
         )
+
+        # ---------------------------------------------------------------- #
+        check.section("实时纠正：选中屏幕上的那一行，改掉它")
+        session.publish(EVENT_SUBTITLE, encode_update(OverlayUpdate(
+            source_text="他突破到了虚空境界",
+            target_text="He broke through to the void realm",
+        )))
+        drain(app)
+        app.correct_source_var.set("")
+        app.correct_target_var.set("")
+        app.root.update()
+
+        check.check(
+            "the scope defaults to the whole sentence",
+            app.correct_scope_var.get() == SCOPE_LABELS[0],
+            app.correct_scope_var.get(),
+        )
+        check.check(
+            "the scope offers both a line and a term",
+            len(SCOPE_LABELS) == 2 and "整句" in SCOPE_LABELS[0] and "词语" in SCOPE_LABELS[1],
+            str(SCOPE_LABELS),
+        )
+
+        bbox = app.history_box.bbox("1.0")
+        check.check(
+            "the history is laid out far enough to click a line",
+            bbox is not None,
+            f"bbox={bbox}",
+        )
+        if bbox:
+            app._pick_history_line(type("E", (), {"x": bbox[0] + 3, "y": bbox[1] + 3})())
+        check.check(
+            "clicking a history line fills in its source, so the user need not retype it",
+            app.correct_source_var.get() == "他突破到了虚空境界",
+            app.correct_source_var.get(),
+        )
+        check.check(
+            "and its current translation, to edit",
+            app.correct_target_var.get() == "He broke through to the void realm",
+            app.correct_target_var.get(),
+        )
+
+        session.commands.clear()
+        app.correct_target_var.set("He has broken through into the Void Realm")
+        app.save_correction()
+        check.check(
+            "saving issues one correct command with source, target and scope",
+            session.commands
+            == [(
+                CMD_CORRECT,
+                {
+                    "source": "他突破到了虚空境界",
+                    "target": "He has broken through into the Void Realm",
+                    "scope": "line",
+                },
+            )],
+            f"got {session.commands}",
+        )
+        check.check(
+            "and reports where it was written",
+            "已保存" in app.correct_status_var.get(),
+            app.correct_status_var.get(),
+        )
+
+        app.correct_scope_var.set(SCOPE_LABELS[1])
+        app.save_correction()
+        check.check(
+            "choosing 词语 sends term scope, which is the one that survives OCR drift",
+            session.commands[-1][1]["scope"] == "term",
+            str(session.commands[-1]),
+        )
+
+        # A correction made in another surface arrives as an event, and the frame the
+        # session republishes behind it must update that row rather than add a second
+        # subtitle for the same sentence.
+        rows = len(app.history)
+        session.corrections.append({"source": "他突破到了虚空境界", "target": "X", "scope": "line"})
+        session.publish(EVENT_CORRECTION, {
+            "source": "他突破到了虚空境界",
+            "target": "He has broken through into the Void Realm",
+            "scope": "line",
+            "path": "corrections.json",
+            "total": 1,
+        })
+        drain(app)
+        check.check(
+            "a correction from elsewhere adds no history row of its own",
+            len(app.history) == rows,
+            f"{rows} -> {len(app.history)}",
+        )
+        check.check(
+            "the editor shows what was recorded and where",
+            "已记录纠正" in app.correct_status_var.get()
+            and "corrections.json" in app.correct_status_var.get(),
+            app.correct_status_var.get(),
+        )
+        check.check(
+            "the running count has its own line, so it does not overwrite that message",
+            "已记录 1 条纠正" in app.correct_count_var.get()
+            and app.correct_status_var.get().startswith("已记录纠正"),
+            f"count={app.correct_count_var.get()!r} message={app.correct_status_var.get()!r}",
+        )
+
+        session.publish(EVENT_SUBTITLE, encode_update(OverlayUpdate(
+            source_text="他突破到了虚空境界",
+            target_text="He has broken through into the Void Realm",
+        )))
+        drain(app)
+        check.check(
+            "the repainted frame updates its own row instead of duplicating the subtitle",
+            len(app.history) == rows,
+            f"{rows} -> {len(app.history)}: {[e[1] for e in app.history[-2:]]}",
+        )
+        corrected_row = next(
+            (e for e in app.history if e[0] == "他突破到了虚空境界"), None
+        )
+        check.check(
+            "and that row now carries the corrected text",
+            corrected_row is not None
+            and corrected_row[1] == "He has broken through into the Void Realm",
+            str(corrected_row),
+        )
+        check.check(
+            "marked as corrected, so the user can see which lines they changed",
+            corrected_row is not None and corrected_row[3].startswith("已纠正"),
+            str(corrected_row[3] if corrected_row else None),
+        )
+        check.check(
+            "a genuinely new sentence still appends as before",
+            (session.publish(EVENT_SUBTITLE, encode_update(OverlayUpdate(
+                source_text="完全是另一句话", target_text="an entirely different line",
+            ))), drain(app), len(app.history) == rows + 1)[-1],
+            f"{rows} -> {len(app.history)}",
+        )
+
+        # Last, because a refused command writes an error row into the history and that
+        # would be the row the assertions above were reading.
+        session.fail_names.add(CMD_CORRECT)
+        app.save_correction()
+        check.check(
+            "a refused correction is reported in the editor rather than raising",
+            "未保存" in app.correct_status_var.get(),
+            app.correct_status_var.get(),
+        )
+        session.fail_names.discard(CMD_CORRECT)
 
         # ---------------------------------------------------------------- #
         check.section("controls issue engine commands, not local state")

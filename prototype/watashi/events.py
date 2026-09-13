@@ -50,6 +50,10 @@ EVENT_PRESENTATION = "presentation"
 #: this, which is what keeps the desktop window and the web panel showing the same
 #: values instead of each drifting from the file at its own pace.
 EVENT_SETTINGS = "settings"
+#: A human correction was recorded. The subtitle event that carries the fixed text
+#: travels separately, so a surface that only wants to update its list of corrections
+#: need not re-render a frame.
+EVENT_CORRECTION = "correction"
 
 ALL_EVENTS = (
     EVENT_READY,
@@ -59,6 +63,7 @@ ALL_EVENTS = (
     EVENT_STATUS,
     EVENT_ERROR,
     EVENT_SETTINGS,
+    EVENT_CORRECTION,
     EVENT_COMMAND_RESULT,
     EVENT_STOPPED,
     EVENT_PRESENTATION,
@@ -82,6 +87,12 @@ CMD_LOAD_PROFILE = "load_profile"
 CMD_EXPORT = "export"
 CMD_STATUS = "status"
 CMD_SHUTDOWN = "shutdown"
+#: record a human correction: {"source", "target", "scope", "note"}
+CMD_CORRECT = "correct"
+CMD_LIST_CORRECTIONS = "list_corrections"
+CMD_REMOVE_CORRECTION = "remove_correction"
+#: {"auto_reload": bool, "reload_interval_ms": int}
+CMD_SET_CORPUS_RELOAD = "set_corpus_reload"
 
 ALL_COMMANDS = (
     CMD_PAUSE,
@@ -98,6 +109,10 @@ ALL_COMMANDS = (
     CMD_EXPORT,
     CMD_STATUS,
     CMD_SHUTDOWN,
+    CMD_CORRECT,
+    CMD_LIST_CORRECTIONS,
+    CMD_REMOVE_CORRECTION,
+    CMD_SET_CORPUS_RELOAD,
 )
 
 

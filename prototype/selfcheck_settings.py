@@ -155,6 +155,10 @@ def main() -> int:
         "load_profile",
         "use_window",
         "reload_corpus",
+        "set_corpus_reload",
+        "correct",
+        "list_corrections",
+        "remove_correction",
     }
     unknown = sorted({f.command for f in fields if f.command} - known_commands)
     check.check(

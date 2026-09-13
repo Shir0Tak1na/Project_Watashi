@@ -203,6 +203,20 @@ Entries may be extended with part of speech, domain tag, priority, source, and
 update time. Lookup order is user private > domain > general, with longest match
 winning inside a layer.
 
+Corpus edits take effect while the program is running: the engine checks file
+modification times before each translation and reloads on change, throttled to once
+per 500 ms (`corpus.auto_reload`, `corpus.reload_interval_ms`).
+
+**Real time correction.** When the corpus itself is wrong, the wrong answer is a
+confident hit rather than a gap, and more vocabulary cannot fix it. So the fix is
+made where the mistake is seen: click the line in the desktop 字幕 tab, type the
+right translation, save. It is written to `corrections.json` in the user private
+layer, applied to the frame on screen immediately, and used for that sentence from
+then on. A `line` correction matches the whole sentence while ignoring the
+whitespace and edge punctuation OCR varies between frames; a `term` correction
+replaces that word in any sentence. See `prototype/README.md` for the engine
+commands (`correct`, `list_corrections`, `remove_correction`).
+
 ## Custom rules
 
 Rules cover words that the corpus does not contain:

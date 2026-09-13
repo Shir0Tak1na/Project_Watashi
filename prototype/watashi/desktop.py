@@ -26,7 +26,9 @@ from tkinter import filedialog, messagebox, ttk
 from typing import Any, Callable
 
 from .capture import Region
+from .correct import SCOPE_LINE, SCOPE_TERM
 from .events import (
+    CMD_CORRECT,
     CMD_EXPORT,
     CMD_LOAD_PROFILE,
     CMD_SET_DIFF_THRESHOLD,
@@ -36,6 +38,7 @@ from .events import (
     CMD_SET_TARGET_LANG,
     CMD_TOGGLE_PAUSE,
     CMD_USE_WINDOW,
+    EVENT_CORRECTION,
     EVENT_ERROR,
     EVENT_PRESENTATION,
     EVENT_READY,
@@ -54,6 +57,12 @@ from .presentation import PresentationSpec
 #: worse than one that updates plainly.
 STATS_INTERVAL_MS = 500
 HISTORY_LIMIT = 200
+
+#: The two scopes in the user's words, because "line" and "term" do not say which
+#: one to pick: for a name that appears on every screen the term is the robust
+#: choice, and for one bad sentence the line is the exact one.
+SCOPE_LABELS = ("整句（只改这一句）", "词语（该词在任何句子中都改）")
+SCOPE_VALUES = {SCOPE_LABELS[0]: SCOPE_LINE, SCOPE_LABELS[1]: SCOPE_TERM}
 
 
 class DesktopApp:
@@ -76,6 +85,10 @@ class DesktopApp:
         self._after_id: str | None = None
         self._closed = False
         self._last_status = ""
+        #: (source, target) of a correction this window made, so the repainted frame
+        #: that follows it updates the row it belongs to instead of being appended as
+        #: a second subtitle for the same sentence
+        self._expect_repaint: tuple[str, str] | None = None
         #: kept so the selector window is not garbage collected mid-drag
         self._selector: Any = None
 
@@ -161,7 +174,109 @@ class DesktopApp:
         self.history_box.tag_configure("source", foreground="#7d909f")
         self.history_box.tag_configure("target", foreground="#e6eef5")
         self.history_box.tag_configure("meta", foreground="#5f7386")
+        self.history_box.tag_configure("corrected", foreground="#8fd6a0")
         self.history_box.configure(state="disabled")
+        #: display line (1-based) -> index into self.history, so a click lands on the
+        #: entry it looks like it lands on instead of on a text match that may repeat
+        self._display_lines: list[int] = []
+        self.history_box.bind("<ButtonRelease-1>", self._pick_history_line)
+
+        self._build_correction(frame)
+
+    def _build_correction(self, parent: ttk.Frame) -> None:
+        """The correction editor: read a bad translation, type the right one, save.
+
+        In this tab rather than in a settings page, because this is where the user is
+        when they notice the mistake -- the wrong line is on screen above it. The
+        source box is filled from the history by clicking a line, because a
+        whole-sentence correction only matches the frame it was typed from if the text
+        is byte-identical to what OCR produced, and retyping it by hand is both tedious
+        and a way to introduce the very mismatch that stops it working.
+        """
+        box = ttk.LabelFrame(parent, text="实时纠正 · 改错的那一行", padding=(10, 6))
+        box.pack(fill="x", pady=(10, 0))
+        ttk.Label(
+            box,
+            text="点上面的历史行会自动填入原文，改好译文后保存：会写进用户语料库最高优先级的一层，"
+                 "当前这一帧立刻改过来，以后同样的句子也用它。",
+            foreground="#5f7386", justify="left", wraplength=900,
+        ).pack(anchor="w")
+
+        self.correct_source_var = tk.StringVar(value="")
+        self.correct_target_var = tk.StringVar(value="")
+        self.correct_scope_var = tk.StringVar(value=SCOPE_LABELS[0])
+
+        row = ttk.Frame(box)
+        row.pack(fill="x", pady=(6, 2))
+        ttk.Label(row, text="原文", width=6).pack(side="left")
+        ttk.Entry(row, textvariable=self.correct_source_var).pack(
+            side="left", fill="x", expand=True
+        )
+        row2 = ttk.Frame(box)
+        row2.pack(fill="x", pady=2)
+        ttk.Label(row2, text="译文", width=6).pack(side="left")
+        ttk.Entry(row2, textvariable=self.correct_target_var).pack(
+            side="left", fill="x", expand=True
+        )
+        ttk.Combobox(
+            row2, textvariable=self.correct_scope_var, values=SCOPE_LABELS,
+            state="readonly", width=22,
+        ).pack(side="left", padx=(6, 6))
+        ttk.Button(row2, text="保存纠正", command=self.save_correction).pack(side="left")
+
+        self.correct_status_var = tk.StringVar(value="")
+        ttk.Label(
+            box, textvariable=self.correct_status_var, foreground="#5f7386",
+            justify="left", wraplength=900,
+        ).pack(anchor="w", pady=(4, 0))
+        #: Separate from the message above, because a running count that overwrites the
+        #: result of the correction just made reads as the save having failed.
+        self.correct_count_var = tk.StringVar(value="")
+        ttk.Label(
+            box, textvariable=self.correct_count_var, foreground="#55697a",
+        ).pack(anchor="w")
+        self._refresh_correction_count()
+
+    def _refresh_correction_count(self) -> None:
+        try:
+            listing = self.session.correction_listing()
+        except Exception:
+            return
+        if not listing:
+            self.correct_count_var.set("还没有纠正记录。")
+            return
+        self.correct_count_var.set(
+            f"已记录 {len(listing)} 条纠正；最近一条："
+            f"{listing[-1]['source']} → {listing[-1]['target']}"
+        )
+
+    def _pick_history_line(self, event: Any) -> None:
+        try:
+            index = self.history_box.index(f"@{event.x},{event.y}")
+            line = int(str(index).split(".")[0])
+        except (tk.TclError, ValueError):
+            return
+        if not (1 <= line <= len(self._display_lines)):
+            return
+        entry = self.history[ self._display_lines[line - 1] ]
+        if entry[2] or not entry[0]:
+            return  # an error row or a status message is not a translation
+        self.correct_source_var.set(entry[0])
+        self.correct_target_var.set(entry[1])
+        self.correct_status_var.set("已填入原文与译文，改完点「保存纠正」。")
+
+    def save_correction(self) -> None:
+        source = self.correct_source_var.get().strip()
+        target = self.correct_target_var.get().strip()
+        label = self.correct_scope_var.get()
+        result = self._command(
+            CMD_CORRECT,
+            {"source": source, "target": target, "scope": SCOPE_VALUES.get(label, "line")},
+        )
+        if result.get("ok"):
+            self.correct_status_var.set(f"已保存：{result.get('detail')}")
+        else:
+            self.correct_status_var.set(f"未保存：{result.get('detail')}")
 
     def _build_capture(self, notebook: ttk.Notebook) -> None:
         frame = self._tab(notebook, "采集")
@@ -406,6 +521,8 @@ class DesktopApp:
                 )
             elif kind == EVENT_PRESENTATION:
                 self._refresh_presentation(PresentationSpec.from_dict(data))
+            elif kind == EVENT_CORRECTION:
+                self._on_correction(data)
             elif kind == EVENT_STATUS:
                 self._last_status = str(data.get("message", ""))
             elif kind == EVENT_ERROR:
@@ -462,6 +579,27 @@ class DesktopApp:
         self._refresh_settings()
 
     def _on_subtitle(self, update: Any) -> None:
+        # A frame republished by a correction, not a new one. It is the same sentence
+        # with a different translation, so the row is updated in place: appending would
+        # show the user their bad translation and their good one as two subtitle lines.
+        pending = self._expect_repaint
+        if pending is not None and update.source_text == pending[0]:
+            self._expect_repaint = None
+            expected, new_target = pending
+            for index in range(len(self.history) - 1, -1, -1):
+                if self.history[index][0] == expected:
+                    self.history[index] = (
+                        expected,
+                        update.target_text or new_target,
+                        False,
+                        "已纠正 · " + self.history[index][3],
+                    )
+                    break
+            self.current_var.set(update.target_text or new_target)
+            self.source_var.set(update.source_text or "")
+            self._rerender_history()
+            return
+
         self.current_var.set(update.target_text or "（空）")
         self.source_var.set(update.source_text or "")
         origin = "模型" if update.refined else "语料库"
@@ -471,6 +609,24 @@ class DesktopApp:
             False,
             f"{origin} · {update.latency_ms:.0f} ms · 覆盖率 {update.coverage * 100:.0f}%",
         ))
+
+    def _on_correction(self, data: dict[str, Any]) -> None:
+        """Some surface recorded a correction: show it here too, and do not duplicate it.
+
+        The event arrives from the session, so a correction made in another surface
+        updates this window's history without either surface knowing the other exists.
+        """
+        source = str(data.get("source") or "")
+        target = str(data.get("target") or "")
+        if source and target:
+            self._expect_repaint = (source, target)
+            self.correct_status_var.set(
+                f"已记录纠正（{data.get('scope') or 'line'}）：{source} → {target}\n"
+                f"写入 {data.get('path')}，共 {data.get('total')} 条"
+            )
+        elif data.get("removed"):
+            self.correct_status_var.set(f"已删除纠正：{data['removed']}")
+        self._refresh_correction_count()
 
     def _on_refinement(self, data: dict[str, Any]) -> None:
         target = str(data.get("target") or "")
@@ -500,15 +656,20 @@ class DesktopApp:
         box = self.history_box
         box.configure(state="normal")
         box.delete("1.0", "end")
-        for entry in reversed(self.history):
-            source, target, is_error = entry[0], entry[1], entry[2]
-            meta = entry[3] if len(entry) > 3 else ""
+        self._display_lines = []
+        for index in range(len(self.history) - 1, -1, -1):
+            source, target, is_error = self.history[index][0], self.history[index][1], self.history[index][2]
+            meta = self.history[index][3] if len(self.history[index]) > 3 else ""
             if source:
                 box.insert("end", source + "\n", ("source",))
-            box.insert("end", target + "\n", ("target",))
+                self._display_lines.append(index)
+            box.insert("end", target + "\n", ("target", "corrected") if meta.startswith("已纠正") else ("target",))
+            self._display_lines.append(index)
             if meta:
                 box.insert("end", meta + "\n", ("meta",))
+                self._display_lines.append(index)
             box.insert("end", "\n")
+            self._display_lines.append(index)
         box.configure(state="disabled")
 
     def _refresh_stats(self) -> None:

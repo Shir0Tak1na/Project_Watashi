@@ -111,6 +111,15 @@
       <div class="row"><input id="cfilter" placeholder="筛选…" style="flex:1"></div>
       <div id="entries"></div>
     </div>
+    <div class="card">
+      <h2>实时纠正 <span class="pill" id="xsize">—</span></h2>
+      <p class="muted" style="margin:0 0 10px" id="xfile">
+        只读。纠正在看到错译的地方做：桌面窗口选中那一行改成你要的译文，
+        或给引擎发 <code>correct</code> 命令。记录写进用户语料库最高优先级的一层，
+        这一帧立刻改过来，以后同样的句子也用它。这里只用来查看。
+      </p>
+      <div id="xentries"></div>
+    </div>
   </section>
 
   <!--
@@ -633,8 +642,39 @@ async function loadCorpus() {
     });
   table.appendChild(body);
   box.appendChild(table);
+  renderCorrections(data.corrections || []);
 }
 $("cfilter").oninput = loadCorpus;
+
+function renderCorrections(list) {
+  $("xsize").textContent = list.length ? list.length + " 条" : "暂无";
+  const box = $("xentries");
+  box.innerHTML = "";
+  if (!list.length) {
+    const p = document.createElement("p");
+    p.className = "muted";
+    p.textContent = "还没有纠正记录。";
+    box.appendChild(p);
+    return;
+  }
+  const table = document.createElement("table");
+  table.innerHTML = "<thead><tr><th>原文</th><th>你的译文</th><th>范围</th><th>次数</th><th>本次命中</th></tr></thead>";
+  const body = document.createElement("tbody");
+  list.forEach((c) => {
+    const tr = document.createElement("tr");
+    tr.innerHTML = "<td></td><td></td><td><span class='pill'></span></td><td class='muted'></td><td class='muted'></td>";
+    tr.children[0].textContent = c.source;
+    tr.children[1].textContent = c.target;
+    tr.children[2].firstChild.textContent = c.scope === "term" ? "词语" : "整句";
+    tr.children[3].textContent = c.count;
+    // The hit count is the only evidence that a correction is doing anything at all:
+    // a stored row that never matches looks exactly like a working one from the file.
+    tr.children[4].textContent = c.hits || 0;
+    body.appendChild(tr);
+  });
+  table.appendChild(body);
+  box.appendChild(table);
+}
 
 async function loadStats() {
   const s = await (await fetch("/api/stats")).json();
@@ -729,6 +769,17 @@ function connect() {
     buildEngine(d); buildProfiles(d.profiles); loadCorpus();
   });
   on("presentation", (d) => { SPEC = d; buildLook(); renderPreview(); });
+
+  // A correction is announced before the repainted frame that follows it, so the
+  // history row can be replaced rather than a second row appearing for one sentence.
+  let expectRepaint = null;
+  on("correction", (d) => {
+    if (d.source && d.target) expectRepaint = d.source;
+    log("纠正已记录：" + (d.source || d.removed || "") + " → " + (d.target || "（已删除）") +
+        "（" + (d.path || "") + "）");
+    loadCorpus();
+  });
+
   on("subtitle", (d) => {
     window.__sample = d.lines && d.lines.length
       ? { src: d.lines[0].source, tgt: d.lines[0].target }
@@ -741,7 +792,13 @@ function connect() {
     row.children[0].textContent = d.source.split("\n")[0];
     row.children[1].textContent = d.target.split("\n")[0];
     const tb = $("history");
-    tb.insertBefore(row, tb.firstChild);
+    if (expectRepaint !== null && d.source === expectRepaint && tb.firstChild) {
+      expectRepaint = null;
+      tb.replaceChild(row, tb.firstChild);
+    } else {
+      expectRepaint = null;
+      tb.insertBefore(row, tb.firstChild);
+    }
     while (tb.childNodes.length > 40) tb.removeChild(tb.lastChild);
   });
   on("refinement", (d) => {

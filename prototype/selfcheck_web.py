@@ -149,6 +149,12 @@ def main() -> int:
         check.check("the corpus response exposes no write target",
                     "editable_file" not in corpus,
                     "the panel does not author corpus data")
+        check.check("and it lists the human corrections, so they can be read here",
+                    isinstance(corpus.get("corrections"), list),
+                    f"{len(corpus.get('corrections', []))} correction(s)")
+        check.check("the page has a read-only section for them",
+                    "实时纠正" in html and "xentries" in html,
+                    "viewing is in scope for this panel; authoring is not")
 
         # ---- the boundary: settings in, features refused ------------------ #
         print("")

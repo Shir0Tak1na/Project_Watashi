@@ -57,6 +57,10 @@ DEFAULTS: dict[str, Any] = {
         "user": ["../plugins/user/custom_rules"],
         "domain": ["corpus", "../rules/slang", "../rules/fiction"],
         "general": ["../rules/dictionaries"],
+        #: check corpus/rule mtimes before each translation and reload on change
+        "auto_reload": True,
+        #: at most one such check per interval; the check is a few stats, not a scan
+        "reload_interval_ms": 500,
     },
     "rules": {"files": ["rules/engine_rules.json"]},
     "plugins": {

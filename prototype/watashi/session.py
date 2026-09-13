@@ -41,11 +41,15 @@ from . import RELEASE_STAGE, __version__
 from .capture import Region, RegionCapturer
 from .config import AppConfig
 from .events import (
+    CMD_CORRECT,
     CMD_EXPORT,
+    CMD_LIST_CORRECTIONS,
     CMD_PAUSE,
     CMD_LOAD_PROFILE,
     CMD_RELOAD_CORPUS,
+    CMD_REMOVE_CORRECTION,
     CMD_RESUME,
+    CMD_SET_CORPUS_RELOAD,
     CMD_SET_DIFF_THRESHOLD,
     CMD_SET_FPS,
     CMD_SET_PRESENTATION,
@@ -55,6 +59,7 @@ from .events import (
     CMD_STATUS,
     CMD_TOGGLE_PAUSE,
     CMD_USE_WINDOW,
+    EVENT_CORRECTION,
     EVENT_ERROR,
     EVENT_PRESENTATION,
     EVENT_READY,
@@ -79,6 +84,7 @@ from .profiles import list_profiles
 from .ocr import RapidOcrEngine
 from .pipeline import Pipeline, PipelineConfig
 from .plugins import PluginRegistry, plugin_directories
+from . import correct as corrections
 from .translate import CorpusStore, LAYER_DOMAIN, LAYER_GENERAL, LAYER_USER, Translator
 
 #: How many pending events a slow subscriber may accumulate before old display
@@ -115,6 +121,9 @@ class Session:
         limit = int(config.plugins.get("history_limit", 2000) or 2000)
         self.history: deque[dict[str, Any]] = deque(maxlen=max(1, limit))
         self._last_export: str | None = None
+        #: the frame currently on screen, so a correction can repaint it without
+        #: waiting for OCR to read the same text again (which it may never do)
+        self._last_update: OverlayUpdate | None = None
 
         self._pipeline: Pipeline | None = None
         self._subscribers: list[queue.Queue] = []
@@ -392,6 +401,7 @@ class Session:
     # ------------------------------------------------------------------ #
 
     def _on_update(self, update: OverlayUpdate) -> None:
+        self._last_update = update
         self._postprocess(update)
         self._remember(update)
         self.publish(EVENT_SUBTITLE, encode_update(update))
@@ -505,6 +515,10 @@ class Session:
             CMD_EXPORT: self._cmd_export,
             CMD_STATUS: lambda _p: self._status_detail(),
             CMD_SHUTDOWN: lambda _p: self._shutdown(),
+            CMD_CORRECT: self._cmd_correct,
+            CMD_LIST_CORRECTIONS: self._cmd_list_corrections,
+            CMD_REMOVE_CORRECTION: self._cmd_remove_correction,
+            CMD_SET_CORPUS_RELOAD: self._cmd_set_corpus_reload,
         }
 
     def _post_state(self) -> dict[str, Any]:
@@ -629,6 +643,31 @@ class Session:
         self.pipeline.config.fps = value
         return f"fps={value}"
 
+    def _cmd_set_corpus_reload(self, payload: dict[str, Any]) -> str:
+        """Turn mtime hot reload on or off, and set how often it is checked.
+
+        Separate from the settings panel on purpose: the panel's path also writes the
+        override file, and a script that wants one run with reload off should not have
+        to leave that decision in the user's config afterwards.
+        """
+        parts: list[str] = []
+        corpus = self.corpus
+        if "auto_reload" in payload:
+            value = bool(payload["auto_reload"])
+            self.config.corpus["auto_reload"] = value
+            if corpus is not None:
+                corpus.auto_reload = value
+            parts.append(f"auto_reload={value}")
+        if "reload_interval_ms" in payload:
+            value = max(0, int(payload["reload_interval_ms"]))
+            self.config.corpus["reload_interval_ms"] = value
+            if corpus is not None:
+                corpus.reload_interval_s = value / 1000.0
+            parts.append(f"reload_interval_ms={value}")
+        if not parts:
+            raise ValueError("set_corpus_reload needs 'auto_reload' and/or 'reload_interval_ms'")
+        return " ".join(parts)
+
     def _reload_corpus(self) -> str:
         corpus = self.corpus
         if corpus is None:
@@ -636,6 +675,232 @@ class Session:
         corpus.load()
         self.set_status(f"语料库已重载：{corpus.size} 条 / {corpus.rule_count} 条规则")
         return f"entries={corpus.size} rules={corpus.rule_count}"
+
+    # ------------------------------------------------------------------ #
+    # real time correction
+    # ------------------------------------------------------------------ #
+
+    def _cmd_correct(self, payload: dict[str, Any]) -> str:
+        """Record a human correction and make it visible before returning.
+
+        The five steps are the whole feature, and skipping any one of them leaves a
+        correction that appears to work and does not:
+
+        1. **write** it to the user corpus layer (a file, so it survives a restart);
+        2. **load** it, forcing rather than waiting for the reload throttle -- the user
+           is looking at the screen to see whether their fix took;
+        3. **forget** what is remembered about that text: the reuse memory, and any
+           cached model refinement. Either one would be served instead of the
+           correction, and the refinement cache would keep serving it indefinitely;
+        4. **repaint** the frame on screen, because a still screenshot produces no new
+           frame at all: without this, a correction made on a paused or static screen
+           would sit in the corpus and never be shown;
+        5. **outlive anything already in flight.** A refinement the model started
+           before the correction is discarded rather than published over it (see
+           ``CorpusStore.revision``), because the answer to "did my correction work"
+           must not depend on which thread finished first.
+        """
+        source = str(payload.get("source") or "").strip()
+        target = str(payload.get("target") or payload.get("translation") or "").strip()
+        if not source:
+            raise ValueError("correct 需要 'source'：屏幕上被识别出的原文")
+        if not target:
+            raise ValueError("correct 需要 'target'：你希望它显示的译文")
+        scope = str(payload.get("scope") or corrections.SCOPE_LINE).strip().lower()
+
+        corpus = self.corpus
+        store = getattr(corpus, "corrections", None) if corpus is not None else None
+        if store is not None:
+            # The engine's own store, not a path derived from config. The two agree
+            # whenever the corpus was built from this config, but "agree whenever"
+            # is how a correction ends up written somewhere the engine never reads:
+            # stored, reported as saved, and completely without effect.
+            summary = store.apply(source, target, scope=scope, note=payload.get("note"))
+        else:
+            summary = corrections.record(
+                self.config, source, target, scope=scope, note=payload.get("note")
+            )
+
+        if corpus is not None:
+            corpus.load()
+        forgotten = self._forget_correction(source, scope)
+        summary["forgotten"] = forgotten
+        if scope == corrections.SCOPE_TERM:
+            summary["engages"] = "every occurrence of this term, in any sentence"
+        elif len(corrections.loose_normalize(source)) >= corrections.MIN_KEY_LENGTH:
+            summary["engages"] = "every frame that reads this sentence, punctuation aside"
+        else:
+            summary["engages"] = (
+                "this exact sentence only: too short to match loosely without "
+                "colliding with other lines"
+            )
+
+        repainted, update = self._repaint_for_correction(source, target, scope)
+        summary["repainted_lines"] = repainted
+
+        # The correction is announced before the repainted frame. A surface that lists
+        # corrections reloads that list on this event, and if the repaint arrived first
+        # that reload could paint over the frame it had just been given.
+        self.publish(EVENT_CORRECTION, summary, droppable=False)
+        if update is not None and repainted:
+            self.publish(EVENT_SUBTITLE, encode_update(update))
+
+        where = Path(summary["path"]).name
+        self.set_status(
+            f"已记录纠正（{scope}）：{source} → {target}；已写入 {where}"
+        )
+        return (
+            f"{'created' if summary['created'] else 'updated'} {scope} correction "
+            f"-> {summary['path']} (total {summary['total']}, repainted {repainted} line(s))"
+        )
+
+    def _forget_correction(self, source: str, scope: str) -> dict[str, int]:
+        """Make the corrected text unremembered, in both memories that hold it.
+
+        Called for a correction and for its removal: undo has to be as visible as the
+        change it undoes, and a cache that still holds the corrected answer would make
+        deleting the correction look like it did nothing.
+        """
+        forgotten = {"recent": 0, "refinements": 0}
+        if self._pipeline is not None:
+            recent = getattr(self._pipeline, "recent", None)
+            if recent is not None:
+                forgotten["recent"] = (
+                    recent.drop(source)
+                    if scope == corrections.SCOPE_LINE
+                    else recent.drop_containing(source)
+                )
+        translator = self._translator
+        forget = getattr(translator, "forget", None)
+        if callable(forget):
+            if scope == corrections.SCOPE_LINE:
+                forgotten["refinements"] = forget(source=source)
+            else:
+                # a term lives inside a line, so the stale entry is that whole line
+                forgotten["refinements"] = forget(contains=source)
+        return forgotten
+
+    def _repaint_for_correction(
+        self, source: str, target: str, scope: str
+    ) -> tuple[int, Any | None]:
+        """Fix what is on screen now, without OCR and without the model.
+
+        A ``line`` correction knows the finished sentence, so it is written straight
+        onto the line. A ``term`` correction only knows one word, so the line is
+        re-run through the corpus tier -- which is instant, and is the tier that owns
+        terminology -- rather than being rebuilt around a word the user never saw in
+        context. Either way the model is not consulted: its opinion is what produced
+        the text being corrected.
+
+        Returns how many lines changed and the update to republish, if any.
+        """
+        update = self._last_update
+        if update is None or not update.lines:
+            return 0, None
+
+        touched = 0
+        for line in update.lines:
+            if scope == corrections.SCOPE_LINE:
+                if corrections.loose_normalize(line.source) != corrections.loose_normalize(source):
+                    continue
+                line.target = target
+                # by definition: the human's answer covers the whole sentence
+                line.coverage = 1.0
+                line.confidence = 1.0
+            else:
+                if source not in line.source:
+                    continue
+                corpus = self.corpus
+                if corpus is None:
+                    continue
+                outcome = corpus.translate(line.source, self.config.target_lang)
+                line.target = outcome.target_text
+                # *not* forced to 1.0: correcting one word does not make the rest of the
+                # line covered, and claiming it does would hide the parts that are not
+                line.coverage = outcome.coverage
+                line.confidence = outcome.confidence
+            touched += 1
+
+        if not touched:
+            return 0, None
+
+        update.target_text = "\n".join(line.target for line in update.lines)
+        self._rewrite_history(source, target, scope)
+        return touched, update
+
+    def _rewrite_history(self, source: str, target: str, scope: str) -> None:
+        """Update the recorded frames, so the history does not keep the old answer.
+
+        The history is what the user re-reads and what an export writes out; leaving
+        the rejected translation in it would put two different answers in front of the
+        same sentence.
+        """
+        for item in self.history:
+            if scope == corrections.SCOPE_LINE:
+                if corrections.loose_normalize(str(item.get("source", ""))) != corrections.loose_normalize(source):
+                    continue
+                item["target"] = target
+            else:
+                lines = item.get("lines") or []
+                for line in lines:
+                    if isinstance(line, dict) and source in str(line.get("source", "")):
+                        corpus = self.corpus
+                        if corpus is None:
+                            continue
+                        line["target"] = corpus.translate(
+                            str(line["source"]), self.config.target_lang
+                        ).target_text
+                if lines:
+                    item["target"] = "\n".join(
+                        str(line.get("target", "")) for line in lines if isinstance(line, dict)
+                    )
+            item["corrected"] = True
+
+    def _cmd_list_corrections(self, _payload: dict[str, Any]) -> str:
+        items = self.correction_listing()
+        if not items:
+            return "no corrections recorded yet"
+        return f"{len(items)} correction(s): " + "; ".join(
+            f"{c['source']} → {c['target']} [{c['scope']}]" for c in items[:5]
+        )
+
+    def correction_listing(self) -> list[dict[str, Any]]:
+        """Every recorded correction, with the hit counts of this run when we own them."""
+        live = self.corpus
+        store = getattr(live, "corrections", None) if live is not None else None
+        if store is not None:
+            return store.describe()
+        return corrections.listing(self.config)
+
+    def _cmd_remove_correction(self, payload: dict[str, Any]) -> str:
+        source = str(payload.get("source") or "").strip()
+        if not source:
+            raise ValueError("remove_correction 需要 'source'")
+        # Through the engine's own store when there is one, for the same reason the
+        # correction was written there: a delete aimed at a different file than the
+        # one the engine reads would report success and change nothing.
+        corpus = self.corpus
+        store = getattr(corpus, "corrections", None) if corpus is not None else None
+        scope = corrections.SCOPE_LINE
+        if store is not None:
+            known = store.lookup_exact(source)
+            if known is not None:
+                scope = known.scope
+            removed = store.remove(source)
+        else:
+            removed = corrections.remove(self.config, source)
+        if not removed:
+            raise ValueError(f"没有找到针对 {source!r} 的纠正记录")
+        if corpus is not None:
+            corpus.load()
+        self._forget_correction(source, scope)
+        self.publish(
+            EVENT_CORRECTION,
+            {"removed": source, "total": len(self.correction_listing())},
+            droppable=False,
+        )
+        self.set_status(f"已删除纠正：{source}")
+        return f"removed {source}"
 
     def _cmd_set_presentation(self, payload: dict[str, Any]) -> str:
         """Swap the look at runtime, from any surface.
@@ -822,6 +1087,17 @@ class Session:
 
         written = self.config.save_overrides(coerced)
 
+        # Settings that an already built engine holds a copy of, pushed through here.
+        # Storing them and marking them "live" is not the same as applying them: the
+        # corpus was handed its reload policy when it was constructed, so a change
+        # that only reached config would look applied and do nothing until restart.
+        corpus = self.corpus
+        if corpus is not None:
+            if "corpus.auto_reload" in coerced:
+                corpus.auto_reload = coerced["corpus.auto_reload"]
+            if "corpus.reload_interval_ms" in coerced:
+                corpus.reload_interval_s = float(coerced["corpus.reload_interval_ms"]) / 1000.0
+
         live, deferred = [], []
         for key in coerced:
             field = settings_schema.find(key)
@@ -898,7 +1174,8 @@ def build_corpus(config: AppConfig) -> CorpusStore:
             LAYER_GENERAL: config.corpus_dirs("general"),
         },
         rule_files=config.rule_files(),
-        auto_reload=True,
+        auto_reload=bool(config.corpus.get("auto_reload", True)),
+        reload_interval_s=float(config.corpus.get("reload_interval_ms", 500) or 0) / 1000.0,
     )
 
 

@@ -156,12 +156,17 @@ def create_app(session: Session) -> FastAPI:
     async def api_corpus() -> JSONResponse:
         """Read-only: what the engine currently has loaded.
 
-        There is no write counterpart. Corpora are files; edit them and the
-        engine's mtime hot reload picks it up.
+        There is no write counterpart. Corrections are made where the mistake is seen
+        (the desktop window, or the ``correct`` command), not in a settings panel; this
+        endpoint lists them so they can be *read* from here, which is a different thing
+        from authoring them here.
         """
         corpus = session.corpus
+        corrections = session.correction_listing()
         if corpus is None:
-            return JSONResponse({"entries": [], "rules": [], "size": 0})
+            return JSONResponse(
+                {"entries": [], "rules": [], "size": 0, "corrections": corrections}
+            )
         entries = [
             {
                 "source": entry.source,
@@ -173,7 +178,44 @@ def create_app(session: Session) -> FastAPI:
             for entry in corpus.entries_snapshot()
         ]
         return JSONResponse(
-            {"size": corpus.size, "rules": corpus.rule_ids(), "entries": entries}
+            {
+                "size": corpus.size,
+                "rules": corpus.rule_ids(),
+                "entries": entries,
+                "corrections": corrections,
+            }
+        )
+
+    @app.post("/api/corpus")
+    async def api_corpus_post(request: Request) -> JSONResponse:
+        """Refuse corpus authoring here, and say where it belongs.
+
+        Two reasons this exists instead of leaving Starlette's bare 405.
+
+        The first is the same reason a refused feature command explains itself: a panel
+        that answers "not allowed" without saying what is allowed sends the user looking
+        for a bug.
+
+        The second is less obvious and cost three wrong diagnoses. A route that rejects a
+        request **without reading its body** makes uvicorn reset the connection, because
+        the body is still in flight when the response goes out. In this project's own
+        self check that surfaced as an intermittent ``ConnectionReset`` -- one run in
+        five to eight, always on this exact POST, never reproducible on demand. Reading
+        the body first removes the race for every client, not just for the test.
+        """
+        await request.body()
+        return JSONResponse(
+            {
+                "ok": False,
+                "detail": (
+                    "corpus authoring is not done here. Corpora are plain files: edit "
+                    "them and the engine picks the change up by modification time, "
+                    "without a restart. To fix a wrong translation, select the line in "
+                    "the desktop window and save a correction, or send the engine a "
+                    "'correct' command; this panel lists the result under /api/corpus."
+                ),
+            },
+            status_code=405,
         )
 
     @app.post("/api/command")

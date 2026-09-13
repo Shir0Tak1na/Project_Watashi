@@ -102,7 +102,10 @@ Commands are validated, not silently ignored, and every one returns a result:
 | `use_window` | `{"spec": "<index\|title>", "hwnd": 123, "sub_region": "0,0.6,1,1"}`; captures a window and follows it |
 | `set_target_lang` | Switches target and clears stale refinements |
 | `set_fps`, `set_diff_threshold` | Live tuning |
-| `reload_corpus` | Re-reads corpora and rules from disk |
+| `reload_corpus` | Re-reads corpora and rules from disk. Corrections are picked up either way: the engine also reloads by itself, see below |
+| `correct` | `{"source", "target", "scope": "line\|term", "note"}` — records a human correction into the user corpus layer and applies it to the frame on screen now. See [Real time correction](#real-time-correction) |
+| `list_corrections` / `remove_correction` | Read the correction list, or undo one by its source text |
+| `set_corpus_reload` | `{"auto_reload": bool, "reload_interval_ms": int}` — the runtime form of two settings |
 | `set_presentation` | A preset name, or a partial spec merged over the current one |
 | `load_profile` | Applies a profile, including the memory tiers |
 | `status`, `shutdown` | Introspection and lifecycle |
@@ -114,15 +117,16 @@ The web panel may only issue the **settings** subset of these
 
 ### Desktop UI (`--desktop`)
 
-A single window with six tabs over the same `Session` the CLI uses:
+A single window with seven tabs over the same `Session` the CLI uses:
 
 | Tab | What it does |
 | --- | --- |
-| 字幕 | Current translation large, source line under it, and a scrolling bilingual history with provenance (`语料库` vs `模型`) and per-line latency |
+| 字幕 | Current translation large, source line under it, a scrolling bilingual history with provenance (`语料库` vs `模型`) and per-line latency, and the **correction editor**: click a history line, fix the translation, save |
 | 采集 | The current region, capture fps, change threshold — each applied through `session.command()` |
 | 翻译 | Target language, the memory-tier profiles (`lean` / `balanced` / `full`), corpus size |
 | 呈现 | One button per presentation preset; applies to the overlay live |
 | 插件 | Loaded plugins, their extension points, failures, and the export formats they register |
+| 设置 | The whole settings schema, read-only, with every label and description |
 | 诊断 | Raw counters as JSON — the same numbers a `stats` event carries |
 
 Controls in the top bar: pause/resume, drag a new region, pick a window from a
@@ -460,12 +464,13 @@ or names an unknown point is reported and skipped — never fatal, never silent.
 
 ## Verifying
 
-Eight self checks; the last five need a display:
+Eleven self checks run without a display, and four more with one:
 
 ```bash
 prototype\run.cmd selfcheck_presentation --summary   # spec and layout maths
 prototype\run.cmd selfcheck_session --summary        # engine boundary + language gate
 prototype\run.cmd selfcheck_web --summary            # the panel and its limits
+prototype\run.cmd selfcheck_correct --summary        # hot reload + real time correction
 prototype\run.cmd selfcheck_plugins --summary        # plugin contracts + failure handling
 prototype\run.cmd selfcheck_overlay --summary        # overlay, capture exclusion, hotkeys
 prototype\run.cmd selfcheck_window --summary         # window selection and following
@@ -473,9 +478,22 @@ prototype\run.cmd selfcheck_selector --summary       # drag-to-select, driven sy
 prototype\run.cmd selfcheck_desktop --summary        # the desktop window, its tabs and commands
 ```
 
-Counts as of the last full run: 39 / 60 / 33 / 35 / 25 / 22 / 20 / 64 — 298 checks,
-all passing. `watashi_proto.py --selftest` covers the OCR + corpus + model path
-end to end with no screen.
+Counts as of the last full run: 45 / 17 / 29 / 138 / 35 / 49 / 21 / 60 / 64 / 13
+headless and 46 / 22 / 20 / 80 with a display — 639 checks, all passing.
+`prototype/checks.txt` and `checks_display.txt` are the lists CI and the
+documentation both read; `selfcheck_ci` asserts they cover every
+`selfcheck_*.py`, so a new check cannot be added and then never run.
+`watashi_proto.py --selftest` covers the OCR + corpus + model path end to end with
+no screen.
+
+The correction check contains deliberate **mutation tests** worth knowing about:
+comment out the `reload_if_changed()` call in `CorpusStore.translate`, the cache
+invalidation in `Session._forget_correction`, either of the two revision guards in
+`local_nmt.py`, or make the model-skip impossible, and it fails. That was verified,
+not assumed — the first version of the check passed while the hot reload it claimed
+to test had no caller at all, and an earlier draft of the race test never reached
+the model because it used the wrong method name and a line the model is never asked
+about.
 
 ## Overlay modes
 
@@ -536,6 +554,51 @@ Each step of that was chosen from measurement, not taste:
   fallback that "matches" every unknown word at confidence 0.10. Treating that
   as authoritative masked *entire sentences* and left the model nothing to do,
   so protection requires confidence >= 0.4 (`protect_min_confidence`).
+
+### `ocr.max_boxes`, and what it does not do
+
+The obvious reading is wrong, so it is worth stating plainly: **this does not make OCR
+faster.** RapidOCR detects and recognises in a single call, so a cap applied afterwards
+cannot un-recognise anything. Measured, with interleaved sampling (sequential
+comparison was swamped by a 3× drift in the same frame between runs):
+
+| | median | share |
+| --- | --- | --- |
+| OCR, detection + recognition | 198 ms | 100% |
+| OCR, detection only | 43 ms | 22% |
+| recognition | 155 ms | 78% |
+
+What the cap does save is the other expensive half. One box costs about 20 ms to
+recognise; one sentence costs **71–350 ms** to translate with the local model. On a
+dense screen, refusing to translate 40 of 50 boxes saves far more than the recognition
+it cannot avoid — and it keeps the overlay and the history readable instead of flooded.
+
+Largest boxes win, because the small ones on a real screen are mostly noise: a
+fragment of texture or a UI ornament read as a single character. Dropping them is a
+quality improvement as well as a cost one.
+
+The real lever on OCR latency remains the **region size**: pick the smallest area that
+still contains the text you want.
+
+### Text reuse, and why it is not just cosmetic
+
+OCR is not deterministic. The same on-screen sentence comes back as `他突破到了虚空境界`,
+then `他突破到了虚空境界。`, then with a trailing space — three different cache keys, each
+missing the translation cache, each paying the model again for text already translated.
+`watashi/recent.py` remembers the last few seconds of translations under a normalised
+key (whitespace collapsed, edge punctuation trimmed, Latin case folded) and reuses them.
+
+Three details that make it work rather than misfire:
+
+- **The window slides.** Every reuse refreshes it, so a line that is still on screen is
+  still considered valid, however long it has been there.
+- **Boxes come from the current frame, not the remembered one**, so a plate still
+  follows text that has moved. Suppressing the cost and suppressing the position are
+  different things, and only the first is wanted.
+- **Short lines are never remembered.** `是`, `OK` and the like collide constantly, and
+  a reused collision would be a wrong answer that is very hard to notice.
+
+Counters: `reused_lines`, `dedup_hits`, `dedup_misses`, `dedup_hit_rate`, `dedup_size`.
 
 ### Two-tier display
 
@@ -646,8 +709,10 @@ prototype can be launched from anywhere. Notable knobs:
 | `capture.fps` | Target capture rate |
 | `capture.diff_threshold` | How much a frame must change before OCR runs. Raise if the overlay redraws noise; lower if brief subtitles are missed. |
 | `capture.max_width` | `0` = native. Downscaling is a documented trap; leave at 0. |
+| `capture.settle_ms` | Hold OCR back until the frame has been still this long. `0` recognises the changing frame, which captures moving glyphs. 150–250 for anything animated. |
 | `ocr.intra_op_threads` | 4 is the measured optimum on a 20 core machine |
 | `ocr.det_limit_type` | Keep `max` |
+| `ocr.max_boxes` | Translate and draw only the largest N boxes; `0` = no cap. Saves the model, **not** OCR — see below. |
 | `overlay.mode` | `bar` / `panel` / `both` / `none` |
 | `translation.nmt_model` | Path to the local CTranslate2 model dir, or `null` for corpus + rules only |
 | `translation.nmt_intra_threads` | 4 measured fastest; more threads made it slower |
@@ -662,6 +727,12 @@ prototype can be launched from anywhere. Notable knobs:
 Both are plain JSON, loaded at startup and **hot reloaded** when their mtime
 changes, so you can add vocabulary while the overlay is running and see the
 next subtitle pick it up.
+
+That reload is checked from the translate path (`reload_if_changed`), throttled to
+one mtime sweep per `corpus.reload_interval_ms` (500 ms by default), because the
+moment to notice that the vocabulary changed is the moment it is about to be used.
+Turn it off with `corpus.auto_reload` if the corpus lives on a slow network share;
+`reload_corpus` still forces one, and so does a correction.
 
 ### Corpus (R2)
 
@@ -690,6 +761,64 @@ Layer directories (`config.yaml`):
 `corpus/demo_terms.json` is 84 entries of demo vocabulary so the prototype
 visibly translates something. It is not shipped data — replace it.
 
+### Real time correction
+
+A wrong answer is not a gap, it is a confident hit: when the corpus itself is
+wrong — a name romanised the wrong way, a skill mistranslated — more vocabulary
+does not help, because the wrong translation is already winning. Something has to
+outrank an authoritative wrong answer, and only a human can.
+
+So: the translation is on screen, you correct it, and it sticks. In the desktop
+window, click the line in 字幕, edit 译文, press 保存纠正. Or through the boundary:
+
+```
+{"type": "command", "data": {"cmd": "correct",
+  "source": "他突破到了虚空境界", "target": "He has broken through into the Void Realm",
+  "scope": "line"}}
+```
+
+Four things happen, and each of them is a way the feature can appear to work and
+not work:
+
+1. **Written to a file.** `corrections.json` in the user corpus layer — the
+   highest-priority layer, created on first use because a fresh checkout has no
+   such directory (git cannot store an empty one). Written atomically, whole, and
+   never merged into a corpus file you maintain by hand.
+2. **Loaded immediately,** forcing the reload rather than waiting out the throttle.
+   You are looking at the screen to see whether your fix took.
+3. **The reuse memory is cleared** for that text. Otherwise the rejected
+   translation is served from a ten-second cache and the correction is invisible
+   for exactly as long as you are watching it.
+4. **The frame on screen is repainted.** A still screen produces no new frame at
+   all, so without this a correction made on a paused or static screen would sit in
+   the corpus and never be shown.
+5. **Anything already in flight loses.** The model is often already refining the
+   very line being corrected — that is what the two-tier display does — and its
+   answer comes back a few hundred milliseconds later. Both that in-flight answer
+   and any *cached* refinement for the line are answers to the question the human
+   just answered differently, so they are discarded rather than published. Without
+   this, whether a correction stuck would depend on which thread finished first.
+
+The mechanism for 5 is a **vocabulary revision**: `CorpusStore.load()` bumps a
+counter, a refinement is queued with the revision it was computed under, and it is
+dropped if that counter moved. The same check invalidates the refinement cache, so
+a corpus file you edit by hand mid-run also takes effect instead of being hidden by
+the model's older answer for the same line. Dropped refinements are counted
+(`refinements_stale`) rather than discarded silently — a correction that keeps being
+thrown away would otherwise look exactly like one that does not work.
+
+Two scopes, and the difference matters:
+
+| Scope | Keyed on | Use it for |
+| --- | --- | --- |
+| `line` (default) | The whole sentence, matched **loosely** — whitespace and edge punctuation ignored | One sentence that came out wrong. OCR never reads the same string twice, so the loose key is what makes a correction apply to the next frame rather than only to the one it was typed from |
+| `term` | The exact term, matched by the ordinary corpus scan wherever it appears | A name that shows up on every screen. It survives the sentence around it being read differently, which the line scope cannot |
+
+A term correction rewrites the word and leaves the sentence alone; a line
+correction replaces the whole line and, being fully protected terminology, is not
+second-guessed by the model afterwards. Both are listed (read-only) in the web
+panel, and `remove_correction` undoes one.
+
 ### Rules (R3)
 
 For words the corpus does not contain. Rules are **data, not code**
@@ -717,6 +846,7 @@ dims output below 50% coverage. `--print-trace` shows the full provenance:
 | --- | --- |
 | `watashi_proto.py --selftest` | Headless end-to-end check of OCR + corpus + rules + model. No screen needed. |
 | `selfcheck_session.py` | **Headless verification of the engine boundary**: events, envelope integrity, every command, adapter pass-through. No screen needed. |
+| `selfcheck_correct.py` | **Headless verification of corpus hot reload and real time correction**: the file format, loose matching, both scopes, cache invalidation, the repaint, and mutation-tested assertions. No screen needed. |
 | `watashi_proto.py --list-monitors` | Enumerate monitors. |
 | `watashi_proto.py --select` | Drag to choose a region. |
 | `watashi_proto.py --print` | Echo recognised lines, translations and refinements to the console. |
@@ -780,6 +910,21 @@ Be aware of these before judging the prototype.
     monitor to the drag-to-select path; a region on a second monitor needs
     `--region`. UWP apps and overlay hosts can appear twice in the picker, which
     is why each row shows its size and process.
+14. **A correction matches by text, so it only fires when OCR reads the same
+    words.** A line scope tolerates the whitespace and punctuation OCR varies
+    between frames, and nothing more: one mis-recognised character and neither the
+    loose line key nor the exact corpus key hits, and the line goes back to the
+    translation you rejected. The fix is to correct the *term* instead, which is
+    why the scope exists. The web panel's 本次命中 column is the honest answer to
+    "is my correction doing anything" — a stored row that never matches looks
+    exactly like a working one in the file.
+15. **A correction does not re-read the screen.** It repaints the frame it already
+    has, so if the text has scrolled away the corrected line still applies to the
+    next frame that contains it, not to what is in front of you now.
+16. **A correction is not re-checked by the model.** A whole-line correction is
+    protected as one term, so the refinement path declines it and the line stays at
+    corpus quality until the next frame brings a fresh refinement of the sentence
+    around it. That is the intended trade: the human's answer outranks fluency.
 
 ---
 
@@ -789,6 +934,7 @@ Be aware of these before judging the prototype.
 prototype/
 ├── watashi_proto.py      CLI entry point (thin client of Session)
 ├── selfcheck_session.py  headless engine boundary verification
+├── selfcheck_correct.py  headless corpus hot reload + correction verification
 ├── config.yaml           configuration (paths relative to this file)
 ├── requirements.txt      local-only dependencies
 ├── fetch_model.py        one-time, resume-safe model download
@@ -802,6 +948,7 @@ prototype/
 └── watashi/
     ├── events.py         THE BOUNDARY: event/command schema, no UI imports
     ├── session.py        engine facade: events out, commands in
+    ├── correct.py        real time correction: the user-corpus file, atomic writes
     ├── adapters.py       OverlayAdapter, ConsoleAdapter (in-process surfaces)
     ├── capture.py        mss region capture, window capture + change detection
     ├── ocr.py            RapidOCR wrapper, with the measured tuning

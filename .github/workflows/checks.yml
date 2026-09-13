@@ -2,7 +2,7 @@ name: checks
 
 # Runs the self checks that need no display.
 #
-# Four of the ten self checks open real windows (overlay, window selection,
+# Four of the eleven self checks open real windows (overlay, window selection,
 # drag-to-select, the desktop main window). A hosted runner has no graphical session
 # and there is no Windows equivalent of `xvfb-run`, so those are verified locally and
 # listed in prototype/checks_display.txt instead of being quietly omitted.

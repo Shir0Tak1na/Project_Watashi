@@ -8,6 +8,83 @@ described in `Project Watashi.md`. It is usable for testing and it is honest abo
 what it does not do yet -- see "Known limitations" below, which is part of the
 release rather than a footnote.
 
+## [0.0.4] -- 2026-09-13 -- 测试版 (pre-release)
+
+Two things: the correction loop, and the hot reload it depends on -- which turned out
+not to exist.
+
+### Fixed
+
+- **A refinement already in flight could undo a correction.** The two-tier display
+  means the model is routinely refining the very line the user is about to correct,
+  and its answer arrives a few hundred milliseconds later — over the correction, and
+  into the refinement cache, where it kept being served to every later frame reading
+  that line. Whether a correction stuck therefore depended on which thread finished
+  first. `CorpusStore.load()` now bumps a vocabulary revision, a refinement is queued
+  with the revision it was computed under, and a batch whose revision has moved is
+  discarded and counted (`refinements_stale`) instead of published. The same check
+  invalidates the refinement cache, which also fixes a narrower version of the same
+  bug: a corpus file edited by hand mid-run was hidden by the model's older answer
+  for the same line. Both are asserted, and both assertions were verified by mutation.
+- **Corpus hot reload never happened.** `CorpusStore` documented "mtime based hot
+  reload", accepted `auto_reload=True`, and implemented `reload_if_changed()` --
+  which nothing in the project ever called. Every "hot reload" claim in the docs was
+  false: an edit to a corpus file reached the engine only through the explicit
+  `reload_corpus` command or a restart. The check is now made from the translate
+  path, throttled to one mtime sweep per `corpus.reload_interval_ms` (500 ms), which
+  is where the vocabulary is about to be used. Verified by mutation: removing that
+  one call makes three assertions in `selfcheck_correct` fail.
+- **The shipped user corpus layer resolves to nothing.** The default user layer
+  `../plugins/user/custom_rules` holds no files, and in a fresh clone the directory
+  does not exist at all (git cannot store an empty directory), so the highest-priority
+  layer silently loaded zero entries. Corrections now create it on first use, and
+  `selfcheck_correct` asserts that a layer which does not exist yet is created and
+  then loaded like any other corpus file.
+- **An intermittent web self check failure, caused by a rejected request's body.**
+  A route that rejects a request without reading its body leaves the body in flight
+  when the response goes out, and uvicorn resets the connection. In this project's own
+  self check that surfaced as a `ConnectionReset` on `POST /api/corpus` alone, roughly
+  one run in five to eight, never reproducible on demand -- and three earlier diagnoses
+  (a zombie server, a port race, a stop that did not stop) were all wrong, which the
+  0.0.3 `stop()` fix above shows were real bugs but not this one. Reading the body first
+  removed the race for every client. Ten consecutive runs passed afterwards, against a
+  failure rate that made ten clean runs unlikely before.
+
+### Added
+
+- **Real time correction** (`watashi/correct.py`). A human correction outranks
+  everything, because when the corpus itself is wrong the wrong answer is a confident
+  hit rather than a gap, and no amount of extra vocabulary fixes it. `correct` writes
+  `corrections.json` into the user corpus layer, atomically and whole, never merging
+  into a file the user maintains by hand; the engine reloads it by force rather than
+  waiting out the throttle; the reuse memory for that text is dropped, because
+  otherwise the rejected translation is served from a ten-second cache and the fix is
+  invisible for exactly as long as the user is watching; and the current frame is
+  repainted, because a still screen produces no new frame at all.
+  Two scopes: `line` is keyed on the whole sentence and matched loosely (whitespace
+  and edge punctuation ignored, which is what makes a correction apply to the *next*
+  frame -- OCR never reads the same string twice), and `term` is keyed exactly and
+  matched wherever the term appears, which is the robust one for a name that shows up
+  on every screen. `list_corrections` and `remove_correction` make a mistake about a
+  mistake reversible. A whole-line correction is protected as one term, so the model
+  is not asked to improve a sentence a person has already settled.
+- **Correction editor in the desktop 字幕 tab.** Click a line in the history, its
+  source and current translation are filled in, edit the translation, save. Clicking
+  fills the source rather than asking the user to retype it, because a line correction
+  only matches text that is byte-identical to what OCR produced. A correction made in
+  another surface updates this window through the event stream, and the repainted
+  frame replaces its own row instead of appearing as a second subtitle for the same
+  sentence.
+- **`corpus.auto_reload` and `corpus.reload_interval_ms`** settings, both immediate,
+  with the schema naming the `set_corpus_reload` command that applies them -- and the
+  session pushing both into the running engine, because a setting that only reaches
+  `config` looks applied and does nothing until the next start.
+- **`selfcheck_correct`**, 138 checks. It contains the assertions that would have
+  caught the dead hot reload, and its discriminating power was verified by mutation
+  rather than assumed: disabling the reload call fails three checks, disabling the
+  cache invalidation fails one, making the model-skip impossible fails two, and
+  removing either of the two anti-race guards fails four.
+
 ## [0.0.3] -- 2026-09-13 -- 测试版 (pre-release)
 
 Everything here came out of using 0.0.2 for real, which is the only way most of it

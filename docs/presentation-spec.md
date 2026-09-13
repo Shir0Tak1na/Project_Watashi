@@ -109,8 +109,15 @@ breaking change for all of them.
 ### elements
 
 `role` selects which text is drawn: `source` (original), `target`
-(translation), `trace` (provenance, for debugging). `order` stacks them within a
-block.
+(translation), `trace` (provenance, for debugging), `previous` (the line before this
+one, which is what keeps the thread of a conversation when a subtitle replaces
+itself). `order` stacks them within a block.
+
+`previous` is opt-in rather than present everywhere, and the presets that skip it do so
+for a reason: `inplace` still has the old text on screen under its plate, `panel`
+already is a history, `lines` already stacks one block per recognised line, and
+`minimal` exists to show the translation and nothing else. `bar` and `bare` carry it,
+dim and small, so it reads as context rather than competing with the current line.
 
 ### Presets
 

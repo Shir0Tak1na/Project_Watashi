@@ -23,9 +23,12 @@ from __future__ import annotations
 import json
 import re
 import threading
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable, Sequence
+
+from .correct import Corrections, resolve_corrections_path
 
 # --------------------------------------------------------------------------- #
 # layers
@@ -69,8 +72,8 @@ class Span:
 
     @property
     def explained(self) -> bool:
-        """True when the span came from the corpus or an actual rule."""
-        return self.origin.startswith(("corpus:", "rule:"))
+        """True when the span came from the corpus, a rule, or a human correction."""
+        return self.origin.startswith(("corpus:", "rule:", "correction:"))
 
 
 @dataclass
@@ -345,6 +348,13 @@ class CorpusStore:
 
     ``lookup_exact`` is used by both the span scanner and the rules, so a rule
     that decomposes a word still benefits from user vocabulary.
+
+    Hot reload is checked from ``translate`` rather than from a watcher thread: the
+    engine already calls ``translate`` once per recognised line, an mtime stat is
+    microseconds against the ~20 ms of work that follows, and a watcher would need a
+    thread, a shutdown path and a way to tell the pipeline that its vocabulary moved
+    underneath it. The check is throttled so a burst of frames does not stat the tree
+    once per frame.
     """
 
     def __init__(
@@ -352,6 +362,8 @@ class CorpusStore:
         layers: dict[str, Sequence[Path]] | None = None,
         rule_files: Sequence[Path] = (),
         auto_reload: bool = True,
+        reload_interval_s: float = 0.5,
+        corrections: "Corrections | None" = None,
     ) -> None:
         self._layers: dict[str, list[Path]] = {
             LAYER_USER: [],
@@ -368,7 +380,45 @@ class CorpusStore:
         self._mtimes: dict[Path, float] = {}
         self._lock = threading.RLock()
         self._auto_reload = auto_reload
+        self._reload_interval = max(0.0, float(reload_interval_s))
+        #: -inf, not 0.0: the first lookup after a start has to check, and a clock
+        #: that happens to be near zero would otherwise swallow that first check
+        self._last_check = float("-inf")
+        self.reloads = 0
+        #: Bumped every time the loaded vocabulary is replaced. A background model
+        #: refinement started before a change describes a vocabulary that no longer
+        #: exists, so whoever queued it can tell that its answer is out of date --
+        #: which is how a correction stops being overwritten by a refinement that was
+        #: already in flight when the user made it.
+        self.revision = 0
+        #: human corrections, consulted before the corpus scan; see watashi/correct.py
+        self.corrections: Corrections | None = corrections
+        if self.corrections is None and self._layers[LAYER_USER]:
+            # Derived from the user layer rather than passed in, so an engine built by
+            # a benchmark or a self check reads the same corrections the application
+            # does instead of quietly ignoring them.
+            self.corrections = Corrections(
+                resolve_corrections_path(list(self._layers[LAYER_USER]))
+            )
         self.load()
+
+    @property
+    def auto_reload(self) -> bool:
+        return self._auto_reload
+
+    @auto_reload.setter
+    def auto_reload(self, value: Any) -> None:
+        self._auto_reload = bool(value)
+
+    @property
+    def reload_interval_s(self) -> float:
+        return self._reload_interval
+
+    @reload_interval_s.setter
+    def reload_interval_s(self, value: Any) -> None:
+        self._reload_interval = max(0.0, float(value))
+        # a shorter interval must not wait out the longer one that was just replaced
+        self._last_check = float("-inf")
 
     # -- loading ---------------------------------------------------------- #
 
@@ -392,18 +442,36 @@ class CorpusStore:
                 seen[path] = path.stat().st_mtime
             except OSError:
                 continue
+        if self.corrections is not None:
+            # normally inside a corpus directory and so already counted; listed again
+            # because a corrections file that is not is the one that would be missed
+            try:
+                seen[self.corrections.path] = self.corrections.path.stat().st_mtime
+            except OSError:
+                pass
         return seen
 
-    def reload_if_changed(self) -> bool:
-        """Reload when any corpus or rule file changed on disk."""
-        if not self._auto_reload:
+    def reload_if_changed(self, now: float | None = None, force: bool = False) -> bool:
+        """Reload when any corpus or rule file changed on disk.
+
+        Throttled, because the caller is the translate path: ``force`` is for the
+        cases that must be synchronous -- a reload button, or a correction the user
+        is about to judge by what appears on screen a moment later.
+        """
+        if not self._auto_reload and not force:
             return False
+        now = time.monotonic() if now is None else now
+        if not force:
+            if now - self._last_check < self._reload_interval:
+                return False
+            self._last_check = now
         current = self._snapshot_mtimes()
         with self._lock:
-            if current != self._mtimes:
-                self.load()
-                return True
-        return False
+            if current == self._mtimes:
+                return False
+        self.load()
+        self.reloads += 1
+        return True
 
     def load(self) -> None:
         entries: dict[str, Entry] = {}
@@ -456,6 +524,11 @@ class CorpusStore:
             self._max_key = max((len(k) for k in entries), default=1)
             self._rules = rules
             self._mtimes = self._snapshot_mtimes()
+            self.revision += 1
+        if self.corrections is not None:
+            # one reload path for the whole vocabulary: a corpus file and a correction
+            # arrive through the same call, so there is no way to get one without the other
+            self.corrections.load()
 
     # -- queries ---------------------------------------------------------- #
 
@@ -487,6 +560,32 @@ class CorpusStore:
         """Translate one line using longest-match corpus spans then rules."""
         if not text.strip():
             return Outcome(source_text=text, target_text=text)
+
+        # A corpus edit on disk -- including one this project just made from a user
+        # correction -- applies here, at the next line, rather than at the next start.
+        self.reload_if_changed()
+
+        # A whole-line correction is checked first and outranks everything: the human
+        # saw this exact sentence come out wrong and said what it should say. It is
+        # returned as a single span so the rest of the engine sees it as one fully
+        # explained, fully confident hit -- which is also what stops the local model
+        # from being asked to improve a sentence a person has already settled.
+        if self.corrections is not None:
+            correction = self.corrections.lookup_line(text)
+            if correction is not None:
+                span = Span(
+                    source=text,
+                    target=correction.target,
+                    origin="correction:user",
+                    confidence=1.0,
+                    rule_id=f"corrected:{correction.scope}",
+                )
+                return Outcome(
+                    source_text=text,
+                    target_text=correction.target,
+                    spans=[span],
+                    backend="corpus+rules",
+                )
 
         with self._lock:
             entries = self._entries
