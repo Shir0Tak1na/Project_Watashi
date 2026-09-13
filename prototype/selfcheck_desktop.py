@@ -191,8 +191,8 @@ def main() -> int:
             app.notebook.tab(i, "text") for i in range(app.notebook.index("end"))
         ]
         check.check(
-            "six tabs exist",
-            tabs == ["字幕", "采集", "翻译", "呈现", "插件", "诊断"],
+            "seven tabs exist",
+            tabs == ["字幕", "采集", "翻译", "呈现", "插件", "设置", "诊断"],
             f"got {tabs}",
         )
         check.check("the status strip starts empty-ish", app.status_var.get() != "")

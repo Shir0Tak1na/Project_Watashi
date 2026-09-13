@@ -46,6 +46,10 @@ EVENT_ERROR = "error"
 EVENT_COMMAND_RESULT = "command_result"
 EVENT_STOPPED = "stopped"
 EVENT_PRESENTATION = "presentation"
+#: A setting changed on some surface. Every other surface re-reads the config on
+#: this, which is what keeps the desktop window and the web panel showing the same
+#: values instead of each drifting from the file at its own pace.
+EVENT_SETTINGS = "settings"
 
 ALL_EVENTS = (
     EVENT_READY,
@@ -54,6 +58,7 @@ ALL_EVENTS = (
     EVENT_STATS,
     EVENT_STATUS,
     EVENT_ERROR,
+    EVENT_SETTINGS,
     EVENT_COMMAND_RESULT,
     EVENT_STOPPED,
     EVENT_PRESENTATION,

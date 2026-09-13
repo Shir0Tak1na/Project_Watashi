@@ -252,6 +252,158 @@ def main() -> int:
         panel.stop()
         session.stop()
 
+    # ------------------------------------------------------------------ #
+    print("")
+    print("-- the settings schema is served, and writes go somewhere safe --")
+    #
+    # `config.base_dir` is redirected to a temp directory for this section. Without
+    # that, POSTing a change would write prototype/config.user.yaml, and a test that
+    # edits the project's own configuration is a test that changes the behaviour of
+    # everything run after it.
+    import shutil
+    import tempfile
+    from pathlib import Path
+
+    from watashi.config import AppConfig as _AppConfig
+
+    real_base = config.base_dir
+    tmp_base = Path(tempfile.mkdtemp(prefix="watashi-web-settings-"))
+    # The earlier sections stop the panel when they are done, so this one brings it
+    # back up. Guarded by a readiness probe rather than restarted unconditionally,
+    # so the section also works if it is ever moved earlier in the file.
+    restarted = False
+    if not panel.wait_until_ready(timeout=1.0):
+        panel.start()
+        restarted = panel.wait_until_ready(timeout=10.0)
+    try:
+        config.base_dir = tmp_base
+
+        status, body = get(base + "/")
+        check.check(
+            "the page offers the schema-driven settings tab",
+            'data-tab="settings"' in body and 'id="setcats"' in body,
+            "the tab and its container must both be present",
+        )
+        check.check(
+            "and it posts to the settings endpoint",
+            '"/api/settings"' in body and "changes" in body,
+            "the form must send {changes: {...}}",
+        )
+        check.check(
+            "the page states the live/restart distinction, not just the controls",
+            "立即生效" in body and "需重启" in body,
+            "without this the 43 restart-only controls look broken",
+        )
+        check.check(
+            "the page is still entirely offline (no CDN, no web fonts)",
+            "https://" not in body,
+            "requirement R1: nothing may be fetched from the network",
+        )
+
+        status, body = get(base + "/api/settings")
+        check.check("GET /api/settings answers", status == 200, f"HTTP {status}")
+        payload = json.loads(body)
+        categories = payload.get("categories", [])
+        check.check(
+            "it returns every category of the schema",
+            len(categories) == 9,
+            f"{len(categories)} categories",
+        )
+        fields = [f for c in categories for f in c["fields"]]
+        check.check(
+            "and every field, each with a label and a description",
+            fields and all(f.get("label") and f.get("description") for f in fields),
+            f"{len(fields)} fields",
+        )
+        check.check(
+            "current values ride along, so the form can prefill",
+            all(c.get("values") for c in categories),
+        )
+        check.check(
+            "the live/restart split is reported for the warning text",
+            payload.get("live_count", 0) + payload.get("restart_count", 0) == len(fields),
+            f"{payload.get('live_count')} live / {payload.get('restart_count')} restart",
+        )
+        check.check(
+            "nothing is marked overridden yet",
+            payload.get("overridden") == [],
+            f"{payload.get('overridden')}",
+        )
+
+        status, body = post(base + "/api/settings", {"changes": {"capture.fps": 25}})
+        check.check("POST accepts a valid change", status == 200, f"HTTP {status} {body[:120]}")
+        result = json.loads(body)
+        check.check(
+            "a live setting is applied immediately",
+            "capture.fps" in result.get("applied_now", []),
+            f"{result}",
+        )
+        check.check(
+            "and it is also written to the override file",
+            _AppConfig.overrides_path(tmp_base).exists(),
+        )
+        # Loaded back through the real path, so this asserts persistence rather than
+        # just that a file appeared.
+        persisted = _AppConfig.load(tmp_base / "config.yaml")
+        check.check(
+            "the value survives a reload, so it applies on the next start too",
+            persisted.fps == 25.0,
+            f"fps={persisted.fps}",
+        )
+
+        status, body = post(base + "/api/settings", {"changes": {"capture.settle_ms": 180}})
+        result = json.loads(body)
+        check.check(
+            "a restart-required setting is reported as needing a restart",
+            "capture.settle_ms" in result.get("needs_restart", []),
+            f"{result}",
+        )
+        check.check(
+            "but it is still written, or the control would do nothing at all",
+            _AppConfig.load(tmp_base / "config.yaml").capture.get("settle_ms") == 180,
+            f"settle_ms={_AppConfig.load(tmp_base / 'config.yaml').capture.get('settle_ms')}",
+        )
+
+        status, body = post(base + "/api/settings", {"changes": {"overlay.mode": "sideways"}})
+        check.check(
+            "an invalid value is refused with 400 and a reason",
+            status == 400 and "bar" in body,
+            f"HTTP {status} {body[:140]}",
+        )
+        status, body = post(base + "/api/settings", {"changes": {"nope.nothing": 1}})
+        check.check(
+            "an unknown setting is refused with 400",
+            status == 400 and "unknown setting" in body,
+            f"HTTP {status} {body[:140]}",
+        )
+        status, body = post(
+            base + "/api/settings",
+            {"changes": {"capture.fps": 30, "overlay.mode": "wrong"}},
+        )
+        check.check(
+            "a batch containing one bad value writes none of it",
+            status == 400,
+            f"HTTP {status}",
+        )
+        after_reject = _AppConfig.load(tmp_base / "config.yaml")
+        check.check(
+            "the refused batch left the good value untouched",
+            after_reject.fps == 25.0 and after_reject.capture.get("settle_ms") == 180,
+            f"fps={after_reject.fps} settle_ms={after_reject.capture.get('settle_ms')}",
+        )
+
+        status, body = get(base + "/api/settings")
+        check.check(
+            "the page is told which values the user changed",
+            "capture.fps" in json.loads(body).get("overridden", []),
+            f"{json.loads(body).get('overridden')}",
+        )
+    finally:
+        config.base_dir = real_base
+        shutil.rmtree(tmp_base, ignore_errors=True)
+        if restarted:
+            panel.stop()
+
     return check.report()
 
 

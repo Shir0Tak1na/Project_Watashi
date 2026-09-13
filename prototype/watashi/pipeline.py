@@ -31,7 +31,7 @@ import numpy as np
 
 from .capture import ChangeDetector, RegionCapturer
 from .events import OverlayStats, OverlayUpdate, TranslatedLine
-from .lang import matches_target
+from .lang import has_translatable_content, matches_target
 from .ocr import OcrResult, RapidOcrEngine
 from .translate import Translator
 
@@ -80,6 +80,11 @@ class PipelineConfig:
     diff_threshold: float = 2.0
     signature_width: int = 96
     min_ocr_interval: float = 0.0
+    #: Hold OCR back until the frame has stopped changing for this many seconds.
+    #: 0 = recognise on the changing frame, which is the original behaviour.
+    #: A non-zero value is what makes scrolling/animated text usable: recognising
+    #: mid-motion captures half-drawn glyphs.
+    settle_s: float = 0.0
     max_width: int = 1280
     target_lang: str = "zh-CN"
     source_lang: str = "auto"
@@ -110,6 +115,7 @@ class Pipeline:
             threshold=self.config.diff_threshold,
             signature_width=self.config.signature_width,
             min_interval=self.config.min_ocr_interval,
+            settle_s=self.config.settle_s,
         )
         self._slot = _LatestSlot()
         self._stop = threading.Event()
@@ -133,6 +139,8 @@ class Pipeline:
         self.passthrough_frames = 0
         #: lines skipped because they were already the target language
         self.passthrough_lines = 0
+        #: lines skipped because they hold no letters at all (clock, symbols)
+        self.nontranslatable_lines = 0
         self._last_result: OcrResult | None = None
 
     # -- control ---------------------------------------------------------- #
@@ -157,6 +165,36 @@ class Pipeline:
             thread.join(timeout=timeout)
         self._threads = []
         self.capturer.close()
+
+    def _already_target(self, text: str, declared_source: str) -> bool:
+        """Should this line be passed through untranslated?
+
+        Three branches, in order of how much the evidence is worth:
+
+        1. **A decisive script verdict wins.** Han, kana, hangul, Thai, Cyrillic and
+           Arabic identify a language on their own, so if the text is written in the
+           target's script it is already the target language -- whatever the source
+           was declared to be. Skipping this branch is what made a declared
+           ``--source en`` translate Chinese text on every single frame.
+        2. **Otherwise trust the declaration.** A Latin-script verdict is only "there
+           were letters", which cannot tell French from English, so when the user
+           says the source is French we believe them rather than the guess.
+        3. **Otherwise fall back to the script guess**, which is all that is available
+           when nothing was declared. This is the branch that passes undeclared
+           French through as English; the fix is to declare the source, and the
+           limitation is documented rather than hidden.
+        """
+        from .lang import decisive_language, same_language
+
+        decisive = decisive_language(text)
+        if decisive is not None:
+            return same_language(decisive, self.config.target_lang)
+        if declared_source and declared_source != "auto":
+            try:
+                return same_language(declared_source, self.config.target_lang)
+            except ValueError:
+                return False
+        return matches_target(text, self.config.target_lang)
 
     def set_capturer(self, capturer: Any, close_old: bool = True) -> None:
         """Swap the capture source while the pipeline is running.
@@ -303,11 +341,33 @@ class Pipeline:
         passthrough: list[bool] = []
         traces: list[str] = []
         backends: set[str] = set()
+        declared_source = (self.config.source_lang or "auto").strip().lower()
         for ocr_line in ocr_result.lines:
             if not ocr_line.text.strip():
                 continue
 
-            if matches_target(ocr_line.text, self.config.target_lang):
+            if not has_translatable_content(ocr_line.text):
+                # Digits, punctuation, symbols: a clock, a countdown, a divider. They
+                # are kept on screen unchanged because that is what they look like,
+                # but they must never reach the translator -- each tick is a fresh
+                # "sentence" that misses the cache, so the model would run forever on
+                # text that has no language in it.
+                translated.append(
+                    TranslatedLine(
+                        source=ocr_line.text,
+                        target=ocr_line.text,
+                        box=ocr_line.box,
+                        confidence=1.0,
+                        coverage=1.0,
+                    )
+                )
+                passthrough.append(True)
+                traces.append("skip: no letters to translate")
+                backends.add("skip")
+                self.nontranslatable_lines += 1
+                continue
+
+            if self._already_target(ocr_line.text, declared_source):
                 translated.append(
                     TranslatedLine(
                         source=ocr_line.text,
@@ -440,6 +500,18 @@ class Pipeline:
             "refinements_dropped": s.refinements_dropped,
             "passthrough_frames": self.passthrough_frames,
             "passthrough_lines": self.passthrough_lines,
+            #: letterless lines (clock, symbols) kept on screen but never translated
+            "nontranslatable_lines": self.nontranslatable_lines,
+            # --- the stability gate ------------------------------------------- #
+            # `settle_s` is the requested threshold; `settle_waits` is how many
+            # frames were deliberately held back because the frame was still
+            # moving. Without that counter the gate could be doing nothing at all
+            # and the latency numbers would look identical.
+            "settle_s": round(self.config.settle_s, 3),
+            "settle_waits": self.detector.settle_waits,
+            "stability_s": round(self.detector.stability_s, 3),
+            "last_diff": round(self.detector.last_diff, 3),
+            "detector_accepted": self.detector.accepted,
             "refinements_deferred": int(
                 self.translator.stats().get("refinements_deferred", 0)
             ),

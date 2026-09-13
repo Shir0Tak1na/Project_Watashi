@@ -49,6 +49,7 @@ from typing import Any, AsyncIterator
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 
+from .config import AppConfig
 from .events import (
     CMD_LOAD_PROFILE,
     CMD_SET_DIFF_THRESHOLD,
@@ -91,6 +92,31 @@ _CSP = (
     "form-action 'none'; "
     "base-uri 'none'"
 )
+
+
+def _command_payload(field: Any, raw: Any) -> dict[str, Any]:
+    """Translate a settings value into the payload its command expects.
+
+    The engine's commands take their argument under different names because they
+    grew up separately (`value`, `target_lang`, `preset`, `region`). Rather than
+    rename them all and break every existing caller, the mapping lives here, next to
+    the only place that needs it.
+    """
+    from . import settings_schema
+
+    value = settings_schema.coerce(field, raw)
+    name = field.command
+    if name in ("set_fps", "set_diff_threshold"):
+        return {"value": value}
+    if name == "set_target_lang":
+        return {"target_lang": value}
+    if name == "set_presentation":
+        return {"preset": value}
+    if name == "set_region":
+        return {"region": value}
+    if name == "load_profile":
+        return {"name": value}
+    return {"value": value}
 
 
 def create_app(session: Session) -> FastAPI:
@@ -174,6 +200,57 @@ def create_app(session: Session) -> FastAPI:
 
         result = session.command(name, payload)
         return JSONResponse(result, status_code=200 if result.get("ok") else 400)
+
+    @app.get("/api/settings")
+    async def api_settings() -> JSONResponse:
+        """The whole settings schema, with current values, for a form to render.
+
+        Every field carries its own label and description, so the page needs no
+        knowledge of any individual setting: adding a field to the schema makes it
+        appear here, with its explanation, without touching the HTML.
+        """
+        from . import settings_schema
+
+        payload = settings_schema.as_dict(session.config)
+        overrides = session.config.read_overrides()
+        # Which values the user has changed, so the page can mark them and offer a
+        # reset. Without this the panel cannot tell a deliberate choice from a
+        # shipped default.
+        changed = []
+        for section, values in overrides.items():
+            if isinstance(values, dict):
+                changed.extend(f"{section}.{name}" for name in values)
+            else:
+                changed.append(section)
+        payload["overridden"] = sorted(changed)
+        payload["config_file"] = str(session.config.base_dir / "config.yaml")
+        payload["overrides_file"] = str(
+            AppConfig.overrides_path(session.config.base_dir)
+        )
+        return JSONResponse(payload)
+
+    @app.post("/api/settings")
+    async def api_set_settings(request: Request) -> JSONResponse:
+        """Validate, persist and broadcast settings.
+
+        All of that is ``session.apply_settings``, shared with the desktop window, so
+        a change made here reaches the other surface and vice versa. This handler only
+        translates HTTP into that call -- duplicating the logic here is how the two
+        surfaces would start disagreeing about what is saved.
+        """
+        body: Any = await request.json()
+        if not isinstance(body, dict):
+            raise HTTPException(status_code=400, detail="expected a JSON object")
+        changes = body.get("changes")
+        if not isinstance(changes, dict) or not changes:
+            raise HTTPException(status_code=400, detail="expected a non-empty 'changes' object")
+
+        result = session.apply_settings(changes)
+        if not result.get("ok"):
+            # A rejected value must say which one and why; a settings page that
+            # silently accepts or clamps input teaches the user its controls lie.
+            return JSONResponse(result, status_code=400)
+        return JSONResponse(result)
 
     @app.get("/api/events")
     async def api_events(request: Request, replay: int = 0) -> StreamingResponse:

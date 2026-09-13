@@ -75,6 +75,11 @@ def build_parser() -> argparse.ArgumentParser:
     capture.add_argument("--diff-threshold", type=float, default=None, help="skip OCR below this frame difference")
     capture.add_argument("--max-width", type=int, default=None, help="downscale frames wider than this before OCR")
     capture.add_argument("--min-ocr-interval", type=float, default=None, help="minimum seconds between OCR runs")
+    capture.add_argument("--settle-ms", type=float, default=None,
+                         help="hold OCR back until the frame has been still this many "
+                              "milliseconds. 0 (the default) recognises the changing "
+                              "frame itself, which captures moving glyphs; a non-zero "
+                              "value is what makes scrolling text and danmaku legible")
 
     ocr_group = parser.add_argument_group("ocr")
     ocr_group.add_argument("--ocr-threads", type=int, default=None, help="ONNX intra-op threads (default 4; more is slower)")
@@ -199,6 +204,8 @@ def apply_overrides(config: AppConfig, args: argparse.Namespace) -> AppConfig:
         config.capture["max_width"] = args.max_width
     if args.min_ocr_interval is not None:
         config.capture["min_ocr_interval"] = args.min_ocr_interval
+    if args.settle_ms is not None:
+        config.capture["settle_ms"] = args.settle_ms
 
     if args.ocr_threads is not None:
         config.ocr["intra_op_threads"] = args.ocr_threads
@@ -517,11 +524,23 @@ def main(argv: list[str] | None = None) -> int:
     def request_stop(*_args: object) -> None:
         stopping["flag"] = True
 
-    channel = session.subscribe()
+    # One queue PER surface.
+    #
+    # This used to be a single `session.subscribe()` shared by the console and the
+    # overlay, which is a race: a queue delivers each item to exactly one consumer,
+    # and both adapters poll it from their own thread. So every event went to
+    # whichever thread got there first.
+    #
+    # The visible damage was not subtle. `ready` is published once, at session
+    # start, and it is what tells the overlay where the capture region is; if the
+    # console won that race the overlay's region_box stayed None, in-place layout
+    # fell back to the screen origin, and the translation blocks were drawn in the
+    # wrong place. Subtitle events were split between the two consumers in the same
+    # way, so each surface saw roughly half of them.
     adapters: list[Any] = []
 
     console = attach_console(
-        channel,
+        session.subscribe(),
         json_lines=bool(args.json_lines),
         print_lines=bool(config.logging.get("print_lines")),
         print_refined=bool(config.logging.get("print_refined", True)),
@@ -580,7 +599,7 @@ def main(argv: list[str] | None = None) -> int:
             pass
         else:
             overlay.start()
-        adapters.append(attach_overlay(overlay, channel))
+        adapters.append(attach_overlay(overlay, session.subscribe()))
         # a presentation change from any surface repaints this one too
         if mode != "panel":
             session.on_presentation_change(overlay.apply_presentation)

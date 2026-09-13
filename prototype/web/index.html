@@ -86,6 +86,7 @@
 </header>
 <nav>
   <button data-tab="view" class="active">阅览</button>
+  <button data-tab="settings">全部设置</button>
   <button data-tab="look">外观与版式</button>
   <button data-tab="engine">引擎设置</button>
   <button data-tab="diag">诊断</button>
@@ -111,6 +112,246 @@
       <div id="entries"></div>
     </div>
   </section>
+
+  <!--
+    全部设置：由 /api/settings 返回的 schema 通用渲染。
+
+    这个页面不认识任何一个具体的设置项。它读到的每个字段都自带标签、说明、类型、
+    取值范围和“是否需重启”，所以给 schema 加一个字段，它就会带着完整说明出现在这里，
+    不需要改动这个文件。手写表单做不到这一点：说明文字会和真实配置脱节，
+    然后界面开始骗人。
+  -->
+  <section id="settings">
+    <style>
+      .setrow { padding: 12px 0; border-bottom: 1px solid var(--line); }
+      .setrow:last-child { border-bottom: none; }
+      .setlabel { font-size: 13px; margin-bottom: 6px; display: flex; gap: 8px;
+                  align-items: center; flex-wrap: wrap; }
+      .setkey { font-family: var(--mono); font-size: 11px; color: #4d6070; }
+      .setdesc { color: var(--dim); font-size: 12px; line-height: 1.65; margin-top: 6px; }
+      .setmeta { color: #55697a; font-size: 11px; margin-top: 5px;
+                 font-family: var(--mono); }
+      .pill.live { background: #12301f; color: #7dd39a; }
+      .pill.warn { background: #3a2a12; color: #e0b070; }
+      .pill.over { background: #16283d; color: #8fb8e0; }
+      .setctl input[type=text], .setctl input[type=number] { width: 220px; }
+      .cathead { display: flex; justify-content: space-between; align-items: baseline;
+                 gap: 10px; flex-wrap: wrap; }
+    </style>
+    <div class="card">
+      <h2>全部设置 <span class="pill" id="setcount">读取中…</span></h2>
+      <p class="muted">
+        每个选项都附带说明、取值范围和默认值。
+        <span class="pill live">立即生效</span> 的项改完马上起作用；
+        <span class="pill warn">需重启</span> 的项因为在引擎启动时读取，
+        会写入配置文件但必须重启程序才生效——不标出来的话，改了没反应会让人以为程序坏了。
+      </p>
+      <p class="muted">
+        改动写入 <code id="setoverridefile">…</code>，不会动
+        <code id="setconfigfile">…</code>（它的注释本身就是文档）。
+        删掉覆盖文件即可让所有设置回到出厂值。
+      </p>
+      <div class="row">
+        <button class="act" id="setreload">重新载入</button>
+        <span class="muted" id="setmsg"></span>
+      </div>
+    </div>
+    <div id="setcats"></div>
+  </section>
+
+  <script>
+  (function () {
+    const $ = (id) => document.getElementById(id);
+    let SCHEMA = null;
+
+    function control(field, value, onchange) {
+      const wrap = document.createElement("div");
+      wrap.className = "setctl";
+      let el;
+      if (field.kind === "bool") {
+        el = document.createElement("input");
+        el.type = "checkbox";
+        el.checked = !!value;
+        el.addEventListener("change", () => onchange(el.checked));
+      } else if (field.kind === "enum") {
+        el = document.createElement("select");
+        (field.choices || []).forEach((choice) => {
+          const opt = document.createElement("option");
+          opt.value = choice;
+          opt.textContent = choice;
+          if (choice === value) opt.selected = true;
+          el.appendChild(opt);
+        });
+        el.addEventListener("change", () => onchange(el.value));
+      } else if (field.kind === "int" || field.kind === "float") {
+        el = document.createElement("input");
+        el.type = "number";
+        if (field.kind === "float") el.step = "any";
+        if (field.low !== undefined) el.min = field.low;
+        if (field.high !== undefined) el.max = field.high;
+        el.value = value === null || value === undefined ? "" : value;
+        el.addEventListener("change", () => onchange(el.value === "" ? null : el.value));
+      } else {
+        el = document.createElement("input");
+        el.type = "text";
+        if (Array.isArray(value)) el.value = value.join(", ");
+        else el.value = value === null || value === undefined ? "" : value;
+        if (field.note && field.kind === "text") el.placeholder = field.note.slice(0, 40);
+        el.addEventListener("change", () => onchange(el.value));
+      }
+      wrap.appendChild(el);
+      return wrap;
+    }
+
+    async function save(key, value) {
+      $("setmsg").textContent = "写入 " + key + " …";
+      try {
+        const response = await fetch("/api/settings", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ changes: { [key]: value } }),
+        });
+        const body = await response.json();
+        if (!response.ok) {
+          const why = body.rejected ? Object.values(body.rejected).join("；")
+                                    : (body.detail || "被拒绝");
+          $("setmsg").textContent = "✗ " + key + "：" + why;
+          return false;
+        }
+        const live = (body.applied_now || []).length;
+        const later = (body.needs_restart || []).length;
+        $("setmsg").textContent = later
+          ? "✓ " + key + " 已写入；需重启程序后生效"
+          : (live ? "✓ " + key + " 已生效" : "✓ " + key + " 已写入");
+        return true;
+      } catch (exc) {
+        $("setmsg").textContent = "✗ 请求失败：" + exc;
+        return false;
+      }
+    }
+
+    function render(payload) {
+      SCHEMA = payload;
+      const overridden = new Set(payload.overridden || []);
+      $("setoverridefile").textContent = payload.overrides_file || "(未设置)";
+      $("setconfigfile").textContent = payload.config_file || "";
+      $("setcount").textContent =
+        (payload.live_count || 0) + " 项立即生效 · " +
+        (payload.restart_count || 0) + " 项需重启";
+      const host = $("setcats");
+      host.textContent = "";
+      payload.categories.forEach((category) => {
+        const card = document.createElement("div");
+        card.className = "card";
+        const head = document.createElement("div");
+        head.className = "cathead";
+        const title = document.createElement("h2");
+        title.textContent = category.title;
+        const count = document.createElement("span");
+        count.className = "muted";
+        count.textContent = category.fields.length + " 项";
+        head.appendChild(title);
+        head.appendChild(count);
+        card.appendChild(head);
+        if (category.summary) {
+          const summary = document.createElement("p");
+          summary.className = "muted";
+          summary.style.marginTop = "0";
+          summary.textContent = category.summary;
+          card.appendChild(summary);
+        }
+        category.fields.forEach((field) => {
+          const row = document.createElement("div");
+          row.className = "setrow";
+          row.dataset.key = field.key;
+
+          const label = document.createElement("div");
+          label.className = "setlabel";
+          const name = document.createElement("span");
+          name.textContent = field.label;
+          const code = document.createElement("span");
+          code.className = "setkey";
+          code.textContent = field.key;
+          label.appendChild(name);
+          label.appendChild(code);
+          const badge = document.createElement("span");
+          badge.className = "pill " + (field.applies === "live" ? "live" : "warn");
+          badge.textContent = field.applies === "live" ? "立即生效" : "需重启";
+          label.appendChild(badge);
+          if (overridden.has(field.key)) {
+            const over = document.createElement("span");
+            over.className = "pill over";
+            over.textContent = "已修改";
+            label.appendChild(over);
+          }
+          row.appendChild(label);
+
+          const value = category.values ? category.values[field.key] : null;
+          row.appendChild(control(field, value, async (next) => {
+            await save(field.key, next);
+            await load();
+          }));
+
+          const desc = document.createElement("div");
+          desc.className = "setdesc";
+          desc.textContent = field.description;
+          row.appendChild(desc);
+
+          const meta = [];
+          if (field.low !== undefined && field.high !== undefined) {
+            meta.push("范围 " + field.low + "–" + field.high + (field.unit || ""));
+          } else if (field.unit) {
+            meta.push("单位 " + field.unit);
+          }
+          meta.push("默认 " + (field.default === null ? "(空)" : JSON.stringify(field.default)));
+          if (field.danger) meta.push("⚠ " + field.danger);
+          if (field.note && field.kind !== "text") meta.push("提示 " + field.note);
+          if (meta.length) {
+            const metaEl = document.createElement("div");
+            metaEl.className = "setmeta";
+            metaEl.textContent = meta.join(" · ");
+            row.appendChild(metaEl);
+          }
+          card.appendChild(row);
+        });
+        host.appendChild(card);
+      });
+    }
+
+    async function load() {
+      try {
+        const response = await fetch("/api/settings");
+        render(await response.json());
+      } catch (exc) {
+        $("setmsg").textContent = "✗ 无法读取设置：" + exc;
+      }
+    }
+
+    $("setreload").addEventListener("click", load);
+
+    // Keep in step with changes made on another surface (the desktop window).
+    //
+    // The engine publishes a `settings` event for exactly this, and the desktop
+    // window consumes it. This script is a separate IIFE and cannot reach the other
+    // block's EventSource, so instead of opening a second SSE connection it re-reads
+    // while the tab is actually on screen -- nothing is fetched while the user is
+    // looking elsewhere. Using the event would be tidier; polling is self-contained.
+    let refreshing = null;
+    function followVisibility() {
+      const visible = $("settings").classList.contains("active");
+      if (visible && !refreshing) {
+        refreshing = setInterval(load, 3000);
+        load();
+      } else if (!visible && refreshing) {
+        clearInterval(refreshing);
+        refreshing = null;
+      }
+    }
+    document.querySelectorAll("nav button").forEach((button) => {
+      button.addEventListener("click", () => setTimeout(followVisibility, 0));
+    });
+  })();
+  </script>
 
   <section id="look">
     <div class="card">

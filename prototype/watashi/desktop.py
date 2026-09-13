@@ -40,6 +40,7 @@ from .events import (
     EVENT_PRESENTATION,
     EVENT_READY,
     EVENT_REFINEMENT,
+    EVENT_SETTINGS,
     EVENT_STATS,
     EVENT_STATUS,
     EVENT_STOPPED,
@@ -129,6 +130,7 @@ class DesktopApp:
         self._build_translation(notebook)
         self._build_presentation(notebook)
         self._build_plugins(notebook)
+        self._build_settings(notebook)
         self._build_diagnostics(notebook)
 
     def _tab(self, notebook: ttk.Notebook, title: str) -> ttk.Frame:
@@ -241,6 +243,93 @@ class DesktopApp:
             justify="left", foreground="#5f7386",
         ).pack(anchor="w", pady=(8, 0))
 
+    def _build_settings(self, notebook: ttk.Notebook) -> None:
+        """Every setting, with the same explanation the web panel shows.
+
+        Read-only on purpose. The division of labour settled earlier is that the web
+        panel adjusts settings and this window controls and displays; a second editor
+        here would be a second place for the two to disagree. What this tab is for is
+        answering "what is this program doing and why", which is the complaint that
+        started this work -- so it shows all 49 settings with their descriptions,
+        their current values, and whether changing one needs a restart.
+
+        It refreshes whenever any surface changes a setting, so the reference cannot
+        go stale while the window is open.
+        """
+        frame = self._tab(notebook, "设置")
+        ttk.Label(
+            frame,
+            text="全部设置及其说明。调整请用 Web 面板（run.cmd --serve）；"
+                 "这里随任何界面的改动自动刷新。",
+            foreground="#5f7386", justify="left", wraplength=880,
+        ).pack(anchor="w", pady=(0, 6))
+        self.settings_header = tk.StringVar(value="")
+        ttk.Label(frame, textvariable=self.settings_header, foreground="#5f7386",
+                  justify="left", wraplength=880).pack(anchor="w", pady=(0, 6))
+        self.settings_box = tk.Text(
+            frame, wrap="word", bg="#0b0f13", fg="#c9d6e0", relief="flat",
+            insertwidth=0, font=("Microsoft YaHei UI", 10), padx=10, pady=8,
+        )
+        self.settings_box.pack(fill="both", expand=True)
+        self.settings_box.tag_configure("cat", foreground="#7fc4ff",
+                                        font=("Microsoft YaHei UI", 11, "bold"),
+                                        spacing1=10, spacing3=4)
+        self.settings_box.tag_configure("label", foreground="#e6eef5",
+                                        font=("Microsoft YaHei UI", 10, "bold"))
+        self.settings_box.tag_configure("desc", foreground="#93a6b5")
+        self.settings_box.tag_configure("meta", foreground="#5f7386")
+        self.settings_box.tag_configure("warn", foreground="#e0b070")
+        self.settings_box.configure(state="disabled")
+
+    def _refresh_settings(self) -> None:
+        if self._closed or self.session is None:
+            return
+        try:
+            payload = self.session.settings_payload()
+        except Exception as exc:  # a broken payload must not take the window down
+            self.settings_header.set(f"读取设置失败：{exc}")
+            return
+        overridden = set(payload.get("overridden") or [])
+        self.settings_header.set(
+            f"{payload.get('live_count', 0)} 项立即生效 · "
+            f"{payload.get('restart_count', 0)} 项需重启 · "
+            f"已修改 {len(overridden)} 项 · 配置文件 {payload.get('overrides_file')}"
+        )
+        box = self.settings_box
+        box.configure(state="normal")
+        box.delete("1.0", "end")
+        for category in payload.get("categories", []):
+            box.insert("end", f"{category['title']}\n", ("cat",))
+            if category.get("summary"):
+                box.insert("end", f"  {category['summary']}\n", ("meta",))
+            for field in category.get("fields", []):
+                value = (category.get("values") or {}).get(field["key"])
+                if isinstance(value, list):
+                    value = ", ".join(str(v) for v in value) or "(空)"
+                elif value is None:
+                    value = "(空)"
+                marker = "  [已修改]" if field["key"] in overridden else ""
+                needs = "需重启" if field.get("applies") == "restart" else "立即生效"
+                box.insert(
+                    "end",
+                    f"  {field['label']}  =  {value}{marker}   ({needs})\n",
+                    ("label",),
+                )
+                box.insert("end", f"      {field['description']}\n", ("desc",))
+                bits = [field["key"]]
+                if field.get("low") is not None and field.get("high") is not None:
+                    bits.append(
+                        f"范围 {field['low']}–{field['high']}{field.get('unit', '')}"
+                    )
+                bits.append(f"默认 {field.get('default')!r}")
+                if field.get("note"):
+                    bits.append(f"提示 {field['note']}")
+                box.insert("end", "      " + " · ".join(bits) + "\n", ("meta",))
+                if field.get("danger"):
+                    box.insert("end", f"      ⚠ {field['danger']}\n", ("warn",))
+            box.insert("end", "\n")
+        box.configure(state="disabled")
+
     def _build_diagnostics(self, notebook: ttk.Notebook) -> None:
         frame = self._tab(notebook, "诊断")
         self.stats_box = tk.Text(
@@ -307,6 +396,14 @@ class DesktopApp:
                 pending.append(("refinement", data))
             elif kind == EVENT_STATS:
                 self.stats = decode_stats(data)
+            elif kind == EVENT_SETTINGS:
+                # Some surface changed a setting. Re-read rather than trust the
+                # event's payload: the point of the linkage is that both surfaces
+                # show the same state, and the config is that state.
+                self._refresh_settings()
+                self._append_history(
+                    ("", "设置已由其他界面更新：" + "、".join(data.get("changed") or []), True)
+                )
             elif kind == EVENT_PRESENTATION:
                 self._refresh_presentation(PresentationSpec.from_dict(data))
             elif kind == EVENT_STATUS:
@@ -362,6 +459,7 @@ class DesktopApp:
         if formats and not self.export_format_var.get():
             self.export_format_var.set(formats[0])
         self._render_plugin_status(plugins)
+        self._refresh_settings()
 
     def _on_subtitle(self, update: Any) -> None:
         self.current_var.set(update.target_text or "（空）")

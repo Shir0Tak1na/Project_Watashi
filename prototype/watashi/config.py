@@ -14,6 +14,10 @@ import yaml
 
 from .capture import Region
 
+#: Settings changed through the UI are written here, not into config.yaml.
+#: See AppConfig.load for why the documented config is never rewritten in place.
+OVERRIDES_NAME = "config.user.yaml"
+
 DEFAULTS: dict[str, Any] = {
     "capture": {
         "monitor": 1,
@@ -24,6 +28,9 @@ DEFAULTS: dict[str, Any] = {
         "signature_width": 96,
         "max_width": 0,
         "min_ocr_interval": 0.0,
+        #: hold OCR back until the frame has been still this long (ms). 0 = the
+        #: original behaviour: recognise the changing frame itself.
+        "settle_ms": 0,
     },
     "ocr": {
         "intra_op_threads": 4,
@@ -159,12 +166,30 @@ class AppConfig:
         raw: dict[str, Any] = {}
         if path.exists():
             with path.open("r", encoding="utf-8") as fh:
-                loaded = yaml.safe_load(fh) or {}
-            if not isinstance(loaded, dict):
+                loaded = yaml.safe_load(fh)
+            if loaded is not None and not isinstance(loaded, dict):
                 raise ValueError(f"{path}: expected a mapping at the top level")
-            raw = loaded
+            raw = loaded or {}
 
         merged = _deep_merge(DEFAULTS, raw)
+
+        # A second, optional layer written by the settings UI.
+        #
+        # Deliberately a separate file rather than a rewrite of config.yaml: that
+        # file's 140 lines of comments *are* the documentation for these settings,
+        # and round-tripping it through a YAML library would delete every one of
+        # them. An override file also makes "put it back" a one-file delete, and
+        # lets the UI show which values the user changed rather than which ones the
+        # project shipped.
+        overrides_path = base_dir / OVERRIDES_NAME
+        if overrides_path.exists():
+            with overrides_path.open("r", encoding="utf-8") as fh:
+                layer = yaml.safe_load(fh)
+            if layer is not None and not isinstance(layer, dict):
+                raise ValueError(f"{overrides_path}: expected a mapping at the top level")
+            if layer:
+                merged = _deep_merge(merged, layer)
+
         config = cls(
             base_dir=base_dir,
             capture=merged["capture"],
@@ -184,6 +209,71 @@ class AppConfig:
         if region_spec:
             config.region = Region.parse(str(region_spec))
         return config
+
+    @staticmethod
+    def overrides_path(base_dir: Path) -> Path:
+        return Path(base_dir) / OVERRIDES_NAME
+
+    def read_overrides(self) -> dict[str, Any]:
+        """The raw override layer, as nested dicts. Empty when there is none."""
+        path = self.overrides_path(self.base_dir)
+        if not path.exists():
+            return {}
+        with path.open("r", encoding="utf-8") as fh:
+            layer = yaml.safe_load(fh)
+        return layer if isinstance(layer, dict) else {}
+
+    def save_overrides(self, changes: dict[str, Any]) -> list[str]:
+        """Write ``{dotted.key: value}`` into the override file. Returns the keys written.
+
+        Merging into whatever is already there is the point: the UI sends one field
+        at a time, and each write must not discard the others. A value equal to the
+        shipped default is *removed* from the layer rather than stored, so the file
+        stays a record of deliberate changes and "reset to default" actually resets.
+        """
+        from . import settings_schema
+
+        layer = self.read_overrides()
+
+        for key, value in changes.items():
+            field = settings_schema.find(key)
+            if field is None:
+                raise ValueError(f"{key!r} is not a known setting")
+            value = settings_schema.coerce(field, value)
+            section, name = settings_schema.split(key)
+            shipped = (
+                DEFAULTS.get(section, {}).get(name)
+                if section
+                else DEFAULTS.get(name)
+            )
+            if value == shipped:
+                if section and section in layer:
+                    layer[section].pop(name, None)
+                    if not layer[section]:
+                        del layer[section]
+                elif not section:
+                    layer.pop(name, None)
+                continue
+            if section:
+                layer.setdefault(section, {})[name] = value
+            else:
+                layer[name] = value
+
+        path = self.overrides_path(self.base_dir)
+        if layer:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            header = (
+                "# Written by the settings panel. Merged over config.yaml.\n"
+                "# Delete this file to return every setting to its shipped value.\n"
+                "# Only values that differ from the defaults are stored here.\n"
+            )
+            body = yaml.safe_dump(layer, allow_unicode=True, sort_keys=True, default_flow_style=False)
+            path.write_text(header + body, encoding="utf-8")
+        elif path.exists():
+            # nothing left to override: remove the file so it cannot drift
+            path.unlink()
+
+        return sorted(changes)
 
     def describe(self) -> Sequence[str]:
         lines = [

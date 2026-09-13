@@ -74,6 +74,11 @@ WDA_MONITOR = 0x00000001
 
 _TRANSPARENT_KEY = "#010203"
 
+#: Floor for interactive panel resizing. Below this the header buttons and the
+#: status line start overlapping and the panel stops being usable.
+MIN_PANEL_WIDTH = 240
+MIN_PANEL_HEIGHT = 140
+
 #: Fonts to fall back to when a spec names a family this machine lacks.
 _FALLBACK_FONT_FAMILIES = (
     "Microsoft YaHei UI",
@@ -352,6 +357,7 @@ class Overlay:
         self._surfaces: list[_Surface] = []
         self._panel: tk.Toplevel | None = None
         self._panel_text: tk.Text | None = None
+        self._panel_grip: tk.Label | None = None
         self._status_var: tk.StringVar | None = None
         self._history: list[tuple[str, str]] = []
         self._last_rendered = ""
@@ -360,6 +366,8 @@ class Overlay:
         self._stats = OverlayStats()
         self._closed = False
         self._drag_origin: tuple[int, int] = (0, 0)
+        #: (x_root, y_root, width, height) captured when a resize drag starts
+        self._resize_origin: tuple[int, int, int, int] | None = None
         self._fonts: dict[tuple[int, bool], Any] = {}
         #: Physical pixels per logical (Tk) pixel. Windows display scaling makes
         #: Tk report a *logical* screen while mss and OCR report physical
@@ -807,7 +815,7 @@ class Overlay:
             surface.place(block.x, block.y, block.width, block.height)
             self._configure_background(surface, block)
             surface.clear()
-            self._paint_texts(surface, block)
+            self._paint_texts(surface, block, block.x, block.y)
 
     def _paint_group(self, blocks: Sequence[DrawBlock]) -> None:
         """Contiguous blocks share one window so plate seams do not show."""
@@ -824,7 +832,7 @@ class Overlay:
         self._configure_background(surface, blocks[0])
         surface.clear()
         for block in blocks:
-            self._paint_texts(surface, block, dx=-left, dy=-top)
+            self._paint_texts(surface, block, left, top)
         for extra in self._surfaces[1:]:
             extra.hide()
 
@@ -836,13 +844,27 @@ class Overlay:
             surface.style(background.color, background.opacity, None)
 
     def _paint_texts(
-        self, surface: _Surface, block: DrawBlock, dx: int = 0, dy: int = 0
+        self, surface: _Surface, block: DrawBlock, origin_x: int, origin_y: int
     ) -> None:
+        """Draw a block's texts, translating screen coordinates to canvas ones.
+
+        ``origin_x``/``origin_y`` are the screen coordinates of the window's
+        top-left corner -- the block's own corner for a per-block window, or the
+        group's top-left when several blocks share one window.
+
+        This parameter used to be an additive ``dx``/``dy`` offset applied on top of
+        ``text.x - block.x``, which double-counted the origin: `text.x` and
+        `block.x` are both absolute screen coordinates, so the subtraction already
+        yields the in-block offset. Group painting therefore drew its text at
+        roughly minus twice the origin, i.e. entirely outside the canvas. The
+        window background still painted, so the result was a black rectangle with
+        no text in it -- for bar, bare, minimal and lines alike.
+        """
         canvas = surface.canvas
         for text in block.texts:
             font = (self._font_family, text.size, "bold" if text.bold else "normal")
-            x = text.x - block.x + dx
-            y = text.y - block.y + dy
+            x = text.x - origin_x
+            y = text.y - origin_y
             # fill is supplied per pass, so it must not be in the shared options
             options: dict[str, Any] = {
                 "text": text.text,
@@ -879,7 +901,15 @@ class Overlay:
         panel.configure(bg=self.spec.background.color)
 
         width = int((self._screen_size or (1920, 1080))[0] * 0.28)
-        panel.geometry(f"{width}x{self.panel_height}+24+24")
+        # `panel_width` used to be stored and never read, so config.yaml's
+        # overlay.panel_width had no effect whatsoever and the panel was always
+        # 28% of the screen. A width of 0 means "pick one from the screen".
+        if self.panel_width and self.panel_width > 0:
+            width = int(min(self.panel_width, (self._screen_size or (1920, 1080))[0]))
+        height = int(self.panel_height) if self.panel_height else 320
+        width = max(MIN_PANEL_WIDTH, width)
+        height = max(MIN_PANEL_HEIGHT, height)
+        panel.geometry(f"{width}x{height}+24+24")
         panel.update_idletasks()
         # the panel sits on screen too, so it is just as capable of feeding its
         # own OCR as the subtitle bar is
@@ -938,6 +968,30 @@ class Overlay:
 
         body = tk.Frame(panel, bg=self.spec.background.color)
         body.pack(fill="both", expand=True)
+
+        # A resize grip, drawn by hand.
+        #
+        # `overrideredirect(True)` is what makes the panel borderless and free of a
+        # title bar, and it also means Windows provides no resize frame at all --
+        # which is why the panel could be moved but never resized. ttk.Sizegrip
+        # cannot help here either: it asks the window manager to start a resize, and
+        # there is no window manager frame to drag. So the grip is a placed label
+        # with its own drag handlers. Placed (not packed) so it floats over the
+        # status strip in the corner instead of stealing layout space from it.
+        grip = tk.Label(
+            panel,
+            text="◢",
+            bg="#1b2229",
+            fg="#6f8496",
+            cursor="bottom_right_corner",
+            font=(self._font_family, 11),
+            padx=1,
+            pady=0,
+        )
+        grip.place(relx=1.0, rely=1.0, anchor="se")
+        grip.bind("<Button-1>", self._start_resize)
+        grip.bind("<B1-Motion>", self._on_resize)
+        self._panel_grip = grip
         text = tk.Text(
             body,
             bg=self.spec.background.color,
@@ -976,18 +1030,58 @@ class Overlay:
                 pass
         self._panel = None
         self._panel_text = None
+        self._panel_grip = None
         self._status_var = None
+        self._resize_origin = None
 
     def _start_drag(self, event: tk.Event) -> None:
         self._drag_origin = (event.x_root, event.y_root)
 
     def _on_drag(self, event: tk.Event) -> None:
-        if self._panel is None:
+        if self._panel is None or self._drag_origin is None:
             return
         dx = event.x_root - self._drag_origin[0]
         dy = event.y_root - self._drag_origin[1]
         self._panel.geometry(f"+{self._panel.winfo_x() + dx}+{self._panel.winfo_y() + dy}")
         self._drag_origin = (event.x_root, event.y_root)
+
+    def _start_resize(self, event: tk.Event) -> None:
+        if self._panel is None:
+            return
+        # Remember the size at grab time and apply the total delta each motion,
+        # rather than accumulating per-event deltas. Accumulation drifts when Tk
+        # coalesces motion events, and it cannot enforce a floor properly.
+        self._resize_origin = (
+            event.x_root,
+            event.y_root,
+            self._panel.winfo_width(),
+            self._panel.winfo_height(),
+        )
+
+    def _on_resize(self, event: tk.Event) -> None:
+        if self._panel is None or self._resize_origin is None:
+            return
+        x0, y0, w0, h0 = self._resize_origin
+        width = max(MIN_PANEL_WIDTH, w0 + (event.x_root - x0))
+        height = max(MIN_PANEL_HEIGHT, h0 + (event.y_root - y0))
+        self._panel.geometry(f"{width}x{height}")
+        # Persist, so a panel that is rebuilt (a presentation switch, a profile
+        # change) keeps the size the user dragged to instead of snapping back.
+        self.panel_width = width
+        self.panel_height = height
+
+    def set_panel_size(self, width: int, height: int) -> tuple[int, int]:
+        """Resize the panel programmatically. Returns the size actually applied."""
+        width = max(MIN_PANEL_WIDTH, int(width))
+        height = max(MIN_PANEL_HEIGHT, int(height))
+        self.panel_width = width
+        self.panel_height = height
+        if self._panel is not None:
+            try:
+                self._panel.geometry(f"{width}x{height}")
+            except tk.TclError:
+                pass
+        return width, height
 
     def _toggle_pause(self) -> None:
         if self.on_toggle_pause is None:

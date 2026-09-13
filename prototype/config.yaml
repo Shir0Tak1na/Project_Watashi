@@ -41,6 +41,23 @@ capture:
   # Hard floor between two OCR runs, in seconds. 0 = no floor.
   min_ocr_interval: 0.0
 
+  # Hold OCR back until the frame has stopped changing for this many milliseconds.
+  #
+  # 0 = recognise the very frame that changed, which is the original behaviour and
+  # the right thing for a subtitle that appears and then holds still.
+  #
+  # It is the WRONG thing for anything animated. A subtitle that fades in, or
+  # scrolling text and danmaku, spends its first few hundred milliseconds as
+  # half-drawn moving glyphs; recognising that frame produces nonsense. With this
+  # set, a change only arms the trigger and OCR is released once the frame has been
+  # still for the given time -- so motion costs nothing and a settled frame is
+  # recognised once, not once per frame.
+  #
+  # Measured trade-off: the delay is added to the first appearance of a static
+  # subtitle (settle_ms + OCR), which is why the default stays 0 and this is opt-in.
+  # Try 150-250 for video sites; `selfcheck_settle` asserts the mechanism.
+  settle_ms: 0
+
 # ONNX Runtime / RapidOCR tuning.
 #
 # These three settings are the difference between ~3580 ms and ~61 ms per

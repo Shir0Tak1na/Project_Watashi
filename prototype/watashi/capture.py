@@ -332,21 +332,57 @@ class WindowCapturer:
 
 
 class ChangeDetector:
-    """Cheap frame differencing used to skip OCR on unchanged frames."""
+    """Frame differencing that decides *when* OCR should run.
+
+    Two different questions live here, and conflating them is what made scrolling
+    text unrecognisable:
+
+    **Has the frame changed?** A cheap grayscale signature compared against the
+    previous frame. This is what the class used to answer, and it fires OCR on the
+    very frame that changed -- which is exactly the wrong moment when the text is
+    mid-animation, because the capture contains half-drawn, moving glyphs. For a
+    subtitle that fades in over 200 ms, every frame in that window is garbage.
+
+    **Has the frame stopped changing?** ``settle_s`` adds that second question.
+    A change only re-arms the trigger; OCR is released once the frame has held
+    still for at least that long. While text is still moving nothing is recognised,
+    which is both more accurate and cheaper.
+
+    ``settle_s = 0`` reproduces the old behaviour exactly (fire on the changing
+    frame), so turning the gate on is opt-in and cannot regress the default.
+
+    The clock is injectable so the gate can be asserted without sleeping, which is
+    the difference between a test that runs in milliseconds and one that is flaky.
+    """
 
     def __init__(
         self,
         threshold: float = 2.0,
         signature_width: int = 96,
         min_interval: float = 0.0,
+        settle_s: float = 0.0,
     ) -> None:
         self.threshold = threshold
         self.signature_width = signature_width
         self.min_interval = min_interval
+        #: How long the frame must hold still before OCR is released.
+        self.settle_s = max(0.0, float(settle_s))
         self._previous: np.ndarray | None = None
         self._last_accepted = 0.0
+        self._last_change_at: float | None = None
+        #: A change happened and has not been recognised yet. Without this the
+        #: trigger could not be edge-shaped: a settled frame would either fire
+        #: every time or never.
+        self._pending = False
         self.skipped = 0
         self.accepted = 0
+        #: Frames where a change was waiting but the frame had not settled yet.
+        #: This is the number that shows the gate doing work rather than idling.
+        self.settle_waits = 0
+        #: Most recent measured stability age, in seconds.
+        self.stability_s = 0.0
+        #: Most recent frame difference, for diagnostics.
+        self.last_diff = 0.0
 
     def signature(self, frame: np.ndarray) -> np.ndarray:
         """Small grayscale fingerprint of a frame."""
@@ -359,8 +395,15 @@ class ChangeDetector:
         gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
         return gray.astype(np.float32)
 
-    def update(self, frame: np.ndarray) -> tuple[bool, float]:
-        """Return ``(changed, diff)`` and remember this frame."""
+    def update(self, frame: np.ndarray, now: float | None = None) -> tuple[bool, float]:
+        """Feed one frame; return ``(should_ocr, diff)``.
+
+        ``should_ocr`` is edge shaped: it is true on the single frame where a
+        change has settled, not on every frame thereafter.
+        """
+        if now is None:
+            now = time.perf_counter()
+
         signature = self.signature(frame)
         previous = self._previous
         self._previous = signature
@@ -369,19 +412,55 @@ class ChangeDetector:
             diff = float("inf")
         else:
             diff = float(np.mean(np.abs(signature - previous)))
+        self.last_diff = diff
 
-        now = time.perf_counter()
+        changed = diff >= self.threshold
+        if changed:
+            # Re-arm, and restart the settle timer from this frame.
+            self._pending = True
+            self._last_change_at = now
+
+        if self._last_change_at is None:
+            self.stability_s = 0.0
+        else:
+            self.stability_s = max(0.0, now - self._last_change_at)
+
+        if not self._pending:
+            self.skipped += 1
+            return False, diff
+
+        if self.settle_s > 0 and self.stability_s < self.settle_s:
+            # A change is outstanding but the frame is still moving. Holding back
+            # here is the whole point: recognising now would capture moving glyphs.
+            self.settle_waits += 1
+            self.skipped += 1
+            return False, diff
+
         if self.min_interval > 0 and (now - self._last_accepted) < self.min_interval:
             self.skipped += 1
             return False, diff
 
-        changed = diff >= self.threshold
-        if changed:
-            self.accepted += 1
-            self._last_accepted = now
-        else:
-            self.skipped += 1
-        return changed, diff
+        self._pending = False
+        self._last_accepted = now
+        self.accepted += 1
+        return True, diff
+
+    def armed(self) -> bool:
+        """True when a change is waiting to be recognised."""
+        return self._pending
 
     def reset(self) -> None:
+        """Forget the previous frame and any outstanding change.
+
+        Clearing the settle state matters as much as clearing the frame: a region
+        change or a resume from pause invalidates the old "last changed at"
+        timestamp, and keeping it would report a large stability age and release
+        OCR on the strength of a frame that no longer exists.
+        """
         self._previous = None
+        self._pending = False
+        self._last_change_at = None
+        self._last_accepted = 0.0
+        self.stability_s = 0.0
+        self.last_diff = 0.0
+

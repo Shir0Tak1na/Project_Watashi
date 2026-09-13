@@ -58,6 +58,7 @@ from .events import (
     EVENT_PRESENTATION,
     EVENT_READY,
     EVENT_REFINEMENT,
+    EVENT_SETTINGS,
     EVENT_STATS,
     EVENT_STATUS,
     EVENT_STOPPED,
@@ -170,6 +171,10 @@ class Session:
             diff_threshold=float(self.config.capture.get("diff_threshold", 2.0)),
             signature_width=int(self.config.capture.get("signature_width", 96)),
             min_ocr_interval=float(self.config.capture.get("min_ocr_interval", 0.0)),
+            #: 0 = recognise on the changing frame (original behaviour). Non-zero
+            #: holds OCR back until the frame has been still that long, which is
+            #: what makes animated or scrolling text recognisable.
+            settle_s=float(self.config.capture.get("settle_ms", 0) or 0) / 1000.0,
             max_width=int(self.config.capture.get("max_width", 0)),
             target_lang=self.config.target_lang,
             source_lang=self.config.source_lang,
@@ -330,6 +335,8 @@ class Session:
             "monitor": self.config.monitor,
             "fps_target": self.config.fps,
             "diff_threshold": self.config.capture.get("diff_threshold"),
+            #: Stability gate in seconds; 0 means "recognise the changing frame".
+            "settle_s": float(self.config.capture.get("settle_ms", 0) or 0) / 1000.0,
             "source_lang": self.config.source_lang,
             "target_lang": self.config.target_lang,
             "corpus_entries": int(backend_stats.get("corpus_entries", 0)),
@@ -750,6 +757,106 @@ class Session:
         # the caller owns the main loop, so this only signals intent
         self.publish(EVENT_STATUS, {"message": "shutdown requested"})
         return "shutdown requested"
+
+    def apply_settings(self, changes: dict[str, Any]) -> dict[str, Any]:
+        """Change settings from any surface: memory, disk, and tell the others.
+
+        One path for every surface, because the three steps have to happen together:
+
+        * **memory** -- the running engine and every surface read ``config``, so
+          writing only the file would leave the desktop window showing the old value
+          until the next start. That gap is what "联动" means in practice.
+        * **disk** -- the override file, or a setting marked "restart to apply"
+          would be forgotten at exactly the moment it is supposed to matter.
+        * **the event** -- so a change made in the web panel repaints the desktop
+          window without either surface knowing the other exists.
+
+        Validation happens before anything is mutated, so a batch containing one bad
+        value changes nothing.
+        """
+        from . import settings_schema
+
+        if not isinstance(changes, dict) or not changes:
+            return {"ok": False, "detail": "no changes given"}
+
+        unknown = sorted(k for k in changes if settings_schema.find(k) is None)
+        if unknown:
+            return {"ok": False, "detail": f"unknown setting(s): {', '.join(unknown)}"}
+
+        coerced: dict[str, Any] = {}
+        rejected: dict[str, str] = {}
+        for key, raw in changes.items():
+            field = settings_schema.find(key)
+            assert field is not None
+            try:
+                coerced[key] = settings_schema.coerce(field, raw)
+            except ValueError as exc:
+                rejected[key] = str(exc)
+        if rejected:
+            return {"ok": False, "rejected": rejected}
+
+        for key, value in coerced.items():
+            section, name = settings_schema.split(key)
+            if not section:
+                setattr(self.config, name, value)
+                continue
+            container = getattr(self.config, section, None)
+            if isinstance(container, dict):
+                container[name] = value
+            else:
+                setattr(self.config, section, value)
+            if key == "capture.region":
+                # the engine holds a parsed Region, not the string; leaving it stale
+                # would make the panel disagree with what is actually captured
+                self.config.region = Region.parse(value) if value else None
+
+        written = self.config.save_overrides(coerced)
+
+        live, deferred = [], []
+        for key in coerced:
+            field = settings_schema.find(key)
+            assert field is not None
+            (live if field.applies == settings_schema.LIVE else deferred).append(key)
+
+        self.publish(
+            EVENT_SETTINGS,
+            {
+                "changed": sorted(coerced),
+                "applied_now": sorted(live),
+                "needs_restart": sorted(deferred),
+                "values": {k: coerced[k] for k in sorted(coerced)},
+            },
+            droppable=False,
+        )
+        self.set_status("设置已更新：" + "、".join(sorted(coerced)))
+        return {
+            "ok": True,
+            "written": written,
+            "applied_now": sorted(live),
+            "needs_restart": sorted(deferred),
+            "values": {k: coerced[k] for k in sorted(coerced)},
+        }
+
+    def settings_payload(self) -> dict[str, Any]:
+        """The settings schema with current values, for any surface to render.
+
+        Shared rather than duplicated per surface: two renderers reading two
+        different snapshots is how the panel and the window start disagreeing.
+        """
+        from . import settings_schema
+
+        payload = settings_schema.as_dict(self.config)
+        overrides = self.config.read_overrides()
+        changed: list[str] = []
+        for section, values in overrides.items():
+            if isinstance(values, dict):
+                changed.extend(f"{section}.{name}" for name in values)
+            else:
+                changed.append(section)
+        payload["overridden"] = sorted(changed)
+        payload["config_file"] = str(self.config.base_dir / "config.yaml")
+        payload["overrides_file"] = str(AppConfig.overrides_path(self.config.base_dir))
+        return payload
 
     def set_status(self, message: str) -> None:
         self._status = message

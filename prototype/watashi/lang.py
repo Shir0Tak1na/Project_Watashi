@@ -63,6 +63,11 @@ HAN_SHARE = 0.15
 
 _LATIN_LETTER = re.compile(r"[A-Za-z]")
 
+#: Any Unicode letter: a word character that is not a digit or underscore. Covers
+#: Han, kana, hangul and Latin alike, which is what "is there anything here worth
+#: translating?" needs -- as opposed to "which language is it?".
+_ANY_LETTER = re.compile(r"[^\W\d_]", re.UNICODE)
+
 
 def to_nllb_code(tag: str) -> str:
     """Map a project language tag to an NLLB code, passing NLLB codes through."""
@@ -74,20 +79,22 @@ def to_nllb_code(tag: str) -> str:
     raise ValueError(f"no NLLB code known for language {tag!r}")
 
 
-def detect_language(text: str, default: str = "eng_Latn") -> str:
-    """Best-effort source language, from the script actually present.
+def decisive_language(text: str) -> str | None:
+    """The language, but only when the script identifies it by itself.
 
-    Deliberately a script heuristic rather than a statistical detector: it needs
-    no dependency, and the only question that matters here is "is this already
-    the target language?", which a script check answers reliably for the
-    language pairs this project targets.
+    Returns ``None`` when the verdict would rest on the Latin fallback ("there were
+    letters") or on there being no letters at all.
 
-    Known limitation: Japanese written entirely in kanji (no kana) reads as
-    Chinese, because the scripts are genuinely identical. A real detector is the
-    fix for that.
+    That distinction is the whole point. A script verdict for Han, kana, hangul,
+    Thai, Cyrillic or Arabic is trustworthy; a verdict of "English" from the mere
+    presence of Latin letters is not, because it cannot tell French from English.
+    The language gate needs to know which kind it is holding: it should trust a
+    real script verdict over the user's declaration, and trust the declaration over
+    a Latin guess. Collapsing both into one answer is how Chinese text ended up
+    being translated every frame when a source language was declared.
     """
     if not text.strip():
-        return default
+        return None
     length = max(1, len(text))
 
     for pattern, language in _DECISIVE_SCRIPTS:
@@ -99,9 +106,42 @@ def detect_language(text: str, default: str = "eng_Latn") -> str:
     if han and han / length >= HAN_SHARE:
         return "zho_Hans"
 
+    return None
+
+
+def detect_language(text: str, default: str = "eng_Latn") -> str:
+    """Best-effort source language, from the script actually present.
+
+    Deliberately a script heuristic rather than a statistical detector: it needs
+    no dependency, and the only question that matters here is "is this already
+    the target language?", which a script check answers reliably for the
+    language pairs this project targets.
+
+    Known limitation: Japanese written entirely in kanji (no kana) reads as
+    Chinese, because the scripts are genuinely identical, and any Latin-script
+    language other than English reads as English. A real detector is the fix for
+    both; :func:`decisive_language` lets callers find out whether the answer here
+    was a real script match or just that fallback.
+    """
+    decisive = decisive_language(text)
+    if decisive is not None:
+        return decisive
     if _LATIN_LETTER.search(text):
         return "eng_Latn"
     return default
+
+
+def has_translatable_content(text: str) -> bool:
+    """True when the text holds at least one letter, in any script.
+
+    Digits, punctuation and symbols are not translatable, and sending them to a
+    model buys nothing but noise. This is not a micro-optimisation: a screen with a
+    clock, a countdown, a progress counter or a row of symbols produces a fresh
+    "sentence" on every tick, each one missing the translation cache, so the model
+    runs continuously on text that has no language to translate.
+    """
+    return bool(_ANY_LETTER.search(text))
+
 
 
 def same_language(a: str, b: str) -> bool:

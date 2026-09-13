@@ -296,6 +296,136 @@ def main() -> int:
     else:
         print(f"  [skip] hotkeys unavailable: {'; '.join(manager.failures)}")
 
+    # ------------------------------------------------------------------ #
+    # The panel's size.
+    #
+    # Two defects lived here, both reported from actual use:
+    #   * `panel_width` was stored in __init__ and never read -- _build_panel
+    #     hardcoded 28% of the screen width, so config.yaml's overlay.panel_width
+    #     did nothing at all;
+    #   * `overrideredirect(True)` means Windows supplies no resize frame, and no
+    #     grip replaced it, so the panel could be moved but never resized.
+    #
+    # Driven with generated events into the real handlers, so this exercises the
+    # same code path a drag does without needing a human.
+    # ------------------------------------------------------------------ #
+    print("")
+    print("-- the text is inside the canvas, not merely created --")
+    # The assertion whose absence let a total failure hide in plain sight.
+    #
+    # Every group-painted preset (bar, bare, minimal, lines) created its text items
+    # at roughly minus twice the window origin, because _paint_texts subtracted the
+    # block origin and then the group origin from coordinates that were already
+    # absolute. Every item therefore existed -- so a count-based check passed -- and
+    # none of them were visible, because they sat outside the canvas. The window
+    # background still painted, so the symptom was a black rectangle with no text at
+    # all, which is exactly what was reported from use.
+    for name in ("bar", "bare", "minimal", "lines", "inplace"):
+        probe = Overlay(
+            presentation=PresentationSpec.preset(name), physical_screen=PHYSICAL_SCREEN
+        )
+        probe.start()
+        probe.set_region_box(REGION)
+        probe.push(UPDATE)
+        for _ in range(20):
+            probe._root.update()
+            time.sleep(0.02)
+        text_items = 0
+        off_canvas = 0
+        for surface in probe._surfaces:
+            canvas = surface.canvas
+            width, height = canvas.winfo_width(), canvas.winfo_height()
+            for item in canvas.find_all():
+                if canvas.type(item) != "text":
+                    continue
+                text_items += 1
+                box = canvas.bbox(item)
+                if box and (box[2] < 0 or box[3] < 0 or box[0] > width or box[1] > height):
+                    off_canvas += 1
+        check.check(
+            f"{name}: every text item lands inside its canvas",
+            text_items > 0 and off_canvas == 0,
+            f"{text_items} text item(s), {off_canvas} off-canvas",
+        )
+        probe.close()
+
+    print("")
+    print("-- the panel can be resized --")
+    from watashi.overlay import MIN_PANEL_HEIGHT, MIN_PANEL_WIDTH
+
+    panel_overlay = Overlay(
+        presentation=PresentationSpec.preset("panel"),
+        physical_screen=PHYSICAL_SCREEN,
+        panel_width=540,
+        panel_height=320,
+    )
+    panel_overlay.start()
+
+    def spin(rounds: int = 12) -> None:
+        for _ in range(rounds):
+            panel_overlay._root.update()
+            time.sleep(0.02)
+
+    spin()
+
+    panel = panel_overlay._panel
+    grip = panel_overlay._panel_grip
+    check.check(
+        "the configured panel_width is honoured (540, not 28% of the screen)",
+        panel is not None and panel.winfo_width() == 540,
+        f"actual {panel.winfo_width() if panel else 'no panel'}",
+    )
+    check.check("a resize grip exists", grip is not None)
+
+    if panel is not None and grip is not None:
+        start_x, start_y = 900, 700
+        before = (panel.winfo_width(), panel.winfo_height())
+        grip.event_generate("<Button-1>", x=2, y=2, rootx=start_x, rooty=start_y)
+        spin(4)
+        grip.event_generate(
+            "<B1-Motion>", x=2, y=2, rootx=start_x + 160, rooty=start_y + 90
+        )
+        spin(6)
+        after = (panel.winfo_width(), panel.winfo_height())
+        check.check(
+            "dragging the grip grows the panel by the drag delta",
+            after == (before[0] + 160, before[1] + 90),
+            f"{before} -> {after}",
+        )
+        check.check(
+            "the new size is remembered, so a rebuild keeps it",
+            (panel_overlay.panel_width, panel_overlay.panel_height) == after,
+            f"stored {panel_overlay.panel_width}x{panel_overlay.panel_height}",
+        )
+
+        grip.event_generate("<Button-1>", x=2, y=2, rootx=start_x, rooty=start_y)
+        spin(4)
+        grip.event_generate(
+            "<B1-Motion>", x=2, y=2, rootx=start_x - 5000, rooty=start_y - 5000
+        )
+        spin(6)
+        check.check(
+            "dragging past the corner clamps instead of going negative",
+            (panel.winfo_width(), panel.winfo_height())
+            == (MIN_PANEL_WIDTH, MIN_PANEL_HEIGHT),
+            f"{panel.winfo_width()}x{panel.winfo_height()}",
+        )
+
+    applied = panel_overlay.set_panel_size(660, 240)
+    spin(6)
+    check.check(
+        "set_panel_size applies and returns what it applied",
+        applied == (660, 240),
+        f"applied={applied}",
+    )
+    check.check(
+        "set_panel_size clamps a nonsense request",
+        panel_overlay.set_panel_size(10, 10) == (MIN_PANEL_WIDTH, MIN_PANEL_HEIGHT),
+    )
+
+    panel_overlay.close()
+    overlay.close()
+
     return check.report()
 
 
