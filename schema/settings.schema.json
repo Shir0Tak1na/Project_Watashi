@@ -363,7 +363,10 @@
         "det_limit_side_len": {
           "maximum": 4096,
           "minimum": 64,
-          "type": "integer",
+          "type": [
+            "integer",
+            "null"
+          ],
           "x-applies": "restart"
         },
         "det_limit_type": {
@@ -429,9 +432,13 @@
           "enum": [
             "lean",
             "balanced",
-            "full"
+            "full",
+            null
           ],
-          "type": "string",
+          "type": [
+            "string",
+            "null"
+          ],
           "x-applies": "live",
           "x-command": "load_profile"
         }

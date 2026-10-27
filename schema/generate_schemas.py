@@ -250,11 +250,17 @@ def field_schema(field: settings_schema.Field) -> dict:
     if field.kind == "bool":
         schema: dict = {"type": "boolean"}
     elif field.kind == "int":
-        schema = {"type": "integer"}
+        schema = {"type": ["integer", "null"] if field.default is None else "integer"}
     elif field.kind == "float":
-        schema = {"type": "number"}
+        schema = {"type": ["number", "null"] if field.default is None else "number"}
     elif field.kind == "enum":
-        schema = {"type": "string", "enum": list(field.choices)}
+        if field.default is None:
+            schema = {
+                "type": ["string", "null"],
+                "enum": [*field.choices, None],
+            }
+        else:
+            schema = {"type": "string", "enum": list(field.choices)}
     elif field.kind == "path_list":
         schema = {"type": "array", "items": {"type": "string"}}
     elif field.kind in ("text", "path", "region"):
