@@ -22,6 +22,7 @@ import hashlib
 import json
 import os
 import platform
+import socket
 import sys
 import time
 from datetime import date
@@ -96,14 +97,32 @@ def machine() -> dict[str, Any]:
         or os.environ.get("PROCESSOR_IDENTIFIER", "")
         or platform.machine()
     )
-    return {
+    windows = sys.getwindowsversion() if os.name == "nt" else None
+    info = {
         "platform": platform.platform(),
+        "windows_build": windows.build if windows else None,
+        "windows_version": windows.major if windows else None,
+        "hostname": socket.gethostname(),
         "cpu": cpu,
         "logical_cpus": os.cpu_count(),
         "python": platform.python_version(),
         "onnxruntime": onnxruntime.__version__,
         "ctranslate2": ctranslate2.__version__,
     }
+    # platform.platform() is not the fingerprint: on Windows it can report the
+    # compatibility-layer build (26100) while the real build is 26300. The
+    # fingerprint is built from the values that actually change a measurement.
+    identity = {
+        "windows_build": info["windows_build"],
+        "hostname": info["hostname"],
+        "cpu": info["cpu"],
+        "onnxruntime": info["onnxruntime"],
+        "ctranslate2": info["ctranslate2"],
+    }
+    info["fingerprint"] = hashlib.sha256(
+        json.dumps(identity, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    return info
 
 
 def frame_1200x200() -> np.ndarray:
@@ -121,10 +140,25 @@ def frame_1200x200() -> np.ndarray:
 
 
 def print_delta(previous: dict[str, Any], current: dict[str, Any]) -> None:
-    print("delta vs previous baseline:")
+    old_machine = previous.get("machine") or {}
+    new_machine = current.get("machine") or {}
+    old_fp = old_machine.get("fingerprint")
+    new_fp = new_machine.get("fingerprint")
+    if not old_fp or old_fp != new_fp:
+        print(
+            "not comparable: machine fingerprint "
+            f"{str(old_fp)[:12] or '<missing>'} != {str(new_fp)[:12]}"
+        )
+        return
+    print("delta vs previous baseline (same machine fingerprint):")
     old = previous.get("metrics") or {}
     new = current.get("metrics") or {}
-    for name in ("ocr_ms", "corpus_translate_ms", "model_ms"):
+    for name in (
+        "ocr_ms",
+        "corpus_translate_ms",
+        "corpus_reload_scan_ms",
+        "model_ms",
+    ):
         for key in ("p50", "p95"):
             before = (old.get(name) or {}).get(key)
             after = (new.get(name) or {}).get(key)
@@ -139,7 +173,12 @@ def print_delta(previous: dict[str, Any], current: dict[str, Any]) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--runs", type=int, default=3, help="samples per metric")
+    parser.add_argument(
+        "--runs",
+        type=int,
+        default=20,
+        help="samples per metric (default 20; use at least 20 for a baseline)",
+    )
     args = parser.parse_args(argv)
     runs = max(1, int(args.runs))
 
@@ -151,7 +190,12 @@ def main(argv: list[str] | None = None) -> int:
     ocr.recognize(frame)  # warm-up: shape/kernel init is not steady state
 
     corpus = build_corpus(config)
+    # The benchmark must measure lookup, not the periodic mtime scan. Leaving hot
+    # reload on makes the same commit swing by 10-50x depending on whether a call
+    # happens to cross reload_interval_s (0.5 s). The scan is measured separately.
+    corpus.auto_reload = False
     corpus.translate(SENTENCE, "zh-CN")  # warm-up: first load
+    corpus.reload_if_changed(force=True)  # warm-up: stat scan
 
     model_path = config.translation.get("nmt_model")
     if not model_path:
@@ -172,6 +216,7 @@ def main(argv: list[str] | None = None) -> int:
 
     ocr_ms: list[float] = []
     corpus_ms: list[float] = []
+    reload_ms: list[float] = []
     model_ms: list[float] = []
 
     for _ in range(runs):
@@ -182,6 +227,10 @@ def main(argv: list[str] | None = None) -> int:
         started = time.perf_counter()
         corpus.translate(SENTENCE, "zh-CN")
         corpus_ms.append((time.perf_counter() - started) * 1000.0)
+
+        started = time.perf_counter()
+        corpus.reload_if_changed(force=True)
+        reload_ms.append((time.perf_counter() - started) * 1000.0)
 
         started = time.perf_counter()
         model.translate_one(SENTENCE, target)
@@ -204,6 +253,10 @@ def main(argv: list[str] | None = None) -> int:
                 **summary(corpus_ms),
                 "samples": [round(v, 2) for v in corpus_ms],
             },
+            "corpus_reload_scan_ms": {
+                **summary(reload_ms),
+                "samples": [round(v, 2) for v in reload_ms],
+            },
             "model_ms": {**summary(model_ms), "samples": [round(v, 2) for v in model_ms]},
             "model_load_ms": round(model.load_ms, 2),
         },
@@ -219,12 +272,17 @@ def main(argv: list[str] | None = None) -> int:
     print("performance baseline")
     print(f"  region    : {REGION[0]}x{REGION[1]}")
     print(f"  runs      : {runs}")
-    print(f"  machine   : {baseline['machine']['platform']}")
+    print(f"  machine   : {baseline['machine']['platform']} "
+          f"(build {baseline['machine']['windows_build']})")
+    print(f"  host      : {baseline['machine']['hostname']}")
     print(f"  CPU       : {baseline['machine']['cpu']}")
+    print(f"  fingerprint: {baseline['machine']['fingerprint'][:16]}...")
     print(f"  OCR       : p50 {baseline['metrics']['ocr_ms']['p50']:.2f} ms, "
           f"p95 {baseline['metrics']['ocr_ms']['p95']:.2f} ms")
     print(f"  corpus    : p50 {baseline['metrics']['corpus_translate_ms']['p50']:.2f} ms, "
           f"p95 {baseline['metrics']['corpus_translate_ms']['p95']:.2f} ms")
+    print(f"  reload scan: p50 {baseline['metrics']['corpus_reload_scan_ms']['p50']:.2f} ms, "
+          f"p95 {baseline['metrics']['corpus_reload_scan_ms']['p95']:.2f} ms")
     print(f"  model     : p50 {baseline['metrics']['model_ms']['p50']:.2f} ms, "
           f"p95 {baseline['metrics']['model_ms']['p95']:.2f} ms")
     print(f"  load      : {baseline['metrics']['model_load_ms']:.2f} ms")
