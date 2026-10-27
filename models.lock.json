@@ -1,0 +1,107 @@
+{
+  "lock_version": 1,
+  "models": [
+    {
+      "acquired": "2026-09-13",
+      "files": [
+        {
+          "path": "config.json",
+          "sha256": "0c2f6fa2057c7264d052fb4a62ba3476eeae70487acddfa8e779a53a00cbf44c",
+          "size": 159
+        },
+        {
+          "path": "model.bin",
+          "sha256": "ed1beaf75134de7505315a5223162f56acff397eff6b50638a500d3936fe707b",
+          "size": 622595991
+        },
+        {
+          "path": "sentencepiece.bpe.model",
+          "sha256": "14bb8dfb35c0ffdea7bc01e56cea38b9e3d5efcdcb9c251d6b40538e1aab555a",
+          "size": 4852054
+        },
+        {
+          "path": "shared_vocabulary.txt",
+          "sha256": "a132a83330f45514c2476eb81d1d69b3c41762264d16ce0a7ea982e5d6c728e5",
+          "size": 2568098
+        },
+        {
+          "path": "special_tokens_map.json",
+          "sha256": "992bd4ed610d644d6823081937bcc91bb8878dd556cea4ae5327f2480361330e",
+          "size": 3548
+        },
+        {
+          "path": "tokenizer.json",
+          "sha256": "e316b82de11d0f951f370943b3c438311629547285129b0b81dadabd01bca665",
+          "size": 17331176
+        },
+        {
+          "path": "tokenizer_config.json",
+          "sha256": "d1aa8c3697d3e35674f97b5b7e9c99d22b010f528e80140257d97316be90d044",
+          "size": 564
+        }
+      ],
+      "id": "nllb-200-distilled-600M-ct2-int8",
+      "kind": "translation",
+      "license": "CC-BY-NC-4.0",
+      "path": "models/llm/nllb-200-distilled-600M-ct2-int8",
+      "source": "https://huggingface.co/JustFrederik/nllb-200-distilled-600M-ct2-int8"
+    },
+    {
+      "acquired": "2026-10-28",
+      "files": [
+        {
+          "path": "config.json",
+          "sha256": "b55496ac7940a7ae47d2c01eab40edfd8701feec1229d9cce3b40014383fb828",
+          "size": 2370
+        },
+        {
+          "path": "model.bin",
+          "sha256": "3e305921506d8872816023e4c273e75d2419fb89b24da97b4fe7bce14170d671",
+          "size": 483546902
+        },
+        {
+          "path": "tokenizer.json",
+          "sha256": "fb7b63191e9bb045082c79fd742a3106a12c99513ab30df4a0d47fa6cb6fd0ab",
+          "size": 2203239
+        },
+        {
+          "path": "vocabulary.txt",
+          "sha256": "34ce3fe1c5041027b3f8d42912270993f986dbc4bb34cf27f951e34a1e453913",
+          "size": 459861
+        }
+      ],
+      "id": "whisper-small-ct2-int8",
+      "kind": "speech",
+      "license": "MIT",
+      "path": "models/whisper/small",
+      "source": "https://huggingface.co/Systran/faster-whisper-small"
+    },
+    {
+      "acquired": "2026-09-12",
+      "files": [
+        {
+          "path": "models/ch_PP-OCRv4_det_infer.onnx",
+          "sha256": "d2a7720d45a54257208b1e13e36a8479894cb74155a5efe29462512d42f49da9",
+          "size": 4745517
+        },
+        {
+          "path": "models/ch_PP-OCRv4_rec_infer.onnx",
+          "sha256": "48fc40f24f6d2a207a2b1091d3437eb3cc3eb6b676dc3ef9c37384005483683b",
+          "size": 10857958
+        },
+        {
+          "path": "models/ch_ppocr_mobile_v2.0_cls_infer.onnx",
+          "sha256": "e47acedf663230f8863ff1ab0e64dd2d82b838fceb5957146dab185a89d6215c",
+          "size": 585532
+        }
+      ],
+      "id": "pp-ocrv4-onnx",
+      "kind": "ocr",
+      "license": "Apache-2.0",
+      "package": "rapidocr_onnxruntime",
+      "source": "PyPI: rapidocr-onnxruntime==1.4.4",
+      "version": "1.4.4"
+    }
+  ],
+  "total_bytes": 1149752969
+}

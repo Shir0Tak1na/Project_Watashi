@@ -31,11 +31,14 @@ Usage
 from __future__ import annotations
 
 import argparse
+import hashlib
+import importlib.util
 import sys
 import time
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
+LOCK_FILE = REPO_ROOT / "models.lock.json"
 
 DEFAULT_REPO = "JustFrederik/nllb-200-distilled-600M-ct2-int8"
 DEFAULT_NAME = "nllb-200-distilled-600M-ct2-int8"
@@ -58,6 +61,83 @@ def human(size: float) -> str:
             return f"{size:.1f} {unit}"
         size /= 1024
     return f"{size:.1f} GiB"
+
+
+def sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for block in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def lock_root(model: dict) -> Path | None:
+    """Where a locked model lives: repo-relative, or inside an installed package."""
+    package = model.get("package")
+    if package:
+        spec = importlib.util.find_spec(str(package))
+        if spec is None or not spec.submodule_search_locations:
+            return None
+        return Path(next(iter(spec.submodule_search_locations)))
+    path = model.get("path")
+    return REPO_ROOT / str(path) if path else None
+
+
+def verify_models_lock() -> int:
+    """Check every file in models.lock.json. Returns 0 only when all match.
+
+    Size and SHA-256 are both checked: a byte flip that leaves the size unchanged
+    is exactly the case size alone would miss.
+    """
+    if not LOCK_FILE.exists():
+        print(f"models.lock.json: MISSING ({LOCK_FILE})")
+        return 1
+    import json
+
+    try:
+        lock = json.loads(LOCK_FILE.read_text(encoding="utf-8"))
+    except Exception as exc:
+        print(f"models.lock.json: unreadable: {exc}")
+        return 1
+    models = lock.get("models") or []
+    print(f"models.lock.json: {len(models)} model(s), lock_version={lock.get('lock_version')}")
+    failures = 0
+    for model in models:
+        root = lock_root(model)
+        model_id = model.get("id", "?")
+        if root is None:
+            print(f"  MISSING  {model_id}: package/path not found")
+            failures += 1
+            continue
+        for item in model.get("files") or []:
+            relative = item.get("path", "?")
+            path = root / relative
+            label = f"{model_id}/{relative}"
+            if not path.exists():
+                print(f"  MISSING  {label}")
+                failures += 1
+                continue
+            size = path.stat().st_size
+            if size != item.get("size"):
+                print(
+                    f"  SIZE     {label}: {size} != {item.get('size')} (locked)"
+                )
+                failures += 1
+                continue
+            digest = sha256_file(path)
+            if digest != item.get("sha256"):
+                print(
+                    f"  SHA256   {label}: {digest[:16]}... != "
+                    f"{str(item.get('sha256'))[:16]}... (locked)"
+                )
+                failures += 1
+            else:
+                print(f"  OK       {label}  {human(size)}  {digest[:16]}...")
+    if failures:
+        print(f"  {failures} file(s) do not match models.lock.json")
+        return 1
+    print("  every file matches models.lock.json")
+    return 0
 
 
 def remote_size(session, url: str) -> int | None:
@@ -166,6 +246,8 @@ def download(session, url: str, dest: Path, expected: int | None, force: bool) -
 
 
 def check(model_dir: Path) -> int:
+    lock_status = verify_models_lock()
+    print("")
     print(f"model directory: {model_dir}")
     if not model_dir.exists():
         print("  (does not exist)")
@@ -189,7 +271,7 @@ def check(model_dir: Path) -> int:
         print(f"  {len(missing)} file(s) missing -> run without --check to fetch")
         return 1
     print("  model looks complete")
-    return 0
+    return 0 if lock_status == 0 else 1
 
 
 #: The files faster-whisper needs to open a CTranslate2 Whisper model. The
@@ -222,6 +304,8 @@ def fetch_asr(args: argparse.Namespace) -> int:
     print("=" * 72)
 
     if args.check:
+        lock_status = verify_models_lock()
+        print("")
         missing = [name for name in ASR_FILES if not (target / name).exists()]
         for name in ASR_FILES:
             path = target / name
@@ -232,7 +316,7 @@ def fetch_asr(args: argparse.Namespace) -> int:
             return 1
         print("  model looks complete")
         print("  set live.asr_model to this directory to load it without a download")
-        return 0
+        return 0 if lock_status == 0 else 1
 
     try:
         from faster_whisper.utils import download_model  # type: ignore
