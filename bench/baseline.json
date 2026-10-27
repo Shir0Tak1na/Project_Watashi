@@ -1,0 +1,50 @@
+{
+  "config_digest": "07a48d8d6de807257b91c2a1f452a8ca63b95b33834c60baba327acc9bfe14a6",
+  "git_commit": "efb85d6e7c967dabb666355665979c9e99e7efa9",
+  "machine": {
+    "cpu": "Intel64 Family 6 Model 154 Stepping 3, GenuineIntel",
+    "ctranslate2": "4.8.2",
+    "logical_cpus": 20,
+    "onnxruntime": "1.30.0",
+    "platform": "Windows-11-10.0.26300-SP0",
+    "python": "3.12.3"
+  },
+  "metrics": {
+    "corpus_translate_ms": {
+      "p50": 15.71,
+      "p95": 16.17,
+      "samples": [
+        16.17,
+        0.34,
+        15.71
+      ]
+    },
+    "model_load_ms": 1559.5,
+    "model_ms": {
+      "p50": 261.63,
+      "p95": 274.26,
+      "samples": [
+        261.63,
+        260.64,
+        274.26
+      ]
+    },
+    "ocr_ms": {
+      "p50": 76.45,
+      "p95": 76.85,
+      "samples": [
+        76.45,
+        73.02,
+        76.85
+      ]
+    }
+  },
+  "models_lock_sha256": "b04e6de8d81e209a1169cc8d89c1774cae4ef02e61e7124081ceed4f8ff2520c",
+  "recorded": "2026-10-28",
+  "region": {
+    "height": 200,
+    "width": 1200
+  },
+  "runs": 3,
+  "schema_version": 1
+}
