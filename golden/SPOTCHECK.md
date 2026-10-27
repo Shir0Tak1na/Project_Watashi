@@ -36,6 +36,10 @@ corrected by hand.
 Reproduce:
 
 ```powershell
-.venv\Scripts\python.exe golden\generate_golden.py
+.venv\Scripts\python.exe golden\generate_golden.py --commit bff1add23a98041b55fb6093097038dba769f720
 Get-FileHash golden\cases.jsonl -Algorithm SHA256
 ```
+
+`--commit` keeps reproduction independent of a subprocess and of the current
+HEAD; without it the generator reads `.git/HEAD` directly. Both produce the same
+200 cases and the same SHA-256 for the commit named above.

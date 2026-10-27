@@ -5,6 +5,7 @@ Every expected value is produced by running the engine at the commit recorded in
 the output. Nothing is predicted from the C++ plan or written by hand.
 
     .venv/Scripts/python.exe golden/generate_golden.py
+    .venv/Scripts/python.exe golden/generate_golden.py --commit <sha>
 
 Outputs:
     golden/cases.jsonl   one case per line, sorted keys, no timestamps
@@ -17,9 +18,9 @@ engine is deterministic; this was verified by running the generator twice.
 
 from __future__ import annotations
 
+import argparse
 import hashlib
 import json
-import subprocess
 import sys
 from pathlib import Path
 
@@ -43,10 +44,39 @@ CASES = GOLDEN / "cases.jsonl"
 META = GOLDEN / "meta.json"
 
 
-def git_commit() -> str:
-    return subprocess.check_output(
-        ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True
-    ).strip()
+def git_commit(explicit: str | None = None) -> str:
+    """Read the commit without starting a process.
+
+    ``subprocess`` fails in the restricted sandbox (CreatePipe -> WinError 5),
+    which is the same class of failure as selfcheck_web. ``.git/HEAD`` is a flat
+    file, so reading it is enough and works in CI. A detached HEAD stores the sha
+    directly; a symbolic ref is resolved from ``.git/<ref>`` or ``packed-refs``.
+    ``--commit`` overrides both, for environments that hand in the sha.
+    """
+    if explicit:
+        return explicit.strip()
+    git_dir = ROOT / ".git"
+    if git_dir.is_file():
+        # Worktree/submodule: .git is a file containing "gitdir: <path>".
+        text = git_dir.read_text("utf-8").strip()
+        if text.startswith("gitdir:"):
+            git_dir = (ROOT / text.split(":", 1)[1].strip()).resolve()
+    head = (git_dir / "HEAD").read_text("utf-8").strip()
+    if not head.startswith("ref:"):
+        return head
+    ref = head.split(":", 1)[1].strip()
+    ref_file = git_dir / ref
+    if ref_file.exists():
+        return ref_file.read_text("utf-8").strip()
+    packed = git_dir / "packed-refs"
+    if packed.exists():
+        for line in packed.read_text("utf-8").splitlines():
+            if line.startswith("#") or not line.strip():
+                continue
+            sha, _, name = line.partition(" ")
+            if name.strip() == ref:
+                return sha.strip()
+    raise SystemExit(f"cannot resolve {ref} from {git_dir}")
 
 
 def sha256_file(path: Path) -> str:
@@ -154,9 +184,17 @@ def expected_of(refinement) -> dict:
     }
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--commit",
+        default=None,
+        help="commit sha to record; default reads .git/HEAD without a subprocess",
+    )
+    args = parser.parse_args(argv)
+
     config = AppConfig.load()
-    commit = git_commit()
+    commit = git_commit(args.commit)
     corpus = build_corpus(config)
     digest = corpus_digest(config)
 
