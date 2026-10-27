@@ -1,0 +1,670 @@
+{
+  "$id": "https://project-watashi.invalid/schema/settings-0.0.7a.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "capture": {
+      "additionalProperties": false,
+      "description": "决定识别屏幕的哪一块、多久看一次、画面变化多大才算变化。这一组直接影响延迟与耗电，建议先调这里。",
+      "properties": {
+        "diff_threshold": {
+          "default": 2.0,
+          "maximum": 255.0,
+          "minimum": 0.0,
+          "type": "number",
+          "x-applies": "live",
+          "x-command": "set_diff_threshold"
+        },
+        "fps": {
+          "default": 10.0,
+          "maximum": 60.0,
+          "minimum": 1.0,
+          "type": "number",
+          "x-applies": "live",
+          "x-command": "set_fps"
+        },
+        "max_width": {
+          "default": 0,
+          "maximum": 4096,
+          "minimum": 0,
+          "type": "integer",
+          "x-applies": "restart"
+        },
+        "min_ocr_interval": {
+          "default": 0.0,
+          "maximum": 10.0,
+          "minimum": 0.0,
+          "type": "number",
+          "x-applies": "restart"
+        },
+        "monitor": {
+          "default": 1,
+          "maximum": 8,
+          "minimum": 0,
+          "type": "integer",
+          "x-applies": "restart"
+        },
+        "region": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-applies": "live",
+          "x-command": "set_region"
+        },
+        "region_ratio": {
+          "default": 0.18,
+          "maximum": 0.6,
+          "minimum": 0.05,
+          "type": "number",
+          "x-applies": "restart"
+        },
+        "settle_ms": {
+          "default": 0,
+          "maximum": 2000,
+          "minimum": 0,
+          "type": "integer",
+          "x-applies": "restart"
+        },
+        "signature_width": {
+          "default": 96,
+          "maximum": 480,
+          "minimum": 32,
+          "type": "integer",
+          "x-applies": "restart"
+        }
+      },
+      "title": "① 采集 · 看哪里",
+      "type": "object"
+    },
+    "corpus": {
+      "additionalProperties": false,
+      "description": "这是本项目区别于通用翻译工具的地方。词条是磁盘上的普通文件，改完按修改时间自动热加载，不需要重启。注意词条是分语言的：文件里写 \"lang\": \"zh-CN\"（或每条自己写 lang），引擎只会用匹配当前目标语言的词条 —— 否则设成日语也会给你中文，而且是满置信度地给。桌面的「字幕」页里选中一行、改成你要的译文，就会写进用户库最高优先级的那一层，同一帧立刻改过来。",
+      "properties": {
+        "auto_reload": {
+          "default": true,
+          "type": "boolean",
+          "x-applies": "live",
+          "x-command": "set_corpus_reload"
+        },
+        "domain": {
+          "default": [
+            "corpus",
+            "../rules/slang",
+            "../rules/fiction"
+          ],
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "x-applies": "restart"
+        },
+        "files": {
+          "default": [
+            "rules/engine_rules.json"
+          ],
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "x-applies": "restart"
+        },
+        "general": {
+          "default": [
+            "../rules/dictionaries"
+          ],
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "x-applies": "restart"
+        },
+        "reload_interval_ms": {
+          "default": 500,
+          "maximum": 60000,
+          "minimum": 0,
+          "type": "integer",
+          "x-applies": "live",
+          "x-command": "set_corpus_reload"
+        },
+        "user": {
+          "default": [
+            "../plugins/user/custom_rules"
+          ],
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "x-applies": "restart"
+        }
+      },
+      "title": "⑥ 语料库与规则 · 让生词可译",
+      "type": "object"
+    },
+    "diagnostics": {
+      "additionalProperties": false,
+      "description": "排查问题时打开。会往终端输出内容，平时保持关闭以免干扰。",
+      "properties": {
+        "print_lines": {
+          "default": false,
+          "type": "boolean",
+          "x-applies": "restart"
+        },
+        "print_refined": {
+          "default": true,
+          "type": "boolean",
+          "x-applies": "restart"
+        },
+        "print_trace": {
+          "default": false,
+          "type": "boolean",
+          "x-applies": "restart"
+        }
+      },
+      "title": "⑩ 诊断与日志 · 看清楚发生了什么",
+      "type": "object"
+    },
+    "live": {
+      "additionalProperties": false,
+      "description": "直播没有字幕时，文字并不在屏幕上，OCR 读不到。这一组让程序改听系统正在播放的声音：本地语音识别 → 现有语料库/规则/本地模型翻译 → 同一条悬浮字幕。默认关闭；开启后需要重启。",
+      "properties": {
+        "asr_beam_size": {
+          "default": 1,
+          "maximum": 5,
+          "minimum": 1,
+          "type": "integer",
+          "x-applies": "restart"
+        },
+        "asr_compute_type": {
+          "default": "int8",
+          "enum": [
+            "int8",
+            "int8_float32",
+            "float32"
+          ],
+          "type": "string",
+          "x-applies": "restart"
+        },
+        "asr_model": {
+          "default": "small",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-applies": "restart"
+        },
+        "asr_threads": {
+          "default": 4,
+          "maximum": 32,
+          "minimum": 1,
+          "type": "integer",
+          "x-applies": "restart"
+        },
+        "asr_vad": {
+          "default": true,
+          "type": "boolean",
+          "x-applies": "restart"
+        },
+        "context_chars": {
+          "default": 120,
+          "maximum": 400,
+          "minimum": 0,
+          "type": "integer",
+          "x-applies": "restart"
+        },
+        "device": {
+          "default": "",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-applies": "restart"
+        },
+        "enabled": {
+          "default": false,
+          "type": "boolean",
+          "x-applies": "restart"
+        },
+        "file": {
+          "default": "",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-applies": "restart"
+        },
+        "file_realtime": {
+          "default": false,
+          "type": "boolean",
+          "x-applies": "restart"
+        },
+        "language": {
+          "default": "auto",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-applies": "restart"
+        },
+        "local_files_only": {
+          "default": false,
+          "type": "boolean",
+          "x-applies": "restart"
+        },
+        "max_segment_s": {
+          "default": 8.0,
+          "maximum": 28.0,
+          "minimum": 1.0,
+          "type": "number",
+          "x-applies": "restart"
+        },
+        "min_rms": {
+          "default": 0.004,
+          "maximum": 0.1,
+          "minimum": 0.0005,
+          "type": "number",
+          "x-applies": "restart"
+        },
+        "min_speech_ms": {
+          "default": 300,
+          "maximum": 3000,
+          "minimum": 50,
+          "type": "integer",
+          "x-applies": "restart"
+        },
+        "model_dir": {
+          "default": "",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-applies": "restart"
+        },
+        "pre_roll_ms": {
+          "default": 300,
+          "maximum": 1000,
+          "minimum": 0,
+          "type": "integer",
+          "x-applies": "restart"
+        },
+        "silence_ms": {
+          "default": 600,
+          "maximum": 3000,
+          "minimum": 100,
+          "type": "integer",
+          "x-applies": "restart"
+        },
+        "source": {
+          "default": "system",
+          "enum": [
+            "system",
+            "microphone",
+            "file"
+          ],
+          "type": "string",
+          "x-applies": "restart"
+        },
+        "vad_threshold": {
+          "default": 2.5,
+          "maximum": 10.0,
+          "minimum": 1.1,
+          "type": "number",
+          "x-applies": "restart"
+        }
+      },
+      "title": "② 直播 · 没有字幕时听声音",
+      "type": "object"
+    },
+    "model": {
+      "additionalProperties": false,
+      "description": "本地的 NLLB-200 翻译模型。语料库负责术语正确，模型只负责补足语法。不装模型程序照样能跑，只用语料库与规则。",
+      "properties": {
+        "nmt_beam_size": {
+          "default": 1,
+          "maximum": 8,
+          "minimum": 1,
+          "type": "integer",
+          "x-applies": "restart"
+        },
+        "nmt_compute_type": {
+          "default": "int8",
+          "enum": [
+            "int8",
+            "int8_float32",
+            "float32"
+          ],
+          "type": "string",
+          "x-applies": "restart"
+        },
+        "nmt_intra_threads": {
+          "default": 4,
+          "maximum": 32,
+          "minimum": 1,
+          "type": "integer",
+          "x-applies": "restart"
+        },
+        "nmt_model": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-applies": "restart"
+        }
+      },
+      "title": "⑤ 本地模型 · 句子通顺度",
+      "type": "object"
+    },
+    "ocr": {
+      "additionalProperties": false,
+      "description": "RapidOCR / ONNX Runtime 的底层参数。这几项在引擎启动时读取，改完必须重启，所以放在说明里而不是放在常用位置。",
+      "properties": {
+        "det_limit_side_len": {
+          "maximum": 4096,
+          "minimum": 64,
+          "type": "integer",
+          "x-applies": "restart"
+        },
+        "det_limit_type": {
+          "default": "max",
+          "enum": [
+            "max",
+            "min"
+          ],
+          "type": "string",
+          "x-applies": "restart"
+        },
+        "exclude_self": {
+          "default": true,
+          "type": "boolean",
+          "x-applies": "restart"
+        },
+        "hold_if_self_visible": {
+          "default": true,
+          "type": "boolean",
+          "x-applies": "live",
+          "x-command": "set_self_capture"
+        },
+        "inter_op_threads": {
+          "default": 1,
+          "maximum": 8,
+          "minimum": 1,
+          "type": "integer",
+          "x-applies": "restart"
+        },
+        "intra_op_threads": {
+          "default": 4,
+          "maximum": 32,
+          "minimum": 1,
+          "type": "integer",
+          "x-applies": "restart"
+        },
+        "max_boxes": {
+          "default": 0,
+          "maximum": 200,
+          "minimum": 0,
+          "type": "integer",
+          "x-applies": "restart"
+        },
+        "use_cls": {
+          "default": false,
+          "type": "boolean",
+          "x-applies": "restart"
+        },
+        "use_mem_arena": {
+          "default": true,
+          "type": "boolean",
+          "x-applies": "restart"
+        }
+      },
+      "title": "③ 识别 · OCR 引擎",
+      "type": "object"
+    },
+    "performance": {
+      "additionalProperties": false,
+      "description": "一组预设参数，决定加载哪些组件。改完需要重启。",
+      "properties": {
+        "profile": {
+          "enum": [
+            "lean",
+            "balanced",
+            "full"
+          ],
+          "type": "string",
+          "x-applies": "live",
+          "x-command": "load_profile"
+        }
+      },
+      "title": "⑧ 性能与内存 · 按机器档位",
+      "type": "object"
+    },
+    "plugins": {
+      "additionalProperties": false,
+      "description": "扩展点目前接通了「翻译后处理」与「导出格式」两项。插件与引擎同进程运行，Python 无法沙箱化。",
+      "properties": {
+        "directories": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "x-applies": "restart"
+        },
+        "enabled": {
+          "default": true,
+          "type": "boolean",
+          "x-applies": "restart"
+        },
+        "history_limit": {
+          "default": 2000,
+          "maximum": 100000,
+          "minimum": 10,
+          "type": "integer",
+          "x-applies": "restart"
+        },
+        "postprocess": {
+          "default": true,
+          "type": "boolean",
+          "x-applies": "restart"
+        }
+      },
+      "title": "⑨ 插件 · 用你自己的代码扩展",
+      "type": "object"
+    },
+    "presentation": {
+      "additionalProperties": false,
+      "description": "外观与版式，立即生效，桌面窗口与悬浮窗共用同一份描述。",
+      "properties": {
+        "bar_alpha": {
+          "default": 0.72,
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number",
+          "x-applies": "restart"
+        },
+        "bar_bottom_margin": {
+          "default": 90,
+          "maximum": 1000,
+          "minimum": 0,
+          "type": "integer",
+          "x-applies": "restart"
+        },
+        "dim_low_confidence": {
+          "default": true,
+          "type": "boolean",
+          "x-applies": "restart"
+        },
+        "font_family": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-applies": "restart"
+        },
+        "mode": {
+          "default": "both",
+          "enum": [
+            "bar",
+            "panel",
+            "both",
+            "none"
+          ],
+          "type": "string",
+          "x-applies": "restart"
+        },
+        "panel_height": {
+          "default": 320,
+          "maximum": 1600,
+          "minimum": 140,
+          "type": "integer",
+          "x-applies": "restart"
+        },
+        "panel_history": {
+          "default": 12,
+          "maximum": 200,
+          "minimum": 1,
+          "type": "integer",
+          "x-applies": "restart"
+        },
+        "panel_size": {
+          "default": 13,
+          "maximum": 40,
+          "minimum": 8,
+          "type": "integer",
+          "x-applies": "restart"
+        },
+        "panel_width": {
+          "default": 540,
+          "maximum": 2560,
+          "minimum": 240,
+          "type": "integer",
+          "x-applies": "restart"
+        },
+        "presentation": {
+          "default": "bar",
+          "enum": [
+            "bar",
+            "bare",
+            "minimal",
+            "lines",
+            "inplace",
+            "panel",
+            "hidden"
+          ],
+          "type": "string",
+          "x-applies": "live",
+          "x-command": "set_presentation"
+        },
+        "presentation_file": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-applies": "restart"
+        },
+        "subtitle_size": {
+          "default": 24,
+          "maximum": 96,
+          "minimum": 8,
+          "type": "integer",
+          "x-applies": "restart"
+        },
+        "subtitle_style": {
+          "default": "plate",
+          "enum": [
+            "plate",
+            "bare"
+          ],
+          "type": "string",
+          "x-applies": "restart"
+        }
+      },
+      "title": "⑦ 呈现 · 字幕长什么样",
+      "type": "object"
+    },
+    "translation": {
+      "additionalProperties": false,
+      "description": "翻译成什么语言、源语言是什么，以及语料库在多大程度上压过模型。",
+      "properties": {
+        "final_translation": {
+          "default": true,
+          "type": "boolean",
+          "x-applies": "restart"
+        },
+        "join_fragmented_lines": {
+          "default": true,
+          "type": "boolean",
+          "x-applies": "restart"
+        },
+        "join_max_chars": {
+          "default": 240,
+          "maximum": 1000,
+          "minimum": 40,
+          "type": "integer",
+          "x-applies": "restart"
+        },
+        "join_max_lines": {
+          "default": 3,
+          "maximum": 6,
+          "minimum": 1,
+          "type": "integer",
+          "x-applies": "restart"
+        },
+        "min_confidence": {
+          "default": 0.0,
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number",
+          "x-applies": "restart"
+        },
+        "protect_min_confidence": {
+          "default": 0.4,
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number",
+          "x-applies": "restart"
+        },
+        "protect_terms": {
+          "default": true,
+          "type": "boolean",
+          "x-applies": "restart"
+        },
+        "scene": {
+          "default": "",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-applies": "live",
+          "x-command": "set_scene"
+        },
+        "source": {
+          "default": "auto",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-applies": "restart"
+        },
+        "target": {
+          "default": "zh-CN",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-applies": "live",
+          "x-command": "set_target_lang"
+        }
+      },
+      "title": "④ 翻译 · 语言与语料库优先",
+      "type": "object"
+    }
+  },
+  "title": "Project Watashi settings 0.0.7a",
+  "type": "object",
+  "x-schema-version": "0.0.7a",
+  "x-source": "prototype/watashi/settings_schema.py"
+}

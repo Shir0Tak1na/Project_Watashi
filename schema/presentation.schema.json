@@ -1,0 +1,269 @@
+{
+  "$defs": {
+    "BackgroundSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "color": {
+          "default": "#000000",
+          "type": "string"
+        },
+        "kind": {
+          "default": "plate",
+          "type": "string"
+        },
+        "opacity": {
+          "default": 0.72,
+          "type": "number"
+        },
+        "padding": {
+          "default": [
+            12,
+            8
+          ],
+          "maxItems": 2,
+          "minItems": 2,
+          "prefixItems": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "integer"
+            }
+          ],
+          "type": "array"
+        },
+        "radius": {
+          "default": 8,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "color",
+        "kind",
+        "opacity",
+        "padding",
+        "radius"
+      ],
+      "type": "object"
+    },
+    "ConfidenceSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "dim_below": {
+          "default": 0.5,
+          "type": "number"
+        },
+        "dim_opacity": {
+          "default": 0.6,
+          "type": "number"
+        }
+      },
+      "required": [
+        "dim_below",
+        "dim_opacity"
+      ],
+      "type": "object"
+    },
+    "ElementSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "color": {
+          "default": "#ffffff",
+          "type": "string"
+        },
+        "font": {
+          "$ref": "#/$defs/FontSpec"
+        },
+        "max_lines": {
+          "default": 0,
+          "type": "integer"
+        },
+        "opacity": {
+          "default": 1.0,
+          "type": "number"
+        },
+        "order": {
+          "default": 0,
+          "type": "integer"
+        },
+        "outline": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/OutlineSpec"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "role": {
+          "default": "target",
+          "type": "string"
+        }
+      },
+      "required": [
+        "color",
+        "font",
+        "max_lines",
+        "opacity",
+        "order",
+        "outline",
+        "role"
+      ],
+      "type": "object"
+    },
+    "FontSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "bold": {
+          "default": false,
+          "type": "boolean"
+        },
+        "family": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "italic": {
+          "default": false,
+          "type": "boolean"
+        },
+        "size": {
+          "default": 20,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "bold",
+        "family",
+        "italic",
+        "size"
+      ],
+      "type": "object"
+    },
+    "LayoutSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "align": {
+          "default": "left",
+          "type": "string"
+        },
+        "anchor": {
+          "default": "bottom-center",
+          "type": "string"
+        },
+        "line_gap": {
+          "default": 6,
+          "type": "integer"
+        },
+        "max_width_ratio": {
+          "default": 0.9,
+          "type": "number"
+        },
+        "mode": {
+          "default": "bar",
+          "type": "string"
+        },
+        "offset": {
+          "default": [
+            0,
+            -90
+          ],
+          "maxItems": 2,
+          "minItems": 2,
+          "prefixItems": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "integer"
+            }
+          ],
+          "type": "array"
+        }
+      },
+      "required": [
+        "align",
+        "anchor",
+        "line_gap",
+        "max_width_ratio",
+        "mode",
+        "offset"
+      ],
+      "type": "object"
+    },
+    "OutlineSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "color": {
+          "default": "#000000",
+          "type": "string"
+        },
+        "width": {
+          "default": 2,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "color",
+        "width"
+      ],
+      "type": "object"
+    },
+    "PresentationSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "background": {
+          "$ref": "#/$defs/BackgroundSpec"
+        },
+        "confidence": {
+          "$ref": "#/$defs/ConfidenceSpec"
+        },
+        "elements": {
+          "items": {
+            "$ref": "#/$defs/ElementSpec"
+          },
+          "type": "array"
+        },
+        "layout": {
+          "$ref": "#/$defs/LayoutSpec"
+        },
+        "name": {
+          "default": "bar",
+          "type": "string"
+        },
+        "per_line": {
+          "default": false,
+          "type": "boolean"
+        },
+        "version": {
+          "const": 1,
+          "default": 1
+        }
+      },
+      "required": [
+        "background",
+        "confidence",
+        "elements",
+        "layout",
+        "name",
+        "per_line",
+        "version"
+      ],
+      "type": "object"
+    }
+  },
+  "$id": "https://project-watashi.invalid/schema/presentation-1.json",
+  "$ref": "#/$defs/PresentationSpec",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Project Watashi presentation spec v1",
+  "x-schema-version": 1,
+  "x-source": "prototype/watashi/presentation.py"
+}

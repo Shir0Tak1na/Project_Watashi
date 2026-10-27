@@ -1,0 +1,324 @@
+{
+  "$defs": {
+    "OverlayStats": {
+      "additionalProperties": false,
+      "properties": {
+        "backend": {
+          "type": "string"
+        },
+        "cache_hit_rate": {
+          "type": "number"
+        },
+        "corpus_entries": {
+          "type": "integer"
+        },
+        "fps": {
+          "type": "number"
+        },
+        "frames": {
+          "type": "integer"
+        },
+        "memory_mib": {
+          "type": "number"
+        },
+        "mode": {
+          "type": "string"
+        },
+        "ocr_ms": {
+          "type": "number"
+        },
+        "paused": {
+          "type": "boolean"
+        },
+        "refinements": {
+          "type": "integer"
+        },
+        "refinements_dropped": {
+          "type": "integer"
+        },
+        "refinements_pending": {
+          "type": "integer"
+        },
+        "rules": {
+          "type": "integer"
+        },
+        "skipped": {
+          "type": "integer"
+        },
+        "total_ms": {
+          "type": "number"
+        },
+        "translate_ms": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "backend",
+        "cache_hit_rate",
+        "corpus_entries",
+        "fps",
+        "frames",
+        "memory_mib",
+        "mode",
+        "ocr_ms",
+        "paused",
+        "refinements",
+        "refinements_dropped",
+        "refinements_pending",
+        "rules",
+        "skipped",
+        "total_ms",
+        "translate_ms"
+      ],
+      "type": "object"
+    },
+    "OverlayUpdate": {
+      "additionalProperties": false,
+      "properties": {
+        "backend": {
+          "type": "string"
+        },
+        "confidence": {
+          "type": "number"
+        },
+        "coverage": {
+          "type": "number"
+        },
+        "latency_ms": {
+          "type": "number"
+        },
+        "lines": {
+          "items": {
+            "$ref": "#/$defs/TranslatedLine"
+          },
+          "type": "array"
+        },
+        "refined": {
+          "type": "boolean"
+        },
+        "source": {
+          "type": "string"
+        },
+        "target": {
+          "type": "string"
+        },
+        "trace": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "backend",
+        "confidence",
+        "coverage",
+        "latency_ms",
+        "lines",
+        "refined",
+        "source",
+        "target",
+        "trace"
+      ],
+      "type": "object"
+    },
+    "Refinement": {
+      "additionalProperties": false,
+      "properties": {
+        "backend": {
+          "type": "string"
+        },
+        "elapsed_ms": {
+          "type": "number"
+        },
+        "fallback_reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "lost_placeholders": {
+          "type": "integer"
+        },
+        "protected_terms": {
+          "type": "integer"
+        },
+        "source": {
+          "type": "string"
+        },
+        "target": {
+          "type": "string"
+        },
+        "used_model": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "backend",
+        "elapsed_ms",
+        "fallback_reason",
+        "lost_placeholders",
+        "protected_terms",
+        "source",
+        "target",
+        "used_model"
+      ],
+      "type": "object"
+    },
+    "TranslatedLine": {
+      "additionalProperties": false,
+      "properties": {
+        "box": {
+          "anyOf": [
+            {
+              "maxItems": 4,
+              "minItems": 4,
+              "prefixItems": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "integer"
+                }
+              ],
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "confidence": {
+          "type": "number"
+        },
+        "coverage": {
+          "type": "number"
+        },
+        "source": {
+          "type": "string"
+        },
+        "target": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "box",
+        "confidence",
+        "coverage",
+        "source",
+        "target"
+      ],
+      "type": "object"
+    }
+  },
+  "$id": "https://project-watashi.invalid/schema/events-1.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "subtitle"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "data": {
+            "$ref": "#/$defs/OverlayUpdate"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "stats"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "data": {
+            "$ref": "#/$defs/OverlayStats"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "refinement"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "data": {
+            "$ref": "#/$defs/Refinement"
+          }
+        }
+      }
+    }
+  ],
+  "properties": {
+    "data": {
+      "type": "object"
+    },
+    "seq": {
+      "minimum": 1,
+      "type": "integer"
+    },
+    "ts": {
+      "type": "number"
+    },
+    "type": {
+      "enum": [
+        "ready",
+        "subtitle",
+        "refinement",
+        "stats",
+        "status",
+        "error",
+        "settings",
+        "correction",
+        "library",
+        "command_result",
+        "stopped",
+        "presentation"
+      ]
+    },
+    "v": {
+      "const": 1
+    }
+  },
+  "required": [
+    "v",
+    "type",
+    "ts",
+    "data"
+  ],
+  "title": "Project Watashi event envelope v1",
+  "type": "object",
+  "x-schema-version": 1,
+  "x-source": "prototype/watashi/events.py"
+}
