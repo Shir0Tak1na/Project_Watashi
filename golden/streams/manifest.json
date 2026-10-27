@@ -1,0 +1,9 @@
+{
+  "command": "prototype\\run.cmd --synthetic --duration 3 --mode none --json-lines",
+  "config_digest": "07a48d8d6de807257b91c2a1f452a8ca63b95b33834c60baba327acc9bfe14a6",
+  "events": 9,
+  "git_commit": "4ef4dc0201d040ba85887b05016938ac8052151b",
+  "postprocess": "kept only stdout lines beginning with '{'",
+  "recorded": "2026-10-28",
+  "stream_sha256": "8728064404f41d5298654e244ebbc7f79a94078bda2d217d31c957698c8b5f87"
+}
