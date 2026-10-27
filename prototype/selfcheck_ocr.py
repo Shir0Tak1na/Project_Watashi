@@ -174,6 +174,10 @@ def main() -> int:
 
     config = AppConfig.load()
     config.translation["nmt_model"] = None
+    # These synthetic rows are independent settings rows, not a wrapped
+    # sentence. Sentence assembly is a separate feature with its own check in
+    # selfcheck_session; leave it out so this check measures only the cap.
+    config.translation["join_fragmented_lines"] = False
     config.capture["diff_threshold"] = 0.0
     config.ocr["max_boxes"] = 2
     lines = ("first line of the screen", "second line of the screen",

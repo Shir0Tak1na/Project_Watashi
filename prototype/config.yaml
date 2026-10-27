@@ -58,6 +58,75 @@ capture:
   # Try 150-250 for video sites; `selfcheck_settle` asserts the mechanism.
   settle_ms: 0
 
+# Live audio translation.
+#
+# The screen path needs text on screen. A livestream without subtitles has
+# none, so this path listens to what the machine is playing instead:
+#
+#   system loopback -> speech recognition -> the same corpus/rules/model
+#   -> the same overlay
+#
+# Off by default. Run `run.cmd --live` to turn it on for one run, or set
+# enabled: true here to make it the default. The ASR weights are a one-time
+# download: `run.cmd fetch_model --asr small`. After that, watching a stream
+# never touches the network.
+live:
+  enabled: false
+
+  # system | microphone | file
+  source: system
+
+  # "" = default device, or a name substring / index from --list-audio-devices
+  device: ""
+
+  # used when source is file; a PCM WAV, for testing or translating a recording
+  file: ""
+
+  # spoken language, or "auto" to let Whisper decide per phrase
+  language: auto
+
+  # tiny | base | small | medium | large-v3, or a directory fetched by
+  # fetch_model.py --asr. small is the quality/latency default for a desktop CPU.
+  asr_model: small
+  asr_compute_type: int8
+  asr_threads: 4
+  # 1 = greedy, fastest. More is slightly more accurate and much slower.
+  asr_beam_size: 1
+  # Whisper's own VAD after the energy gate; off is faster and noisier
+  asr_vad: true
+
+  # Characters of the previous phrase passed to Whisper as initial_prompt.
+  # Keeps names and technical terms from being re-guessed every phrase without
+  # enabling condition_on_previous_text, whose hallucination chain can poison
+  # every later subtitle. 0 = no context.
+  context_chars: 120
+
+  # How a phrase is cut. Every value here trades latency against completeness:
+  # silence_ms is added to every subtitle, max_segment_s bounds the wait during
+  # a monologue, and min_speech_ms keeps a door slam from becoming one.
+  silence_ms: 600
+  min_speech_ms: 300
+  max_segment_s: 8.0
+
+  # Energy gate. A phrase starts when RMS exceeds the learned noise floor times
+  # vad_threshold. Raise it if background music keeps triggering subtitles.
+  vad_threshold: 2.5
+  min_rms: 0.004
+  pre_roll_ms: 300
+
+  # WAV files: pace them like a live stream, or process as fast as possible
+  file_realtime: false
+
+  # where downloaded Whisper weights are cached; "" = faster-whisper's cache
+  model_dir: ""
+  # refuse to download: the honest setting for an offline machine
+  local_files_only: false
+
+  # Internal, not settings-panel fields: WASAPI mixes at 48 kHz, and 100 ms is
+  # the block the segmenter was measured with.
+  capture_rate: 48000
+  block_ms: 100
+
 # ONNX Runtime / RapidOCR tuning.
 #
 # These three settings are the difference between ~3580 ms and ~61 ms per
@@ -134,6 +203,34 @@ translation:
   protect_terms: true
   protect_min_confidence: 0.4
 
+  # Finish the line with the model before it is painted, instead of painting the
+  # corpus answer and replacing it a moment later.
+  #
+  # true  = the subtitle appears once, as a complete sentence. Lines the corpus
+  #         already translates in full (term-only lines, cache hits) still cost
+  #         nothing; the rest pay one batched model call before the frame is
+  #         published.
+  # false = the old two-tier display: instant corpus result, model refinement
+  #         later. Faster first paint, but the first thing on screen can be half
+  #         source language ("the 剑意 of this 宗门 is a myth").
+  final_translation: true
+
+  # Join a sentence that OCR split across visual lines before translating it.
+  #
+  # A two-line subtitle arrives as two separate recognised lines. Translating
+  # each alone loses the grammar of the sentence they belong to ("the sword
+  # intent of this" / "sect is a myth"); NLLB has no memory between calls, so
+  # the lines have to be joined first. The rules are conservative: the previous
+  # line must not end with sentence punctuation, the next must be vertically
+  # adjacent with a similar height, and it must look like a continuation
+  # (lowercase Latin start, CJK, or after a comma/dash/bracket).
+  #
+  # Turn this off for screens full of separate short labels that lack
+  # punctuation; the join would otherwise treat rows as one sentence.
+  join_fragmented_lines: true
+  join_max_lines: 3
+  join_max_chars: 240
+
 corpus:
   # Layered, highest priority first. Any .json file in these directories is
   # loaded; see prototype/corpus/demo_terms.json for the format.
@@ -158,6 +255,21 @@ overlay:
   # plate = semi transparent dark plate (robust)
   # bare  = true transparency with outlined text (real subtitle look)
   subtitle_style: plate
+
+  # External JSON design file (see docs/presentation-spec.md for every field).
+  #
+  # This is the zero-code customization interface: point it at a file, edit and
+  # save while the overlay is running, and the new design is applied in about
+  # half a second. The file is authoritative, so the scalar appearance keys below
+  # (subtitle_size, bar_alpha, bar_bottom_margin) stop overriding it.
+  #
+  #   prototype\run.cmd --presentation-file config\presentation.json
+  #
+  # (a relative command line path is relative to the shell; a relative value in
+  # this file is relative to prototype/, so the two forms above differ)
+  #
+  # null = use the presentation preset / the keys below.
+  presentation_file: null
 
   font_family: null      # null = auto detect a CJK capable font
   subtitle_size: 24

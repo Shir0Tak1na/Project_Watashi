@@ -34,15 +34,22 @@ is the limiting factor, not the design.
 
 from __future__ import annotations
 
+import os
 import queue
 import sys
 import time
 import tkinter as tk
 from dataclasses import replace
+from pathlib import Path
 from typing import Any, Callable, Sequence
 
 from .events import OverlayStats, OverlayUpdate, TranslatedLine
-from .presentation import DrawBlock, PresentationSpec, compute_blocks
+from .presentation import (
+    DrawBlock,
+    PresentationSpec,
+    compute_blocks,
+    load_presentation_file,
+)
 
 __all__ = [
     "Overlay",
@@ -231,6 +238,7 @@ class _Surface:
     def __init__(self, root: tk.Misc, click_through: bool = True,
                  exclude_from_capture: bool = True) -> None:
         self.window = tk.Toplevel(root)
+        self.window.title("Project Watashi")
         self.window.overrideredirect(True)
         self.window.attributes("-topmost", True)
         try:
@@ -362,6 +370,7 @@ class Overlay:
         panel_font_size: int = 13,
         font_family: str | None = None,
         dim_low_confidence: bool = True,
+        presentation_path: str | Path | None = None,
     ) -> None:
         self.spec = presentation or PresentationSpec.preset("bar")
         self.click_through = click_through
@@ -418,6 +427,15 @@ class Overlay:
         #: pending Tk after() id, cancelled on close so the pump cannot fire
         #: against a destroyed window and print a confusing Tcl error
         self._after_id: str | None = None
+        #: Optional design file. Editing and saving it re-themes the overlay
+        #: without restarting anything: this is the zero-code customization
+        #: interface, and a polled mtime is what makes "save and look" work.
+        self._presentation_path: Path | None = (
+            Path(presentation_path) if presentation_path else None
+        )
+        self._presentation_mtime: int | None = None
+        self._next_presentation_check = 0.0
+        self._presentation_error: str = ""
 
     # -- lifecycle --------------------------------------------------------- #
 
@@ -445,6 +463,14 @@ class Overlay:
             self._build_panel()
         else:
             self._ensure_surfaces(1)
+            # Keep the placeholder windows off screen until there is something to
+            # draw. A freshly created Toplevel is a visible 200x200 "tk" square;
+            # the self-capture guard runs before the first frame and would pause
+            # the engine for a window that is our own subtitle surface, telling
+            # the user to move a window they cannot see.
+            self._hide_surfaces()
+        if self._presentation_path is not None:
+            self._presentation_mtime = self._stat_presentation()
         self._after_id = root.after(16, self._drain)
 
     def _detect_capture_scale(self) -> None:
@@ -581,6 +607,59 @@ class Overlay:
         """Swap the look at runtime. Safe to call from any thread."""
         self._queue.put_nowait(("presentation", spec))
 
+    def _stat_presentation(self) -> int | None:
+        if self._presentation_path is None:
+            return None
+        try:
+            return os.stat(self._presentation_path).st_mtime_ns
+        except OSError:
+            return None
+
+    def reload_presentation(self) -> bool:
+        """Reload the design file now, ignoring the poll interval.
+
+        Returns False when there is no file, or the file is invalid; the caller
+        can distinguish those by checking ``presentation_error``. Exposed so a
+        UI (or a keyboard shortcut) can offer an explicit "reload" alongside
+        the automatic mtime watch.
+        """
+        return self._poll_presentation_file(force=True)
+
+    @property
+    def presentation_error(self) -> str:
+        """The last parse error, empty when the file is healthy."""
+        return self._presentation_error
+
+    def _poll_presentation_file(self, force: bool = False) -> bool:
+        if self._presentation_path is None:
+            return False
+        now = time.monotonic()
+        if not force and now < self._next_presentation_check:
+            return False
+        self._next_presentation_check = now + 0.5
+        mtime = self._stat_presentation()
+        if mtime is None:
+            return False
+        if not force and mtime == self._presentation_mtime:
+            return False
+        try:
+            spec = load_presentation_file(self._presentation_path)
+        except Exception as exc:
+            # A half-written file is normal while someone is designing. Keep the
+            # last good spec on screen and say it once, rather than printing the
+            # same error every 500 ms or blanking the subtitle.
+            message = str(exc)
+            if message != self._presentation_error:
+                print(f"[presentation] {message}; keeping the previous design")
+                self._presentation_error = message
+            self._presentation_mtime = mtime
+            return False
+        self._presentation_error = ""
+        self._presentation_mtime = mtime
+        self._adopt_presentation(spec)
+        return True
+
+
     def toggle_visibility(self) -> None:
         """Hide or show the overlay without stopping recognition.
 
@@ -704,8 +783,9 @@ class Overlay:
     def _drain(self) -> None:
         if self._root is None or self._closed:
             return
+        reloaded = self._poll_presentation_file()
         latest: OverlayUpdate | None = None
-        repaint = False
+        repaint = reloaded
         while True:
             try:
                 kind, payload = self._queue.get_nowait()
@@ -760,8 +840,9 @@ class Overlay:
         if self._root is None:
             return
         if spec.layout.mode == "panel":
-            if self._panel is None:
-                self._build_panel()
+            if self._panel is not None:
+                self._destroy_panel()
+            self._build_panel()
             self._hide_surfaces()
         else:
             if self._panel is not None:
@@ -1191,10 +1272,11 @@ class Overlay:
         if self._status_var is None:
             return
         s = self._stats
+        is_live = s.mode == "live"
         parts = [
             s.backend or "corpus+rules",
-            f"{s.fps:.1f} FPS",
-            f"OCR {s.ocr_ms:.0f}ms",
+            f"字幕 {s.frames} 段" if is_live else f"{s.fps:.1f} FPS",
+            f"语音 {s.ocr_ms:.0f}ms" if is_live else f"OCR {s.ocr_ms:.0f}ms",
             f"总 {s.total_ms:.0f}ms",
             f"词库 {s.corpus_entries}",
             f"规则 {s.rules}",

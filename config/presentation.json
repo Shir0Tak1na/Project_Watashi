@@ -1,0 +1,74 @@
+{
+  "version": 1,
+  "name": "bar",
+  "layout": {
+    "mode": "bar",
+    "anchor": "bottom-center",
+    "offset": [
+      0,
+      -90
+    ],
+    "max_width_ratio": 0.9,
+    "line_gap": 6,
+    "align": "center"
+  },
+  "elements": [
+    {
+      "role": "previous",
+      "order": 0,
+      "font": {
+        "family": null,
+        "size": 13,
+        "bold": false,
+        "italic": false
+      },
+      "color": "#7d909f",
+      "opacity": 0.75,
+      "outline": null,
+      "max_lines": 0
+    },
+    {
+      "role": "source",
+      "order": 1,
+      "font": {
+        "family": null,
+        "size": 16,
+        "bold": false,
+        "italic": false
+      },
+      "color": "#c9d6e0",
+      "opacity": 0.9,
+      "outline": null,
+      "max_lines": 0
+    },
+    {
+      "role": "target",
+      "order": 2,
+      "font": {
+        "family": null,
+        "size": 24,
+        "bold": true,
+        "italic": false
+      },
+      "color": "#ffffff",
+      "opacity": 1.0,
+      "outline": null,
+      "max_lines": 0
+    }
+  ],
+  "background": {
+    "kind": "plate",
+    "color": "#000000",
+    "opacity": 0.72,
+    "radius": 8,
+    "padding": [
+      12,
+      8
+    ]
+  },
+  "confidence": {
+    "dim_below": 0.5,
+    "dim_opacity": 0.6
+  },
+  "per_line": false
+}

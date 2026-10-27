@@ -144,6 +144,9 @@ class DesktopApp:
     # ------------------------------------------------------------------ #
 
     def _build(self) -> None:
+        # A fake session in a check need not carry the property; the real one does.
+        # Defaulting to False keeps the screen layout for anything older.
+        self.live_mode = bool(getattr(self.session, "live_mode", False))
         style = ttk.Style(self.root)
         try:
             style.theme_use("vista")
@@ -174,12 +177,21 @@ class DesktopApp:
         controls.pack(fill="x", padx=10)
         self.pause_button = ttk.Button(controls, text="暂停识别", command=self.toggle_pause)
         self.pause_button.pack(side="left", padx=(0, 6))
-        ttk.Button(controls, text="框选区域…", command=self.select_region).pack(
-            side="left", padx=(0, 6)
+        live = self.live_mode
+        self.region_button = ttk.Button(
+            controls, text="框选区域…", command=self.select_region
         )
-        ttk.Button(controls, text="选择窗口…", command=self.pick_window).pack(
-            side="left", padx=(0, 6)
+        self.region_button.pack(side="left", padx=(0, 6))
+        self.window_button = ttk.Button(
+            controls, text="选择窗口…", command=self.pick_window
         )
+        self.window_button.pack(side="left", padx=(0, 6))
+        if live:
+            # No rectangle and no window exist in this mode. Disabling them is
+            # the honest state; leaving them clickable would produce a refused
+            # command and make the window look broken rather than different.
+            self.region_button.state(["disabled"])
+            self.window_button.state(["disabled"])
         ttk.Button(controls, text="导出…", command=self.export).pack(side="left", padx=(0, 6))
         ttk.Button(controls, text="重载语料库", command=self.reload_corpus).pack(
             side="left", padx=(0, 12)
@@ -355,7 +367,22 @@ class DesktopApp:
     def _build_capture(self, notebook: ttk.Notebook) -> None:
         frame = self._tab(notebook, "采集")
         self.region_var = tk.StringVar(value="(auto)")
-        self._row(frame, "当前区域", ttk.Label(frame, textvariable=self.region_var))
+        self._row(
+            frame,
+            "声音来源" if self.live_mode else "当前区域",
+            ttk.Label(frame, textvariable=self.region_var),
+        )
+        if self.live_mode:
+            self.fps_var = None
+            self.diff_var = None
+            ttk.Label(
+                frame,
+                text="直播模式听的是声音，不截屏：字幕先由本地语音识别转写，\n"
+                     "再走和屏幕识别相同的语料库、规则与本地翻译模型。\n"
+                     "断句、音量和语言在设置面板的「直播」页调整（改完需重启）。",
+                justify="left", foreground="#5f7386",
+            ).pack(anchor="w", pady=(10, 0))
+            return
         self.fps_var = tk.StringVar(value="10")
         self._entry_row(frame, "采集帧率", self.fps_var, CMD_SET_FPS, float)
         self.diff_var = tk.StringVar(value="2.0")
@@ -508,8 +535,10 @@ class DesktopApp:
         # Prefilled from what is actually in effect, so the box is never lying about the
         # current scene after a restart or a panel change.
         self.scene_var.set(str(info.get("scene", "")))
-        self.fps_var.set(str(info.get("fps_target", "")))
-        self.diff_var.set(str(info.get("diff_threshold", "")))
+        if self.fps_var is not None:
+            self.fps_var.set(str(info.get("fps_target", "")))
+        if self.diff_var is not None:
+            self.diff_var.set(str(info.get("diff_threshold", "")))
         # Kept for the status line rather than a tab of its own: how much vocabulary is
         # loaded is something to see at a glance while using the window, not a page.
         self.corpus_summary = (
@@ -622,14 +651,21 @@ class DesktopApp:
         s = self.stats
         if s is None:
             return
-        paused = "⏸ 已暂停" if s.paused else "识别中"
+        is_live = s.mode == "live"
+        idle = "监听中" if is_live else "识别中"
+        paused = "⏸ 已暂停" if s.paused else idle
         # Everything the old 诊断 tab showed that is worth glancing at, on one line: the
         # counters a user actually acts on. The full JSON dump moved to the web panel's
         # 诊断 tab, which is where you go when you want all of it.
+        recognition = (
+            f"语音 {s.ocr_ms:.0f} ms · 字幕 {s.frames} 段"
+            if is_live
+            else f"{s.fps:.1f} FPS · OCR {s.ocr_ms:.0f} ms · 识别 {s.frames}"
+        )
         self.status_var.set(
-            f"{paused} · {s.backend} · {s.fps:.1f} FPS · OCR {s.ocr_ms:.0f} ms · "
+            f"{paused} · {s.backend} · {recognition} · "
             f"总 {s.total_ms:.0f} ms · 内存 {s.memory_mib:.0f} MiB · "
-            f"识别 {s.frames} · 跳过 {s.skipped} · 精修 {s.refinements}"
+            f"跳过 {s.skipped} · 精修 {s.refinements}"
             + (f" · {self.corpus_summary}" if self.corpus_summary else "")
         )
         self._apply_paused(bool(s.paused))

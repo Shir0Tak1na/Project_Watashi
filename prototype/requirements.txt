@@ -34,6 +34,15 @@ uvicorn>=0.29
 # running the prototype rather than for the badge.
 python-xlib>=0.33; sys_platform == "linux"
 
+# Live audio translation: listen to a livestream that has no subtitles.
+#
+# soundcard reads system loopback (WASAPI on Windows, PulseAudio monitor on
+# Linux) and microphones; faster-whisper runs speech recognition locally on the
+# CPU. The weights are a one-time download (fetch_model --asr), like the NMT
+# model, so watching a stream itself is fully offline.
+soundcard>=0.4.3
+faster-whisper>=1.0
+
 # Optional: local LLM backend for M3 (requirement R1). Requires a local GGUF
 # model file and is enabled by setting translation.llm_model in config.yaml.
 # No cloud API is used.

@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
@@ -1401,8 +1401,11 @@ $("xpromotepreview").onclick = () => promoteCorrections(true);
 
 async function loadStats() {
   const s = await (await fetch("/api/stats")).json();
+  const live = s.mode === "live";
   const rows = [
-    ["后端", s.backend], ["FPS", s.fps], ["OCR", s.ocr_ms + " ms"],
+    ["后端", s.backend],
+    [live ? "字幕段数" : "FPS", live ? s.frames : s.fps],
+    [live ? "语音识别" : "OCR", s.ocr_ms + " ms"],
     ["翻译", s.translate_ms + " ms"], ["单帧合计", s.total_ms + " ms"],
     ["识别帧数", s.frames], ["因未变跳过", s.frames_skipped_unchanged],
     ["模型精修", s.refinements], ["精修被丢弃", s.refinements_dropped],

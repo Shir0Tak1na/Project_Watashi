@@ -1143,10 +1143,12 @@ def main() -> int:
         check.check("GET /api/settings answers", status == 200, f"HTTP {status}")
         payload = json.loads(body)
         categories = payload.get("categories", [])
+        from watashi import settings_schema
+
         check.check(
             "it returns every category of the schema",
-            len(categories) == 9,
-            f"{len(categories)} categories",
+            len(categories) == len(settings_schema.CATEGORIES),
+            f"{len(categories)} categories, schema has {len(settings_schema.CATEGORIES)}",
         )
         fields = [f for c in categories for f in c["fields"]]
         check.check(

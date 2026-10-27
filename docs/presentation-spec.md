@@ -132,10 +132,49 @@ Named specs shipped with the app, overridable by a user file:
 | `panel` | Bilingual history with latency and coverage metadata. |
 | `minimal` | Translation only, no source line. |
 
+## Design file (zero-code, hot reload)
+
+The interface for designing the subtitle bar and the comparison panel without
+touching engine code is a single JSON file:
+
+```bash
+prototype\run.cmd --presentation-file config\presentation.json
+```
+
+(a relative path on the command line is relative to the shell; a relative value
+in `config.yaml` is relative to `prototype/`, so write `../config/presentation.json`
+there)
+
+or set it once in `prototype/config.yaml`:
+
+```yaml
+overlay:
+  presentation_file: ../config/presentation.json
+```
+
+While the overlay is running, **save the file and look at the screen**. The
+overlay polls the file's mtime every 500 ms and applies a valid change in about
+half a second, with no restart. A half-written or invalid file keeps the last
+good design on screen and prints one error naming the line and column; the next
+save replaces it. This is deliberately a file rather than a settings dialog: a
+text editor plus the live screen is the whole editing loop.
+
+`config/presentation.json` is a complete `bar` spec to start from. Copy it,
+rename it, point the key at the copy. Every field is described in the sections
+above.
+
+When a design file is set it is authoritative: `overlay.subtitle_size`,
+`overlay.bar_alpha` and `overlay.bar_bottom_margin` no longer override it, so a
+value written in the file is the value drawn. Switching to a different file
+needs a restart; editing the current one does not.
+
+`--presentation bar|bare|inplace|lines|panel|minimal|hidden` still works and is
+the quick way to compare presets before writing a file.
+
 ## Live application
 
-Appearance is read once in `Overlay.__init__`, so a change from any surface is
-delivered through the same command channel as everything else:
+The inline spec is read once in `Overlay.__init__`, so a change from any surface
+is delivered through the same command channel as everything else:
 
 ```json
 { "cmd": "set_presentation", "spec": { ... } }

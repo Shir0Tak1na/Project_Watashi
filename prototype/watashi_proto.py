@@ -43,7 +43,11 @@ from watashi.adapters import attach_console, attach_overlay  # noqa: E402
 from watashi.capture import Region, RegionCapturer, list_monitors  # noqa: E402
 from watashi.config import AppConfig  # noqa: E402
 from watashi.overlay import Overlay  # noqa: E402
-from watashi.presentation import PresentationSpec, resolve_presentation  # noqa: E402
+from watashi.presentation import (  # noqa: E402
+    PresentationSpec,
+    presentation_file_path,
+    resolve_presentation,
+)
 from watashi.profiles import apply_profile, describe_profiles, find_profile  # noqa: E402
 from watashi.selftest import run_selftest  # noqa: E402
 from watashi import RELEASE_STAGE, __version__  # noqa: E402
@@ -87,6 +91,26 @@ def build_parser() -> argparse.ArgumentParser:
     ocr_group.add_argument("--det-limit-type", choices=["min", "max"], default=None, help="detector resize limit; 'max' avoids upscaling strips")
     ocr_group.add_argument("--no-mem-arena", action="store_true", default=None, help="disable the ONNX CPU memory arena (slower)")
 
+    live = parser.add_argument_group("live audio (no subtitles on screen)")
+    live.add_argument("--live", action="store_true", default=None,
+                      help="listen to system audio and translate it, instead of OCR")
+    live.add_argument("--audio-source", choices=["system", "microphone", "file"], default=None,
+                      help="what to listen to: the sound the machine is playing, a "
+                           "microphone, or a WAV file")
+    live.add_argument("--audio-device", type=str, default=None,
+                      help="audio device name substring or index from --list-audio-devices")
+    live.add_argument("--audio-file", type=Path, default=None,
+                      help="WAV file to translate (implies --audio-source file)")
+    live.add_argument("--asr-model", type=str, default=None,
+                      help="faster-whisper model name (tiny/base/small/...) or directory")
+    live.add_argument("--asr-language", type=str, default=None,
+                      help="spoken language (en, ja, ...) or auto")
+    live.add_argument("--asr-threads", type=int, default=None, help="Whisper CPU threads")
+    live.add_argument("--no-asr-vad", action="store_true", default=None,
+                      help="skip Whisper's second VAD pass (faster, noisier)")
+    live.add_argument("--list-audio-devices", action="store_true", default=None,
+                      help="list loopback and microphone devices, then exit")
+
     translation = parser.add_argument_group("translation")
     translation.add_argument("--target", type=str, default=None, help="target language, e.g. zh-CN or en")
     translation.add_argument("--source", type=str, default=None, help="source language or 'auto'")
@@ -119,6 +143,8 @@ def build_parser() -> argparse.ArgumentParser:
     overlay.add_argument("--mode", choices=["bar", "panel", "both", "none"], default=None, help="what to display")
     overlay.add_argument("--presentation", type=str, default=None,
                          help="presentation preset: " + ", ".join(PresentationSpec.preset_names()))
+    overlay.add_argument("--presentation-file", type=Path, default=None,
+                         help="JSON design file; saving it re-themes the overlay live")
     overlay.add_argument("--subtitle-style", choices=["plate", "bare"], default=None,
                          help="legacy shorthand for --presentation")
     overlay.add_argument("--subtitle-size", type=int, default=None, help="scale every element's font size")
@@ -235,6 +261,43 @@ def apply_overrides(config: AppConfig, args: argparse.Namespace) -> AppConfig:
     if args.settle_ms is not None:
         config.capture["settle_ms"] = args.settle_ms
 
+    # Any live flag turns the mode on. Requiring --live as well would make
+    # --audio-file silently translate nothing, which is the kind of "accepted,
+    # did nothing" command line this project avoids.
+    live_requested = any(
+        value is not None and value is not False
+        for value in (
+            args.live,
+            args.audio_source,
+            args.audio_device,
+            args.audio_file,
+            args.asr_model,
+            args.asr_language,
+            args.asr_threads,
+            args.no_asr_vad,
+        )
+    )
+    if live_requested:
+        config.live["enabled"] = True
+    if args.audio_source is not None:
+        config.live["source"] = args.audio_source
+    if args.audio_device is not None:
+        config.live["device"] = args.audio_device
+    if args.audio_file is not None:
+        config.live["source"] = "file"
+        # Resolved against the working directory like --stats-json, not against
+        # the config file: a command-line path means "where I am", and the
+        # config's own relative paths have a different, documented base.
+        config.live["file"] = str(args.audio_file.resolve())
+    if args.asr_model is not None:
+        config.live["asr_model"] = args.asr_model
+    if args.asr_language is not None:
+        config.live["language"] = args.asr_language
+    if args.asr_threads is not None:
+        config.live["asr_threads"] = args.asr_threads
+    if args.no_asr_vad:
+        config.live["asr_vad"] = False
+
     if args.ocr_threads is not None:
         config.ocr["intra_op_threads"] = args.ocr_threads
     if args.det_limit_type is not None:
@@ -261,6 +324,9 @@ def apply_overrides(config: AppConfig, args: argparse.Namespace) -> AppConfig:
         config.overlay["mode"] = args.mode
     if args.presentation is not None:
         config.presentation = args.presentation
+    if args.presentation_file is not None:
+        # A command line path is relative to the shell, not the config file.
+        config.overlay["presentation_file"] = str(args.presentation_file.resolve())
     if args.subtitle_style is not None:
         # legacy shorthand: keep existing config files meaningful
         config.presentation = args.subtitle_style
@@ -316,7 +382,11 @@ def _install_hotkeys(args: Any, session: Session, overlay: Any, request_stop: An
 
     def toggle_pause() -> None:
         result = session.command("toggle_pause")
-        state = "已暂停" if result.get("paused") else "识别中"
+        state = (
+            "已暂停"
+            if result.get("paused")
+            else ("监听中" if session.live_mode else "识别中")
+        )
         session.set_status(state)
         print(f"  [hotkey] {state}")
 
@@ -333,6 +403,8 @@ def _install_hotkeys(args: Any, session: Session, overlay: Any, request_stop: An
     manager.add(args.hotkey_pause or "ctrl+alt+p", toggle_pause)
     if overlay is not None:
         manager.add(args.hotkey_hide or "ctrl+alt+h", toggle_visibility)
+
+    if overlay is not None and not session.live_mode:
 
         def reselect() -> None:
             # drawn on the Tk thread; this callback is the hotkey thread, so it
@@ -418,6 +490,26 @@ def main(argv: list[str] | None = None) -> int:
         print("")
         print("  note: input-method hosts and GPU overlay windows appear here too;")
         print("        pick by title. Our own windows are excluded on purpose.")
+        return 0
+
+    if args.list_audio_devices:
+        from watashi import live
+
+        try:
+            devices = live.list_audio_devices()
+        except live.LiveUnavailable as exc:
+            print(f"audio devices unavailable: {exc}")
+            return 1
+        if not devices:
+            print("no audio devices found")
+            return 1
+        print("audio devices (loopback = the sound the machine is playing):")
+        for device in devices:
+            print(f"  {device.label()}")
+        print("")
+        print("  system audio:  prototype\\run.cmd --live --audio-device <index or name>")
+        print("  microphone:    prototype\\run.cmd --live --audio-source microphone")
+        print("  note: choose a loopback entry to translate a stream in a browser/player.")
         return 0
 
     if args.list_presentations:
@@ -592,6 +684,11 @@ def main(argv: list[str] | None = None) -> int:
             return 1
         return 0
 
+    if config.live_enabled and (args.select or args.window or args.region):
+        print("  --live listens to sound; --select/--window/--region name a screen area")
+        print("  pick one input: remove the screen option, or drop --live")
+        return 2
+
     if args.select:
         from watashi.selector import select_region
 
@@ -606,6 +703,9 @@ def main(argv: list[str] | None = None) -> int:
     # Every surface below is an adapter over the Session event stream: the CLI,
     # the overlay and (later) the web panel all consume identical events, so
     # there is exactly one engine code path.
+    if config.live_enabled and args.synthetic:
+        print("  --live and --synthetic both replace the input; pick one")
+        return 2
     capturer = None
     if args.synthetic:
         from watashi.synth import SyntheticCapturer
@@ -639,16 +739,20 @@ def main(argv: list[str] | None = None) -> int:
 
     if not args.quiet:
         print("=" * 72)
-        print("Project Watashi -- local real time screen translation prototype")
+        print("Project Watashi -- local real time screen + live audio translation prototype")
         print("=" * 72)
         for line in config.describe():
             print(f"  {line}")
         print("=" * 72)
 
     session.build()
-    print(f"  OCR engine ready in {session.ocr.load_ms:.0f} ms")
-    if getattr(session.translator, "model_available", False):
-        print("  local model loaded; refinements run in the background")
+    if config.live_enabled:
+        print("  live audio path ready; the speech model loads when listening starts")
+        print("  (first run downloads it unless fetch_model --asr was run first)")
+    else:
+        print(f"  OCR engine ready in {session.ocr.load_ms:.0f} ms")
+        if getattr(session.translator, "model_available", False):
+            print("  local model loaded; refinements run in the background")
 
     # ---- attach surfaces -------------------------------------------------- #
     # Defined before the surfaces because the desktop window's close handler needs
@@ -704,6 +808,7 @@ def main(argv: list[str] | None = None) -> int:
             panel_font_size=int(config.overlay.get("panel_size", 13)),
             panel_history=int(config.overlay.get("panel_history", 12)),
             dim_low_confidence=bool(config.overlay.get("dim_low_confidence", True)),
+            presentation_path=presentation_file_path(config),
             region_box=(
                 (config.region.x, config.region.y, config.region.width, config.region.height)
                 if config.region
@@ -756,7 +861,22 @@ def main(argv: list[str] | None = None) -> int:
     for adapter in adapters:
         adapter.start()
 
-    session.start()
+    try:
+        session.start()
+    except Exception as exc:
+        # A live start can fail with something the user can fix: no loopback
+        # device, a missing ASR package, a model that cannot load. Print the
+        # explanation, not a traceback that hides it under 40 lines of stack.
+        print("")
+        print(f"  could not start: {exc}")
+        for adapter in adapters:
+            try:
+                adapter.stop()
+            except Exception:
+                pass
+        if desktop is not None and not desktop.closed:
+            desktop.close()
+        return 1
 
     # ---- run -------------------------------------------------------------- #
 
@@ -811,7 +931,7 @@ def main(argv: list[str] | None = None) -> int:
                 )
             overlay.run()
         else:
-            while not stopping["flag"]:
+            while not stopping["flag"] and not session.finished:
                 if deadline and time.perf_counter() >= deadline:
                     break
                 time.sleep(0.1)

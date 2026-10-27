@@ -2,16 +2,17 @@
 
 [English](README.md) | 简体中文
 
-*实时屏幕区域翻译，专注网络用语与虚构词汇 —— 全本地部署。*
+*实时屏幕区域与直播语音翻译，专注网络用语与虚构词汇 —— 全本地部署。*
 
-Project Watashi（渡）是一款桌面工具：持续识别用户在屏幕上圈定区域内的文字，并将其翻译为设定的目标语言。它针对的是通用翻译工具表现糟糕的场景——网络用语、修仙/魔幻黑话，以及科幻作品中自造的词汇。
+Project Watashi（渡）是一款桌面工具：持续识别用户在屏幕上圈定区域内的文字，并将其翻译为设定的目标语言；直播没有字幕时，也可以改为监听声音，先做本地语音识别再翻译。它针对的是通用翻译工具表现糟糕的场景——网络用语、修仙/魔幻黑话，以及科幻作品中自造的词汇。
 
 主链路上的全部环节均在本机运行：不依赖云端 API，可完全离线工作。
 
 ## 核心功能
 
 - **实时区域翻译** —— 圈定屏幕区域并选择语言对，悬浮窗以双语对照形式展示原文与译文，无需复制粘贴。
-- **全本地部署** —— 屏幕捕获、OCR、语料库匹配、规则推演以及可选的 LLM 全部在本机运行。云端大模型 API 仅作为可选插件存在，且默认关闭。
+- **直播语音翻译** —— 直播没有字幕时，文字根本不在屏幕上，OCR 读不到。开启后改为监听系统正在播放的声音（也支持麦克风和 WAV 文件），用本地 faster-whisper 转写，再走与屏幕翻译完全相同的语料库、规则和本地模型，字幕仍由同一个悬浮窗显示。适合浏览器/播放器里的 YouTube、Twitch、B 站等直播。
+- **全本地部署** —— 屏幕捕获、OCR、语音识别、语料库匹配、规则推演以及可选的本地模型全部在本机运行。云端大模型 API 仅作为可选插件存在，且默认关闭；ASR 与 NMT 权重只需一次性下载，观看直播时不联网。
 - **自定义语料库** —— 通过编写语料库文件，即可扩展网络用语与虚构词汇的翻译覆盖范围。无需修改引擎，无需重新编译。
 - **自定义规则** —— 语料库中缺失的词汇由用户自定义规则处理（词根词缀拆分、命名模板、音译转写、领域映射、词素组合）。每次规则命中都会返回所命中的规则标识与置信度，结果可追溯、可校对。
 - **可选本地 LLM** —— 仅在语料库与规则均未命中时，才调用本地模型（例如通过 llama.cpp 加载的 GGUF 量化模型）辅助翻译。
@@ -37,6 +38,13 @@ Project Watashi（渡）是一款桌面工具：持续识别用户在屏幕上�
   -> （可选）本地 LLM
   -> 结果缓存
   -> 双语悬浮窗渲染
+
+直播没有字幕时，入口换成：
+系统声音 / 麦克风 / WAV
+  -> 能量 VAD 断句
+  -> 本地 faster-whisper 语音识别
+  -> 文本规范化
+  -> （与上面相同的语料库 / 规则 / 本地 LLM / 悬浮窗）
 ```
 
 ## 项目状态
@@ -48,6 +56,7 @@ Project Watashi（渡）是一款桌面工具：持续识别用户在屏幕上�
 | 模块 | C++ 主干（`src/`） | Python 原型（`prototype/`） |
 | --- | --- | --- |
 | 屏幕捕获 / 选区 | 桩实现 —— 返回空白图像 | 可用（`mss`，支持拖拽选区） |
+| 直播语音输入 | 未实现 | 可用（系统声音 / 麦克风 / WAV + faster-whisper，离线） |
 | OCR | 桩实现 —— 返回硬编码文本 | 可用（RapidOCR ONNX，离线） |
 | 语料库加载 | 未实现 —— `src/` 里没有任何语料库相关代码 | 可用，分层 + 热加载 |
 | 规则引擎 | 未实现 | 可用（词缀 / 词素 / 模板 / 音译） |
@@ -59,7 +68,7 @@ Project Watashi（渡）是一款桌面工具：持续识别用户在屏幕上�
 | 插件 | 未实现；`include/plugins/plugin_api.h` 仍是草案 | 扩展点 v1，具备失败隔离，附带 2 个示例插件 |
 | 界面架构 | 未实现 | 可用：引擎/界面事件契约边界，CLI、悬浮窗、桌面窗口与进程内 Web 面板共用同一 schema |
 | 客制化（外观 / 版式 / 配置档） | 未实现 | 可用：声明式呈现规格、7 个预设、实时切换、内存档位 |
-| 测试 | 仅有目录 | `--selftest` 加 20 个自检脚本（15 个无需界面、CI 可跑，5 个需要显示器）；具体断言数记录在 `prototype/README.md` |
+| 测试 | 仅有目录 | `--selftest` 加 21 个自检脚本（16 个无需界面、CI 可跑，5 个需要显示器）；具体断言数记录在 `prototype/README.md` |
 
 ## 运行环境要求
 
@@ -68,6 +77,7 @@ Python 原型（现在即可运行）：
 - Python 3.12；见 `prototype/requirements.txt`
 - tkinter（标准库）用于覆盖层
 - 可选：由 `prototype/fetch_model.py` 一次性获取的本地 NLLB 模型（约 617 MiB）。没有它时原型仅靠语料库与规则运行。
+- 直播翻译：`soundcard`（读系统声音 / 麦克风）与 `faster-whisper`（本地语音识别）；语音权重由 `prototype\run.cmd fetch_model --asr small` 一次性获取（small 约 460 MiB）。不装这两个包时屏幕翻译照常可用。
 
 原生构建（尚不可用）：
 
@@ -122,6 +132,13 @@ cmake -S . -B build -DUSE_QT=OFF -DUSE_ONNX=OFF -DUSE_PADDLEOCR=OFF -DBUILD_TEST
 prototype\run.cmd --select --mode both   # 拖拽选区后运行
 prototype\run.cmd --list-monitors
 prototype\run.cmd --mode none --duration 20 --print   # 无界面
+
+# 直播没有字幕：听系统正在播放的声音
+prototype\run.cmd fetch_model --asr small        # 一次性下载语音模型
+prototype\run.cmd --list-audio-devices           # 看 loopback / 麦克风设备
+prototype\run.cmd --live --mode both             # 看直播，悬浮窗出双语字幕
+prototype\run.cmd --live --audio-device 2 --asr-model small
+prototype\run.cmd --live --audio-file recording.wav --mode none --print
 ```
 
 没有浏览器、甚至没有界面的机器，也可以在命令行上管理词库：
@@ -134,6 +151,37 @@ prototype\run.cmd --promote-corrections --dry-run      # 实时纠正 -> 语料�
 ```
 
 原生目标（`./build/ProjectWatashi`）只会打印一行启动信息，尚未实现。
+
+### 直播翻译（没有字幕时）
+
+屏幕 OCR 只能读已经显示在屏幕上的文字。直播没有字幕时，文字只存在于声音里，所以这条路径换成了：
+
+    系统声音（WASAPI loopback / PulseAudio monitor）
+      -> 能量 VAD 断句
+      -> 本地 faster-whisper 语音识别
+      -> 与屏幕翻译相同的语料库 / 规则 / 本地模型
+      -> 同一个双语悬浮窗
+
+它监听的是**本机正在播放的声音**，不需要下载直播流，也不需要把网址交给这个程序；浏览器、VLC 或任何播放器都可以。麦克风和 WAV 文件是同一套链路的另外两个入口，用于测试和翻译录音。
+
+    prototype\run.cmd --live                     # 听默认扬声器的 loopback
+    prototype\run.cmd --live --audio-device 2    # 用 --list-audio-devices 里的序号
+    prototype\run.cmd --live --audio-source microphone
+    prototype\run.cmd --live --audio-file talk.wav --mode none --print
+
+几个真正会影响体验的旋钮（设置面板的「直播」页，或 prototype/config.yaml 的 live: 段；目前都需要重启）：
+
+| 设置 | 作用 | 建议 |
+| --- | --- | --- |
+| live.asr_model | 语音模型大小 | 4 GB 内存用 tiny/base；普通桌面机 small 是质量与速度的平衡点 |
+| live.silence_ms | 停顿多久算一句 | 500–700 ms；调小更快但句子更碎 |
+| live.max_segment_s | 连续说话时强制断句 | 8 s；调小更快，调大更完整 |
+| live.vad_threshold | 多大声才算说话 | 背景音乐一直误触发时调高 |
+| live.language | 说话语言 | 已知就写 en/ja/ko，比 auto 更稳 |
+
+第一次使用先运行 fetch_model --asr small。之后把 live.local_files_only 设为 true，程序就绝不会为了模型联网。
+
+**已知限制**：能量 VAD 分不清音乐和人声，持续的背景音乐会偶发假字幕；每段字幕要等一句话说完（默认约 0.6 s 静音）才出现，不是逐词滚动；同一时间只能听一路声音，也不区分说话人。具体数据与调参记录见 prototype/README.md 的「Live audio」一节。
 
 ## 配置
 
@@ -148,6 +196,11 @@ capture:
   region: null          # "x,y,w,h"（物理像素）；null = 屏幕下方一条横带
   fps: 10               # 采集频率；画面没变就不会识别
   settle_ms: 0          # 画面静止这么久之后才识别
+
+live:
+  enabled: false        # true = 听声音而不是截屏；命令行用 --live
+  source: system        # system | microphone | file
+  asr_model: small      # 或 fetch_model --asr 下载后的目录
 
 translation:
   source: auto          # 自动判断，或直接写明：自动判断分不出法语和英语
@@ -359,7 +412,7 @@ ProjectWatashi/
 | --- | --- |
 | M1 | 最小闭环：热键选区 -> 截图 -> OCR -> 语料库匹配 -> 双语悬浮窗（Windows）—— **已在 `prototype/` 完成** |
 | M2 | 语料库与规则引擎落地，支持用户自定义与热加载 —— **已在 `prototype/` 完成** |
-| M3 | 本地模型兜底翻译，含流式输出与缓存 —— **已在 `prototype/` 完成**（本地 NMT，以异步精修代替流式） |
+| M3 | 本地模型兜底翻译，含流式输出与缓存 —— **已在 `prototype/` 完成**（本地 NMT，绘制前批量完成整句翻译；异步精修作为可选项保留） |
 | M4 | 达成延迟预算：增量识别、缓存、线程模型优化 —— **已部分实测** |
 | M5 | 跨平台：Linux 与 macOS 的捕获层与 UI 适配 |
 | M6 | 插件 API 稳定化；Android 目标实验性验证 —— **插件 API v1 已在 `prototype/` 完成**，Android 未开始 |
@@ -373,6 +426,13 @@ ProjectWatashi/
 | macOS | 一级 | ScreenCaptureKit / CGWindowList |
 | Android | 二级 | MediaProjection、悬浮窗与无障碍权限 |
 | 小型设备 | 三级 | 裁剪 UI 与模型体积，仅保留核心链路 |
+
+## 许可证
+
+- **代码：MIT**，见 [LICENSE](LICENSE)。
+- **模型权重不在此列。** 本仓库不分发任何权重：`fetch_model` 下载的 NLLB-200 是 **CC-BY-NC-4.0（非商业）**，Whisper 是 MIT，PP-OCRv4 是 Apache-2.0。
+- 完整清单与分发规则见 [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md)。
+- 本项目是**非商业**开源项目（毕业设计）；NLLB 的条款禁止商业使用。
 
 ## 说明
 

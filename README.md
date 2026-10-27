@@ -2,11 +2,13 @@
 
 English | [简体中文](README_zh.md)
 
-*Real-time screen region translation for slang and fictional vocabulary — fully local.*
+*Real-time screen region and live-stream speech translation for slang and fictional vocabulary — fully local.*
 
 Project Watashi (渡) is a desktop tool that continuously recognizes text in a
-user-selected screen region and translates it into a target language. It is built
-for the cases general-purpose translators handle badly: internet slang,
+user-selected screen region and translates it into a target language. When a
+livestream has no subtitles, it can listen to the audio instead: local speech
+recognition first, then the same corpus, rules and local model. It is built for
+the cases general-purpose translators handle badly: internet slang,
 cultivation/fantasy jargon, and invented sci-fi terms.
 
 Everything on the main path runs on the local machine: no cloud API is required,
@@ -17,9 +19,16 @@ and the app works offline.
 - **Real-time region translation** — pick a screen region and a language pair;
   the floating overlay shows the original and translated text side by side, with
   no copy-paste required.
-- **Fully local** — screen capture, OCR, corpus lookup, rule inference, and the
-  optional LLM all run on-device. Cloud LLM APIs exist only as an optional,
-  off-by-default plugin.
+- **Live-stream speech translation** — a stream without subtitles has no text to
+  OCR, so this mode listens to what the machine is playing (system loopback, a
+  microphone, or a WAV file), transcribes it locally with faster-whisper, and
+  runs the result through the *same* corpora, rules and local model. The same
+  overlay draws the subtitles, so browser and player streams need no URL and no
+  download.
+- **Fully local** — screen capture, OCR, speech recognition, corpus lookup, rule
+  inference, and the optional local model all run on-device. Cloud LLM APIs
+  exist only as an optional, off-by-default plugin. The ASR and NMT weights are
+  one-time downloads; watching a stream itself never touches the network.
 - **Custom corpus** — extend coverage for slang and fictional words by writing
   corpus files. No engine changes, no recompilation.
 - **Custom rules** — words missing from the corpus are handled by user-defined
@@ -55,6 +64,15 @@ hotkey / region select
   -> bilingual overlay
 ```
 
+When a livestream has no subtitles, the input path becomes:
+
+```
+system audio / microphone / WAV file
+  -> energy VAD phrase segmentation
+  -> local faster-whisper speech recognition
+  -> the same corpus / rules / local model / overlay
+```
+
 ## Status
 
 The **Python prototype in `prototype/`** implements M1-M3 and runs today: region
@@ -69,6 +87,7 @@ every layer below is a placeholder.
 | Area | C++ tree (`src/`) | Python prototype (`prototype/`) |
 | --- | --- | --- |
 | Screen capture / region selection | Stub — returns a blank image | Working (`mss`, plus drag-to-select) |
+| Live audio input | Not implemented | Working (system loopback / microphone / WAV + faster-whisper, offline) |
 | OCR | Stub — returns hardcoded text | Working (RapidOCR ONNX, offline) |
 | Corpus loader | Not implemented — `src/` has no corpus code at all | Working, layered + hot reload |
 | Rule engine | Not implemented | Working (affix / morpheme / template / transliterate) |
@@ -80,7 +99,7 @@ every layer below is a placeholder.
 | Plugins | Not implemented; `include/plugins/plugin_api.h` is still a draft | Extension points v1 with failure isolation, 2 example plugins |
 | UI surface architecture | Not implemented | Working: engine/UI event-contract boundary, CLI, overlay, desktop window and in-process web panel all share one schema |
 | Customization (appearance, layout, profiles) | Not implemented | Working: declarative presentation spec, 7 presets, live switching, memory tiers |
-| Tests | Directories only | `--selftest` plus 20 self-check scripts (15 headless in CI, 5 that need a display); `prototype/README.md` records the current assertion counts |
+| Tests | Directories only | `--selftest` plus 21 self-check scripts (16 headless in CI, 5 that need a display); `prototype/README.md` records the current assertion counts |
 
 ## Runtime requirements
 
@@ -90,6 +109,10 @@ Python prototype (runs today):
 - tkinter (standard library) for the overlay
 - Optional: a local NLLB model, fetched once by `prototype/fetch_model.py`
   (~617 MiB). Without it the prototype runs on corpora and rules alone.
+- Live audio: `soundcard` (system loopback / microphone) and `faster-whisper`
+  (local speech recognition); the speech weights are a one-time
+  `prototype\run.cmd fetch_model --asr small` (~460 MiB). Without these two
+  packages screen translation still works.
 
 Native build (not yet functional):
 
@@ -147,6 +170,13 @@ The working prototype:
 prototype\run.cmd --select --mode both   # drag a region, then run
 prototype\run.cmd --list-monitors
 prototype\run.cmd --mode none --duration 20 --print   # headless
+
+# A livestream with no subtitles: listen to what the machine is playing
+prototype\run.cmd fetch_model --asr small        # one-time speech model download
+prototype\run.cmd --list-audio-devices           # loopback and microphone devices
+prototype\run.cmd --live --mode both             # watch a stream, get subtitles
+prototype\run.cmd --live --audio-device 2 --asr-model small
+prototype\run.cmd --live --audio-file recording.wav --mode none --print
 ```
 
 Vocabulary can be managed without the UI, on a machine that has no browser:
@@ -160,6 +190,50 @@ prototype\run.cmd --promote-corrections --dry-run      # 实时纠正 -> corpus 
 
 The native target (`./build/ProjectWatashi`) only prints a startup line; it is
 not implemented yet.
+
+## Live-stream translation (no subtitles)
+
+Screen OCR can only read text that is already on screen. A stream without
+subtitles has none, so this mode listens instead:
+
+    system audio (WASAPI loopback / PulseAudio monitor)
+      -> energy VAD phrase segmentation
+      -> local faster-whisper speech recognition
+      -> the same corpus / rules / local model as screen translation
+      -> the same bilingual overlay
+
+It listens to **what this machine is playing**, so there is no stream download
+and no URL is handed to the program; a browser, VLC, or any player works. A
+microphone and a WAV file are the other two inputs, for testing and for
+translating a recording.
+
+```bash
+prototype\run.cmd --live                     # default speaker loopback
+prototype\run.cmd --live --audio-device 2    # an index from --list-audio-devices
+prototype\run.cmd --live --audio-source microphone
+prototype\run.cmd --live --audio-file talk.wav --mode none --print
+```
+
+The settings that actually change the experience (the panel's 直播 tab, or the
+`live:` section of `prototype/config.yaml`; all currently need a restart):
+
+| Setting | Effect | Suggested |
+| --- | --- | --- |
+| `live.asr_model` | speech model size | `tiny`/`base` on a 4 GB machine; `small` is the desktop balance |
+| `live.silence_ms` | pause that ends a phrase | 500–700 ms; lower is faster, more fragmented |
+| `live.max_segment_s` | forced cut during a monologue | 8 s; lower is faster, higher is more complete |
+| `live.vad_threshold` | how loud counts as speech | raise it when background music keeps triggering |
+| `live.language` | spoken language | write `en`/`ja`/`ko` when known; it is more stable than `auto` |
+
+Run `fetch_model --asr small` once first. Setting `live.local_files_only: true`
+then guarantees the program never goes online for a model.
+
+**Known limits**: the energy gate cannot tell music from speech, so continuous
+background music occasionally produces a false line; a subtitle waits for the
+end of a phrase (about 0.6 s of silence by default) rather than scrolling word
+by word; only one audio source is listened to at a time and speakers are not
+separated. Measurements and tuning notes are in the Live audio section of
+`prototype/README.md`.
 
 ## Configuration
 
@@ -186,6 +260,11 @@ capture:
   region: null          # "x,y,w,h" in physical pixels; null = a strip across the bottom
   fps: 10               # capture rate; OCR only runs on a frame that changed
   settle_ms: 0          # hold OCR back until the frame has been still this long
+
+live:
+  enabled: false       # true = listen instead of capture; --live on the command line
+  source: system       # system | microphone | file
+  asr_model: small     # or a directory fetched by fetch_model --asr
 
 translation:
   source: auto          # auto-detect, or name it: auto cannot tell French from English
@@ -461,7 +540,7 @@ removed: empty directories cannot be committed, nothing referenced them, and the
 | --- | --- |
 | M1 | Minimal loop: hotkey region select -> capture -> OCR -> corpus lookup -> bilingual overlay (Windows) — **done in `prototype/`** |
 | M2 | Corpus and rule engine with user authoring and hot reload — **done in `prototype/`** |
-| M3 | Local model fallback with streaming output and caching — **done in `prototype/`** (local NMT, asynchronous refinement rather than streaming) |
+| M3 | Local model fallback with streaming output and caching — **done in `prototype/`** (local NMT, final translation batched before painting; async refinement available as an option) |
 | M4 | Latency budget met: incremental recognition, caching, thread model tuning — **partially measured** |
 | M5 | Cross-platform: Linux and macOS capture and UI adapters |
 | M6 | Stable plugin API; experimental Android target — **plugin API v1 done in `prototype/`**, Android not started |
@@ -475,6 +554,13 @@ removed: empty directories cannot be committed, nothing referenced them, and the
 | macOS | Primary | ScreenCaptureKit / CGWindowList |
 | Android | Secondary | MediaProjection, overlay and accessibility permissions |
 | Small devices | Tertiary | Trimmed UI and models, core path only |
+
+## License
+
+- **Code: MIT**, see [LICENSE](LICENSE).
+- **Model weights are not covered by it.** This repository ships none: the NLLB-200 that `fetch_model` downloads is **CC-BY-NC-4.0 (non-commercial)**, Whisper is MIT, PP-OCRv4 is Apache-2.0.
+- Full inventory and distribution rules: [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md).
+- This is a **non-commercial** open-source project (a graduation project). The NLLB terms forbid commercial use.
 
 ## Notes
 

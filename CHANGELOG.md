@@ -8,6 +8,49 @@ described in `Project Watashi.md`. It is usable for testing and it is honest abo
 what it does not do yet -- see "Known limitations" below, which is part of the
 release rather than a footnote.
 
+## [Unreleased]
+
+### Added
+
+- **Live audio translation, for streams that have no subtitles.** A second input
+  path beside screen OCR: system loopback (WASAPI / PulseAudio monitor), a
+  microphone, or a WAV file -> energy VAD phrase segmentation -> local
+  faster-whisper -> the *same* corpora, rules, local NMT model, corrections and
+  overlay as screen translation. It listens to what the machine is playing, so
+  there is no stream download and no URL handed to the program; a browser,
+  player or VLC works. The pipeline reuses the existing translator rather than
+  copying its rules, and it duck-types the control surface, so the desktop
+  window, web panel, JSON-lines stream, hotkeys and pause all keep working.
+- **The live path has its own settings category** (直播): source, device,
+  language, model size, compute type, threads, beam, Whisper VAD, silence and
+  maximum phrase length, the energy gate, pre-roll, WAV pacing, model cache and
+  a local-only switch. All are restart-required because the source and model are
+  built once; the reason is stated in the field, not left to be discovered.
+- **One-time speech model fetch**: `fetch_model --asr small` (any faster-whisper
+  size or a Hugging Face id) downloads the weights through faster-whisper's own
+  file list, so a model is not left 99% present and unusable. After that,
+  `live.local_files_only: true` makes an offline guarantee.
+- **Audio device discovery**: `--list-audio-devices` marks loopback and default
+  endpoints, accepts a name substring or an index, and refuses an index of the
+  wrong kind instead of silently using the default.
+- **Screen-only commands are refused in live mode** (`set_region`,
+  `use_window`, `set_fps`, `set_diff_threshold`), and the desktop window
+  disables 框选区域 / 选择窗口 rather than accepting a command that cannot mean
+  anything. The 采集 tab says 声音来源 and the status line says 语音, not OCR.
+- **selfcheck_live**, 44 assertions, headless and in CI: synthetic-tone
+  segmentation (silence, click, monologue cut, flush), resampling, WAV playback
+  end, device selection, a missing-soundcard message, the whole chain with a
+  named scripted transcriber, and a Session that builds no OCR and finishes on
+  its own. It deliberately does **not** claim to verify a real device or real
+  Whisper accuracy; that needs hardware and a model.
+
+### Notes
+
+- Not released yet; version stays 0.0.7a. The ASR accuracy and real-hardware
+  latency numbers are not claimed until measured on this machine.
+- `OverlayStats` gained a `mode` field so the UI can label speech recognition
+  as 语音 instead of OCR. Additive; existing clients ignore it.
+
 ## [0.0.7a] -- 2026-09-14 -- 测试版 (pre-release)
 
 The corpus learned that one word can have several meanings, and the editor stopped

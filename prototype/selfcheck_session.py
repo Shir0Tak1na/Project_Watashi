@@ -34,6 +34,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from watashi.checks import Checker  # noqa: E402
 
 from watashi.config import AppConfig
+from watashi.ocr import OcrLine
 from watashi.events import (
     CMD_PAUSE,
     CMD_RELOAD_CORPUS,
@@ -192,6 +193,65 @@ def main(argv: list[str] | None = None) -> int:
         check.check("aggregate text agrees with the line list",
                     with_lines[-1]["data"]["target"] == "\n".join(
                         l["target"] for l in lines))
+
+    print("")
+    print("-- a wrapped sentence is joined before translation --")
+    pipeline = session.pipeline
+    first = OcrLine("the sword intent of this", 0.95, (20, 100, 600, 130))
+    second = OcrLine("sect is a myth", 0.95, (20, 136, 400, 166))
+    merged = pipeline._merge_ocr_lines([first, second])
+    check.check(
+        "two visual lines of one sentence become one line",
+        len(merged) == 1,
+        f"{len(merged)} line(s)",
+    )
+    if merged:
+        check.check(
+            "the joined text reads as a sentence",
+            merged[0].text == "the sword intent of this sect is a myth",
+            merged[0].text,
+        )
+        check.check(
+            "the merged box covers both original lines",
+            merged[0].box[1] == 100 and merged[0].box[3] == 166,
+            f"box={merged[0].box}",
+        )
+    check.check(
+        "a terminated sentence does not swallow the next line",
+        len(pipeline._merge_ocr_lines(
+            [OcrLine("Done.", 0.9, (0, 0, 100, 20)),
+             OcrLine("next line", 0.9, (0, 24, 100, 44))]
+        )) == 2,
+    )
+    check.check(
+        "an uppercase start is treated as a new row, not a continuation",
+        len(pipeline._merge_ocr_lines(
+            [OcrLine("a settings row", 0.9, (0, 0, 180, 20)),
+             OcrLine("Another row", 0.9, (0, 24, 180, 44))]
+        )) == 2,
+    )
+    check.check(
+        "a bullet is a new item, not a wrapped sentence",
+        len(pipeline._merge_ocr_lines(
+            [OcrLine("choose a path", 0.9, (0, 0, 180, 20)),
+             OcrLine("- second option", 0.9, (0, 24, 180, 44))]
+        )) == 2,
+    )
+    check.check(
+        "CJK lines join without an inserted space",
+        (lambda rows: len(rows) == 1 and rows[0].text == "他走进虚空境界深处")(
+            pipeline._merge_ocr_lines(
+                [OcrLine("他走进虚空", 0.9, (0, 0, 180, 20)),
+                 OcrLine("境界深处", 0.9, (0, 24, 180, 44))]
+            )
+        ),
+    )
+    pipeline.config.join_fragmented_lines = False
+    check.check(
+        "the switch really disables joining",
+        len(pipeline._merge_ocr_lines([first, second])) == 2,
+    )
+    pipeline.config.join_fragmented_lines = True
 
     print("")
     print("-- commands --")

@@ -60,6 +60,7 @@ MODULE_TO_DIST = {
     "requests": "requests",
     "fastapi": "fastapi",
     "uvicorn": "uvicorn",
+    "faster_whisper": "faster-whisper",
     "starlette": "starlette",
     "pydantic": "pydantic",
     "anyio": "anyio",

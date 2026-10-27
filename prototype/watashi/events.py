@@ -238,6 +238,11 @@ class OverlayStats:
     refinements_pending: int = 0
     refinements_dropped: int = 0
     memory_mib: float = 0.0
+    #: "live" when the audio path produced this, empty/"" for screen OCR. Kept
+    #: separate from backend: backend says which translator answered, this says
+    #: which input produced the line, and a surface that labels OCR should not
+    #: claim the speech recogniser was OCR.
+    mode: str = ""
 
 
 # --------------------------------------------------------------------------- #
@@ -339,6 +344,7 @@ def encode_stats(stats: OverlayStats) -> dict[str, Any]:
         "refinements_pending": stats.refinements_pending,
         "refinements_dropped": stats.refinements_dropped,
         "memory_mib": round(stats.memory_mib, 1),
+        "mode": stats.mode,
     }
 
 
@@ -359,6 +365,7 @@ def decode_stats(data: dict[str, Any]) -> OverlayStats:
         refinements_pending=int(data.get("refinements_pending", 0)),
         refinements_dropped=int(data.get("refinements_dropped", 0)),
         memory_mib=float(data.get("memory_mib", 0.0)),
+        mode=str(data.get("mode", "")),
     )
 
 

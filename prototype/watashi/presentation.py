@@ -21,7 +21,9 @@ Nothing here imports tkinter or a web framework, so both can consume it.
 from __future__ import annotations
 
 import copy
+import json
 from dataclasses import dataclass, field, replace
+from pathlib import Path
 from typing import Any, Callable, Sequence
 
 SPEC_VERSION = 1
@@ -526,6 +528,57 @@ def _preset_hidden() -> PresentationSpec:
     return spec
 
 
+def presentation_file_path(config: Any) -> Path | None:
+    """The external spec file this config points at, if any.
+
+    Two ways to name it are accepted: ``overlay.presentation_file`` (explicit),
+    and ``overlay.presentation`` written as a ``.json`` path. The latter keeps
+    one key for "which presentation" instead of requiring the user to know that
+    presets and files are different things.
+
+    Relative paths are resolved against the config's directory, so moving the
+    project folder does not break the design file.
+    """
+    overlay = getattr(config, "overlay", {}) or {}
+    raw = overlay.get("presentation_file")
+    if not raw:
+        candidate = getattr(config, "presentation", None)
+        if candidate is None:
+            candidate = overlay.get("presentation")
+        if isinstance(candidate, str) and candidate.lower().endswith(".json"):
+            raw = candidate
+    if not raw:
+        return None
+    path = Path(str(raw)).expanduser()
+    base = getattr(config, "base_dir", None)
+    if not path.is_absolute() and base is not None:
+        path = Path(base) / path
+    return path
+
+
+def load_presentation_file(path: str | Path) -> PresentationSpec:
+    """Read a spec file. Raises with a message that names the file and problem.
+
+    A design file is edited by hand; a bad edit must not take the overlay down.
+    The caller decides whether to keep the old spec, but the error has to say
+    which line of which file is wrong, or the user has no way to recover.
+    """
+    target = Path(path)
+    try:
+        raw = json.loads(target.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        raise FileNotFoundError(f"presentation file not found: {target}") from None
+    except json.JSONDecodeError as exc:
+        raise ValueError(
+            f"{target.name}: invalid JSON at line {exc.lineno}, column {exc.colno}: {exc.msg}"
+        ) from None
+    if not isinstance(raw, dict):
+        raise ValueError(f"{target.name}: the top level must be a JSON object")
+    spec = PresentationSpec.from_dict(raw)
+    spec.name = spec.name or target.stem
+    return spec
+
+
 def resolve_presentation(config: Any) -> PresentationSpec:
     """Read the configured presentation and let ``overlay.*`` drive it.
 
@@ -538,7 +591,14 @@ def resolve_presentation(config: Any) -> PresentationSpec:
 
     Their defaults match the presets exactly (24 / 0.72 / 90), so applying them
     unconditionally changes nothing for an untouched config.
+
+    A presentation **file** is the exception: it is the whole answer, so the
+    legacy scalar overrides are not layered on top of it. Otherwise a user who
+    set ``bar_alpha: 0.3`` in their design file would watch ``overlay.bar_alpha``
+    (a default 0.72) repaint over it and conclude the file was being ignored.
     """
+    if presentation_file_path(config) is not None:
+        return _resolve_base(config)
     return _apply_overlay_settings(_resolve_base(config), config)
 
 
@@ -571,11 +631,19 @@ def _apply_overlay_settings(spec: PresentationSpec, config: Any) -> Presentation
 
 
 def _resolve_base(config: Any) -> PresentationSpec:
-    """The configured presentation: a preset name or a spec object.
+    """The configured presentation: a preset name, a spec object, or a file.
 
     Kept here rather than in ``session`` so that a config carrying a spec dict is
     validated the same way whether it came from a file, a command or a profile.
     """
+    path = presentation_file_path(config)
+    if path is not None:
+        try:
+            return load_presentation_file(path)
+        except Exception as exc:
+            # Keep the window usable instead of refusing to start: the user is
+            # mid-edit, and the error names the file so the next save can fix it.
+            print(f"[presentation] {exc}; falling back to the bar preset")
     raw = getattr(config, "presentation", None)
     if raw is None:
         raw = (getattr(config, "overlay", {}) or {}).get("presentation")

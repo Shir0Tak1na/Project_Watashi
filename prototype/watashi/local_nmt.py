@@ -65,6 +65,8 @@ from .lang import (  # noqa: E402  (re-exported for backwards compatibility)
     NLLB_CODES,
     UNSPACED as _UNSPACED,
     detect_language,
+    has_translatable_content,
+    matches_target,
     to_nllb_code,
 )
 
@@ -721,6 +723,347 @@ def refine_batch_with_nmt(
     return [results[i] for i in sorted(results)]
 
 
+# --------------------------------------------------------------------------- #
+# readable translation: substitute terms first, then translate
+# --------------------------------------------------------------------------- #
+#
+# The masked-placeholder path above protects terminology but costs fluency:
+# NLLB is handed a sentence with gaping holes, and on several measured lines it
+# collapsed the remaining grammar ("he broke through to the <=0>= <=1>=" became
+# "断到").  A better order exists because the corpus result is already a
+# code-switched sentence: the source sentence with its terms in the target
+# language. Translating *that* gives the model the whole sentence to read while
+# the terminology is literally present in the text.
+#
+# The corpus answer is still the instant, zero-cost result when it is already a
+# complete translation (a term-only line such as "antidragon superspirit
+# voidsword"), so that case never reaches the model at all.
+
+def _resolve_source_code(text: str, source_lang: str | None) -> str:
+    """The source code to translate *text* from, for a code-switched line."""
+    if source_lang and (source_lang or "").strip().lower() != "auto":
+        try:
+            return to_nllb_code(source_lang)
+        except ValueError:
+            pass
+    return detect_language(text)
+
+
+def _term_targets(outcome: Outcome, min_confidence: float) -> list[str]:
+    """Translations the corpus is allowed to insist on for this line."""
+    return [
+        span.target.strip()
+        for span in outcome.spans
+        if span.explained
+        and span.source.strip()
+        and span.target.strip()
+        and span.target.strip() != span.source.strip()
+        and span.confidence >= min_confidence
+    ]
+
+
+def _missing_terms(text: str, targets: Sequence[str]) -> list[str]:
+    """Term translations absent from *text*, ignoring whitespace.
+
+    Whitespace is ignored because ``tidy_cjk_spacing`` legitimately removes the
+    spaces a masked or code-switched source introduced between CJK terms; that
+    must not read as a lost term.
+    """
+    compact = re.sub(r"\s+", "", text)
+    return [term for term in targets if re.sub(r"\s+", "", term) not in compact]
+
+
+#: Lowercase Latin words left inside a CJK answer. All-caps runs ("GG", "AI")
+#: are exempt: they are acronyms a Chinese sentence legitimately keeps.
+_LATIN_RESIDUE = re.compile(r"[A-Za-z]{2,}")
+
+
+def _latin_residue(text: str) -> bool:
+    return any(match.group(0) != match.group(0).upper() for match in _LATIN_RESIDUE.finditer(text))
+
+
+def _corpus_is_complete(outcome: Outcome, target_lang: str) -> bool:
+    """True when the corpus result needs no model: it is already in the target.
+
+    A term-only line ("antidragon superspirit voidsword" -> "反龙 超灵力 虚空剑")
+    is a complete answer, not a half-translated one. Sending it to the model is
+    what invented terminology in the first place.
+
+    ``matches_target`` alone is too generous here: "the 反龙 超灵力 guard blocked
+    the gate" reaches the 15% Han share that counts as Chinese, yet still has
+    three English words in it. For a CJK target, leftover lowercase Latin words
+    are the direct evidence that the sentence was not translated, so they veto
+    the short circuit.
+    """
+    target = outcome.target_text.strip()
+    if not target:
+        return False
+    if not has_translatable_content(target):
+        return True
+    if not matches_target(target, target_lang):
+        return False
+    try:
+        base = to_nllb_code(target_lang).split("_")[0]
+    except ValueError:
+        return True
+    if base in _UNSPACED:
+        return not _latin_residue(target)
+    return True
+
+
+def _readable_fallback(
+    text: str, outcome: Outcome, reason: str, terms: int = 0, lost: int = 0
+) -> Refinement:
+    return Refinement(
+        source_text=text,
+        target_text=outcome.target_text,
+        backend="corpus+rules",
+        protected_terms=terms,
+        lost_placeholders=lost,
+        used_nmt=False,
+        fallback_reason=reason,
+    )
+
+
+def _usable_model_text(text: str, target_lang: str) -> bool:
+    """A model answer worth showing: real text, no loop, in the target language."""
+    return (
+        bool(text.strip())
+        and not is_degenerate(text)
+        and matches_target(text, target_lang)
+    )
+
+
+def translate_readable_batch_with_nmt(
+    model: NmtModel,
+    corpus: CorpusStore,
+    texts: Sequence[str],
+    target_lang: str,
+    context: Context | None = None,
+    protect: bool = True,
+    min_confidence: float = 0.4,
+    source_lang: str | None = None,
+) -> list[Refinement]:
+    """Translate lines so the result reads as a sentence, not a word salad.
+
+    Three steps per line, each measured against the alternatives:
+
+    1. **Corpus first.** If the corpus answer is already complete (all source
+       text replaced, a term list, or no model configured) it is final. This is
+       the zero-cost path and it keeps term-only lines exact.
+    2. **Translate the code-switched sentence.** The corpus answer -- source
+       grammar with target-language terms inline -- goes through NLLB as a whole
+       sentence. Measured: "he broke through to the 虚空 境界" -> "他突破了虚空境界",
+       where masking the same terms produced "断到 虚空 境界".
+    3. **Verify the terms.** If a corpus term did not survive, retry that line
+       once with placeholders. If that also loses terms, show the fluent model
+       sentence and report the loss -- never the half-English corpus string,
+       which is neither terminology nor prose.
+
+    The batch is two model calls at worst (one shared code-switch pass, one
+    shared retry), so a frame still pays batch prices rather than per-line ones.
+    """
+    if not texts:
+        return []
+
+    try:
+        nllb_target: str | None = to_nllb_code(target_lang)
+    except ValueError:
+        nllb_target = None
+
+    outcomes = [corpus.translate(text, target_lang, context) for text in texts]
+    results: dict[int, Refinement] = {}
+    pending: list[tuple[int, str, Outcome, str]] = []
+
+    for index, (text, outcome) in enumerate(zip(texts, outcomes)):
+        if not text.strip():
+            results[index] = _readable_fallback(text, outcome, "empty input")
+            continue
+        if _corpus_is_complete(outcome, target_lang):
+            results[index] = Refinement(
+                source_text=text,
+                target_text=outcome.target_text,
+                backend="corpus+rules",
+                used_nmt=False,
+                fallback_reason="already complete through corpus+rules",
+            )
+            continue
+        if nllb_target is None:
+            results[index] = _readable_fallback(
+                text, outcome, f"no NLLB code for target {target_lang!r}"
+            )
+            continue
+        if not model.available:
+            results[index] = _readable_fallback(
+                text, outcome, model.load_error or "model unavailable"
+            )
+            continue
+        pending.append(
+            (index, text, outcome, _resolve_source_code(text, source_lang))
+        )
+
+    if not pending:
+        return [results[i] for i in sorted(results)]
+
+    # One grouped batch per source language. Most frames have a single group;
+    # grouping keeps the shared-call win without pretending that the NLLB
+    # language token can differ inside one batch.
+    groups: dict[str, list[tuple[int, str, Outcome, str]]] = {}
+    for item in pending:
+        groups.setdefault(item[3], []).append(item)
+
+    retry: list[tuple[int, str, Outcome, str, Refinement]] = []
+
+    for source_code, items in groups.items():
+        inputs = [item[2].target_text for item in items]
+        started = time.perf_counter()
+        try:
+            raws = model.translate_batch(inputs, nllb_target, source_code)
+        except Exception as exc:
+            for item in items:
+                results[item[0]] = _readable_fallback(
+                    item[1], item[2], f"model error: {exc}"
+                )
+            continue
+        per_line_ms = (time.perf_counter() - started) * 1000.0 / max(1, len(items))
+
+        for (index, text, outcome, _code), raw in zip(items, raws):
+            if nllb_target.split("_")[0] in _UNSPACED:
+                raw = tidy_cjk_spacing(raw)
+            targets = _term_targets(outcome, min_confidence)
+            lost = _missing_terms(raw, targets) if targets else []
+            if _usable_model_text(raw, target_lang) and not lost:
+                model.stats.protected_terms += len(targets)
+                results[index] = Refinement(
+                    source_text=text,
+                    target_text=raw,
+                    backend=f"local-nmt/{model.compute_type}",
+                    protected_terms=len(targets),
+                    elapsed_ms=per_line_ms,
+                )
+                continue
+            # The code-switch sentence kept the terms in place, but the model
+            # still returned something incomplete or dropped one. Keep the
+            # answer as a candidate for the failure path below.
+            candidate = Refinement(
+                source_text=text,
+                target_text=raw,
+                backend=f"local-nmt/{model.compute_type}",
+                protected_terms=len(targets),
+                lost_placeholders=len(lost),
+                elapsed_ms=per_line_ms,
+                used_nmt=True,
+                fallback_reason=(
+                    f"{len(lost)} term(s) not preserved"
+                    if lost
+                    else "model output was not a complete translation"
+                ),
+            )
+            if not raw.strip() or is_degenerate(raw):
+                candidate.used_nmt = False
+            model.stats.protected_terms += len(targets)
+            model.stats.lost_placeholders += len(lost)
+            retry.append((index, text, outcome, _code, candidate))
+
+    if retry:
+        _retry_with_placeholders(
+            model, nllb_target, retry, results, min_confidence
+        )
+
+    return [results[i] for i in sorted(results)]
+
+
+def _retry_with_placeholders(
+    model: NmtModel,
+    nllb_target: str,
+    items: list[tuple[int, str, Outcome, str, Refinement]],
+    results: dict[int, Refinement],
+    min_confidence: float,
+) -> None:
+    """Second attempt for lines the code-switch pass could not finish.
+
+    Masking is worse for fluency, so it is only used where it can win: a line
+    whose terms are mandatory and did not survive. When it loses too, the fluent
+    code-switch answer is kept and the loss is reported rather than hidden.
+    """
+    prepared: list[
+        tuple[int, str, Outcome, str, "ProtectedText", Refinement]
+    ] = []
+    for index, text, outcome, code, candidate in items:
+        protected = protect_terms(
+            text, outcome, model.placeholder_scheme, min_confidence
+        )
+        if (
+            protected.count
+            and residual_word_count(protected.masked, protected.pattern)
+            < MIN_RESIDUAL_WORDS
+        ):
+            results[index] = candidate
+            continue
+        prepared.append((index, text, outcome, code, protected, candidate))
+
+    if not prepared:
+        return
+
+    groups: dict[
+        str, list[tuple[int, str, Outcome, "ProtectedText", Refinement]]
+    ] = {}
+    for index, text, outcome, code, protected, candidate in prepared:
+        groups.setdefault(code, []).append((index, text, outcome, protected, candidate))
+
+    for code, group in groups.items():
+        masked_inputs = [item[3].masked for item in group]
+        started = time.perf_counter()
+        try:
+            raws = model.translate_batch(masked_inputs, nllb_target, code)
+        except Exception:
+            for index, _text, _outcome, _protected, candidate in group:
+                results[index] = candidate
+            continue
+        per_line_ms = (time.perf_counter() - started) * 1000.0 / max(1, len(group))
+        for (index, _text, _outcome, protected, candidate), raw in zip(group, raws):
+            if nllb_target.split("_")[0] in _UNSPACED:
+                raw = tidy_cjk_spacing(raw)
+            restored, lost = restore_terms(raw, protected)
+            if (
+                not lost
+                and not is_degenerate(restored)
+                and _usable_model_text(restored, nllb_target)
+            ):
+                results[index] = Refinement(
+                    source_text=candidate.source_text,
+                    target_text=restored,
+                    backend=f"local-nmt/{model.compute_type}/protected",
+                    protected_terms=protected.count,
+                    elapsed_ms=per_line_ms,
+                )
+            else:
+                results[index] = candidate
+
+
+def translate_readable_with_nmt(
+    model: NmtModel,
+    corpus: CorpusStore,
+    text: str,
+    target_lang: str,
+    context: Context | None = None,
+    protect: bool = True,
+    min_confidence: float = 0.4,
+    source_lang: str | None = None,
+) -> Refinement:
+    """Single-line form of :func:`translate_readable_batch_with_nmt`."""
+    return translate_readable_batch_with_nmt(
+        model,
+        corpus,
+        [text],
+        target_lang,
+        context,
+        protect,
+        min_confidence,
+        source_lang,
+    )[0]
+
+
 class NmtTranslator(Translator):
     """Synchronous NMT translator with corpus term protection."""
 
@@ -838,6 +1181,7 @@ class HybridTranslator(Translator):
         self._cache: dict[tuple[str, str], Refinement] = {}
         self._cache_revision = 0
         self._lock = threading.Lock()
+        self._model_lock = threading.Lock()
         self.refinements = 0
         self.dropped = 0
         self.deferred = 0
@@ -871,6 +1215,76 @@ class HybridTranslator(Translator):
             outcome.target_text = cached.target_text
             outcome.backend = cached.backend
         return outcome
+
+    def translate_readable_batch(
+        self,
+        texts: "Sequence[str]",
+        target_lang: str = "zh-CN",
+        context: "Context | None" = None,
+    ) -> list[Refinement]:
+        """Final translations for a frame, in one batch, before it is painted.
+
+        The old path painted the corpus result first and let the model replace it
+        a moment later. That is faster by one model call and worse in every way a
+        reader notices: the first thing on screen was ``the 剑意 of this 宗门 is
+        a myth`` -- half English, no sentence. Here the corpus is still the
+        instant answer when it is complete, and the model is asked before the
+        subtitle is drawn when it is not.
+
+        Cached answers are served first; a frame that has not changed pays
+        nothing.
+        """
+        if not texts:
+            return []
+
+        results: list[Refinement | None] = [None] * len(texts)
+        missing: list[int] = []
+        for index, text in enumerate(texts):
+            cached = self._cached(text, target_lang, context)
+            if cached is not None:
+                results[index] = cached
+            else:
+                missing.append(index)
+
+        if missing:
+            if not self.model_available:
+                for index in missing:
+                    outcome = self.corpus.translate(texts[index], target_lang, context)
+                    results[index] = _readable_fallback(
+                        texts[index],
+                        outcome,
+                        (self.model.load_error if self.model is not None else None)
+                        or "model unavailable",
+                    )
+            else:
+                pending = [texts[index] for index in missing]
+                with self._model_lock:
+                    fresh = translate_readable_batch_with_nmt(
+                        self.model,  # type: ignore[arg-type]
+                        self.corpus,
+                        pending,
+                        target_lang,
+                        context,
+                        self.protect,
+                        self.protect_min_confidence,
+                        self.source_lang,
+                    )
+                with self._lock:
+                    if len(self._cache) + len(fresh) >= self.cache_size:
+                        self._cache.clear()
+                    for index, refinement in zip(missing, fresh):
+                        results[index] = refinement
+                        self._cache[
+                            self._cache_key(texts[index], target_lang, context)
+                        ] = refinement
+
+        final: list[Refinement] = []
+        for index, item in enumerate(results):
+            if item is None:  # defensive: every index is filled above
+                outcome = self.corpus.translate(texts[index], target_lang, context)
+                item = _readable_fallback(texts[index], outcome, "no result")
+            final.append(item)
+        return final
 
     def _cache_key(
         self, text: str, target_lang: str, context: "Context | None"

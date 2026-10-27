@@ -91,6 +91,7 @@ from .events import (
 )
 from .memory import MemorySampler
 from .presentation import PresentationSpec, resolve_presentation
+from . import live as live_audio
 from .profiles import list_profiles
 from .ocr import RapidOcrEngine
 from .pipeline import Pipeline, PipelineConfig
@@ -139,7 +140,10 @@ class Session:
         #: waiting for OCR to read the same text again (which it may never do)
         self._last_update: OverlayUpdate | None = None
 
-        self._pipeline: Pipeline | None = None
+        #: Either the screen Pipeline or the LivePipeline. Both publish the same
+        #: events and answer the same control surface, which is what lets every
+        #: existing UI work for live audio without a second code path.
+        self._pipeline: Any | None = None
         self._subscribers: list[queue.Queue] = []
         self._subscribers_lock = threading.Lock()
         self._seq = 0
@@ -183,6 +187,23 @@ class Session:
         self.load_plugins()
         if self._translator is None:
             self._translator = build_translator(self.config, on_refined=self._on_refined)
+
+        if self.config.live_enabled:
+            # Live audio replaces the input, not the rest of the engine: the
+            # translator is the same object, so corpora, scenes, corrections,
+            # refinement and the target language behave identically. OCR is
+            # never built -- loading 175 MiB of weights that cannot read sound
+            # would be pure cost, and on a small machine it is the difference
+            # between starting and swapping.
+            self._ocr = None
+            self._pipeline = live_audio.build_live_pipeline(
+                self.config,
+                self._translator,
+                on_update=self._on_update,
+                on_stats=self._on_stats,
+            )
+            return
+
         if self._ocr is None:
             self._ocr = build_ocr(self.config)
         if self._capturer is None:
@@ -209,6 +230,16 @@ class Session:
             source_lang=self.config.source_lang,
             min_confidence=float(self.config.translation.get("min_confidence", 0.0)),
             scene=str(self.config.translation.get("scene") or "").strip(),
+            final_translation=bool(
+                self.config.translation.get("final_translation", True)
+            ),
+            join_fragmented_lines=bool(
+                self.config.translation.get("join_fragmented_lines", True)
+            ),
+            join_max_lines=int(self.config.translation.get("join_max_lines", 3) or 3),
+            join_max_chars=int(
+                self.config.translation.get("join_max_chars", 240) or 240
+            ),
         )
         self._pipeline = Pipeline(
             capturer=self._capturer,
@@ -220,7 +251,21 @@ class Session:
         )
 
     @property
-    def pipeline(self) -> Pipeline:
+    def live_mode(self) -> bool:
+        """True when this session's input is sound rather than the screen.
+
+        Asked of the built pipeline first, not of the config: a settings change
+        to live.enabled is documented as restart-required, and between the
+        change and the restart the config would say "off" while the running
+        engine is still listening. Commands must refuse screen controls for the
+        engine that exists, not for the file that was just edited.
+        """
+        if self._pipeline is not None:
+            return getattr(self._pipeline, "KIND", "") == "live"
+        return bool(self.config.live_enabled)
+
+    @property
+    def pipeline(self) -> Any:
         if self._pipeline is None:
             self.build()
         assert self._pipeline is not None
@@ -246,6 +291,8 @@ class Session:
 
     @property
     def ocr(self) -> RapidOcrEngine:
+        if self.live_mode:
+            raise RuntimeError("直播模式没有 OCR 引擎：输入是声音，不是屏幕")
         if self._ocr is None:
             self.build()
         assert self._ocr is not None
@@ -277,6 +324,9 @@ class Session:
                 start_worker()
         self._running = True
         self.publish(EVENT_READY, self.info())
+        if self.live_mode:
+            self.set_status(f"正在监听：{self.pipeline.to_dict().get('live_source', '音频')}")
+            return
         if self.hold_if_capturing_self():
             return
         self.set_status("正在监测屏幕区域…")
@@ -292,6 +342,9 @@ class Session:
         off is a property of this method and not of whatever the detection happens to do --
         a check that stubs the detection must still see the switch work.
         """
+        if self.live_mode:
+            # There is no screen region to be covered by our own overlay.
+            return []
         if not bool(self.config.capture.get("hold_if_self_visible", True)):
             return []
         return self._detect_self_windows()
@@ -420,6 +473,11 @@ class Session:
         return self._running
 
     @property
+    def finished(self) -> bool:
+        """True when a finite live source (a WAV file) has been fully processed."""
+        return bool(getattr(self._pipeline, "finished", False))
+
+    @property
     def uptime_s(self) -> float:
         return time.perf_counter() - self._started_at if self._started_at else 0.0
 
@@ -472,9 +530,30 @@ class Session:
         """Everything a client needs to render an initial view."""
         backend_stats = self.translator.stats()
         window_title = getattr(self._capturer, "title", "") if self._capturer else ""
-        capture_mode = (
-            "window" if getattr(self._capturer, "KIND", "region") == "window" else "region"
-        )
+        if self.live_mode:
+            capture_mode = "audio"
+        else:
+            capture_mode = (
+                "window" if getattr(self._capturer, "KIND", "region") == "window" else "region"
+            )
+        live_info: dict[str, Any] = {}
+        if self.live_mode and self._pipeline is not None:
+            live_data = self._pipeline.to_dict()
+            live_info = {
+                "source": live_data.get("live_source", ""),
+                "asr": live_data.get("live_asr", ""),
+                "asr_model": live_data.get("asr_model", ""),
+                "language": live_data.get("live_language", ""),
+                "finished": bool(live_data.get("live_finished", False)),
+            }
+        if self.live_mode:
+            region_label = live_info.get("source") or "直播音频"
+        elif window_title:
+            region_label = f"窗口：{window_title}"
+        elif self._region:
+            region_label = str(self._region)
+        else:
+            region_label = "auto (bottom strip)"
         return {
             "schema_version": SCHEMA_VERSION,
             #: so every surface can show what it is talking to, instead of a user
@@ -484,12 +563,8 @@ class Session:
             "mode": self.config.overlay.get("mode"),
             "capture_mode": capture_mode,
             "capture_window": window_title,
-            "region": (
-                f"窗口：{window_title}" if window_title
-                else str(self._region) if self._region
-                else "auto (bottom strip)"
-            ),
-            "region_box": self._region_box(),
+            "region": region_label,
+            "region_box": None if self.live_mode else self._region_box(),
             "monitor": self.config.monitor,
             "fps_target": self.config.fps,
             "diff_threshold": self.config.capture.get("diff_threshold"),
@@ -520,7 +595,10 @@ class Session:
             "nmt_available": bool(backend_stats.get("nmt_available", False)),
             "nmt_error": backend_stats.get("nmt_error"),
             "nmt_load_ms": backend_stats.get("nmt_load_ms", 0.0),
-            "ocr_load_ms": round(self.ocr.load_ms, 1),
+            "ocr_load_ms": round(
+                getattr(self._ocr, "load_ms", 0.0) if self._ocr is not None else 0.0, 1
+            ),
+            "live": live_info,
             "paused": self.pipeline.paused if self._pipeline else False,
             "memory_mib": round(self._memory.sample(time.perf_counter()), 1),
             "presentation": self._presentation.to_dict(),
@@ -701,7 +779,11 @@ class Session:
         try:
             return {
                 "paused": self.pipeline.paused,
-                "region": str(self._region) if self._region else None,
+                "region": (
+                    None
+                    if self.live_mode
+                    else str(self._region) if self._region else None
+                ),
                 "target_lang": self.config.target_lang,
                 "scene": self.pipeline.config.scene,
             }
@@ -710,11 +792,14 @@ class Session:
 
     def _pause(self) -> str:
         self.pipeline.pause()
-        self.set_status("已暂停")
+        self.set_status("已暂停：不再听声音" if self.live_mode else "已暂停")
         return "paused"
 
     def _resume(self) -> str:
         self.pipeline.resume()
+        if self.live_mode:
+            self.set_status("正在监听声音…")
+            return "resumed"
         # Told, not held: the user has decided to resume, so blocking them again would be
         # the program arguing with its user. They get the fact and can move the window.
         self.warn_if_capturing_self()
@@ -725,10 +810,18 @@ class Session:
 
     def _toggle_pause(self) -> str:
         paused = self.pipeline.toggle_pause()
-        self.set_status("已暂停" if paused else "正在监测屏幕区域…")
+        if paused:
+            self.set_status("已暂停：不再听声音" if self.live_mode else "已暂停")
+        else:
+            self.set_status("正在监听声音…" if self.live_mode else "正在监测屏幕区域…")
         return "paused" if paused else "resumed"
 
     def _cmd_set_region(self, payload: dict[str, Any]) -> str:
+        if self.live_mode:
+            raise ValueError(
+                "直播模式没有屏幕区域：输入是声音。"
+                "要改听哪路声音，请改 live.device 后重启，或使用 --audio-device。"
+            )
         raw = payload.get("region")
         if raw is None:
             raise ValueError("set_region needs a 'region' value")
@@ -768,7 +861,14 @@ class Session:
         re-resolves the window's client area on every grab, so moving or resizing
         the target keeps the capture on it. That is the reason a window picker
         exists at all next to drag-to-select.
+
+        Refused in live mode for the same reason as set_region: there is no
+        window to follow, and accepting the command while continuing to listen
+        would be the exact "looks accepted, does nothing" failure the two capture
+        kinds already had to be fixed for.
         """
+        if self.live_mode:
+            raise ValueError("直播模式没有窗口可捕获：输入是声音，不是屏幕")
         from .capture import WindowCapturer, WindowUnavailable
 
         spec = str(payload.get("spec") or payload.get("window") or "").strip()
@@ -851,12 +951,16 @@ class Session:
         return f"target_lang={lang}"
 
     def _cmd_set_diff_threshold(self, payload: dict[str, Any]) -> str:
+        if self.live_mode:
+            raise ValueError("直播模式没有画面变化阈值：断句由 live.silence_ms 控制")
         value = float(payload.get("value"))
         self.config.capture["diff_threshold"] = value
         self.pipeline.detector.threshold = value
         return f"diff_threshold={value}"
 
     def _cmd_set_fps(self, payload: dict[str, Any]) -> str:
+        if self.live_mode:
+            raise ValueError("直播模式没有采集帧率：断句由 live.silence_ms 控制")
         value = float(payload.get("value"))
         if value <= 0:
             raise ValueError("fps must be positive")

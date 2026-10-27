@@ -36,6 +36,54 @@ DEFAULTS: dict[str, Any] = {
         #: pause at startup when the capture region covers one of those windows
         "hold_if_self_visible": True,
     },
+    #: Live audio translation: listen to a livestream that has no subtitles.
+    #: Off by default; the screen path is still the original feature. Every
+    #: key here is read when the live pipeline is built, so most need a restart.
+    "live": {
+        "enabled": False,
+        #: system = loopback of what the machine is playing (a livestream in a
+        #: browser or player); microphone = the default input device; file = a
+        #: WAV file, for testing and for translating a recording.
+        "source": "system",
+        #: name substring or index from --list-audio-devices; "" = default
+        "device": "",
+        #: used when source is file
+        "file": "",
+        #: spoken language, or "auto" to let Whisper detect it per phrase
+        "language": "auto",
+        #: a faster-whisper size name (tiny/base/small/medium/large-v3) or a
+        #: local directory fetched by fetch_model.py --asr
+        "asr_model": "small",
+        "asr_compute_type": "int8",
+        "asr_threads": 4,
+        "asr_beam_size": 1,
+        #: run Whisper's own VAD over each phrase after the energy gate
+        "asr_vad": True,
+        #: characters of the previous phrase passed to Whisper as initial_prompt
+        "context_chars": 120,
+        #: silence that ends a phrase
+        "silence_ms": 600,
+        #: shorter bursts than this are treated as noise, not speech
+        "min_speech_ms": 300,
+        #: cut a continuous monologue at this length so subtitles keep arriving
+        "max_segment_s": 8.0,
+        #: energy gate: multiple of the learned noise floor
+        "vad_threshold": 2.5,
+        #: absolute floor, so a silent room is never "speech"
+        "min_rms": 0.004,
+        #: audio kept before the first voiced block, so the first word is not clipped
+        "pre_roll_ms": 300,
+        #: device capture rate; 48 kHz is what WASAPI mixes at on Windows
+        "capture_rate": 48000,
+        #: how much audio one read returns
+        "block_ms": 100,
+        #: pace a WAV file like a live stream rather than as fast as possible
+        "file_realtime": False,
+        #: where a downloaded Whisper model is cached
+        "model_dir": "",
+        #: never touch the network, even for a model that is not cached
+        "local_files_only": False,
+    },
     "ocr": {
         "intra_op_threads": 4,
         "inter_op_threads": 1,
@@ -58,6 +106,13 @@ DEFAULTS: dict[str, Any] = {
         "nmt_intra_threads": 4,
         "protect_terms": True,
         "protect_min_confidence": 0.4,
+        #: finish incomplete lines with the model before painting them; False
+        #: restores the old two-tier display
+        "final_translation": True,
+        #: join a sentence OCR split across visual lines before translating it
+        "join_fragmented_lines": True,
+        "join_max_lines": 3,
+        "join_max_chars": 240,
     },
     "corpus": {
         "user": ["../plugins/user/custom_rules"],
@@ -84,6 +139,8 @@ DEFAULTS: dict[str, Any] = {
     "overlay": {
         "mode": "both",
         "subtitle_style": "plate",
+        #: external JSON design file; saving it re-themes the overlay live
+        "presentation_file": None,
         "font_family": None,
         "subtitle_size": 24,
         "panel_size": 13,
@@ -115,6 +172,7 @@ class AppConfig:
 
     base_dir: Path
     capture: dict[str, Any] = field(default_factory=dict)
+    live: dict[str, Any] = field(default_factory=dict)
     ocr: dict[str, Any] = field(default_factory=dict)
     translation: dict[str, Any] = field(default_factory=dict)
     corpus: dict[str, Any] = field(default_factory=dict)
@@ -141,6 +199,11 @@ class AppConfig:
     @property
     def fps(self) -> float:
         return float(self.capture.get("fps", 10.0))
+
+    @property
+    def live_enabled(self) -> bool:
+        """True when the audio path replaces screen capture for this run."""
+        return bool(self.live.get("enabled", False))
 
     @property
     def target_lang(self) -> str:
@@ -205,6 +268,7 @@ class AppConfig:
         config = cls(
             base_dir=base_dir,
             capture=merged["capture"],
+            live=merged["live"],
             ocr=merged["ocr"],
             translation=merged["translation"],
             corpus=merged["corpus"],
@@ -304,6 +368,20 @@ class AppConfig:
             f"profile         : {self.profile or '(none)'}",
             f"overlay mode    : {self.overlay.get('mode')} ({self.overlay.get('subtitle_style')})",
         ]
+        if self.live_enabled:
+            source = self.live.get("source", "system")
+            device = self.live.get("device") or "(default)"
+            where = (
+                f"file {self.live.get('file')}"
+                if source == "file"
+                else f"{source} {device}"
+            )
+            lines.append(
+                f"live audio      : on ({where}, {self.live.get('language', 'auto')} -> "
+                f"{self.target_lang}, ASR {self.live.get('asr_model')})"
+            )
+        else:
+            lines.append("live audio      : off (--live to listen to a stream)")
         for layer in ("user", "domain", "general"):
             dirs = self.corpus_dirs(layer)
             lines.append(f"corpus {layer:8s}: {', '.join(str(d) for d in dirs) or '(none)'}")

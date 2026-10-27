@@ -225,12 +225,235 @@ CAPTURE = Category(
 )
 
 # --------------------------------------------------------------------------- #
-# ② 识别：OCR 引擎
+# 直播：没有字幕时听声音
+# --------------------------------------------------------------------------- #
+
+LIVE_AUDIO = Category(
+    id="live",
+    title="② 直播 · 没有字幕时听声音",
+    summary="直播没有字幕时，文字并不在屏幕上，OCR 读不到。这一组让程序改听系统"
+            "正在播放的声音：本地语音识别 → 现有语料库/规则/本地模型翻译 → 同一条"
+            "悬浮字幕。默认关闭；开启后需要重启。",
+    fields=(
+        Field(
+            key="live.enabled",
+            label="启用直播翻译",
+            description="开启后不再截屏，而是持续监听系统声音（或麦克风/WAV 文件），"
+                        "把听到的话转写并翻译成字幕。命令行等价开关是 --live。",
+            kind="bool",
+            default=False,
+            applies=RESTART,
+            cost="会持续占用 CPU 做语音识别；small 模型在普通笔记本上约占一个核心",
+            note="第一次使用请先运行 fetch_model --asr small，避免观看时下载模型",
+        ),
+        Field(
+            key="live.source",
+            label="声音来源",
+            description="system = 系统正在播放的声音（浏览器/播放器里的直播都算）；"
+                        "microphone = 麦克风；file = 一个 WAV 文件，用于测试或翻译录音。",
+            kind="enum",
+            default="system",
+            choices=("system", "microphone", "file"),
+            applies=RESTART,
+        ),
+        Field(
+            key="live.device",
+            label="音频设备",
+            description="留空 = 默认设备。也可以填设备名的一部分，或 "
+                        "--list-audio-devices 打印的序号。",
+            kind="text",
+            default="",
+            applies=RESTART,
+            note="设备改名或换耳机后需要重新选择",
+        ),
+        Field(
+            key="live.file",
+            label="音频文件",
+            description="当声音来源是 file 时要读取的 WAV 路径（相对本配置文件解析）。"
+                        "只支持未压缩 PCM；用于离线验证整条链路。",
+            kind="path",
+            default="",
+            applies=RESTART,
+        ),
+        Field(
+            key="live.language",
+            label="说话语言",
+            description="直播里说的语言；auto 让 Whisper 每段自动判断。如果语言已知，"
+                        "写明（如 en、ja、ko）会更快也更稳。",
+            kind="text",
+            default="auto",
+            applies=RESTART,
+        ),
+        Field(
+            key="live.asr_model",
+            label="语音模型",
+            description="faster-whisper 的模型名（tiny/base/small/medium/large-v3）或"
+                        "fetch_model.py --asr 下载到的目录。越大越准，也越慢、越占内存。",
+            kind="text",
+            default="small",
+            applies=RESTART,
+            cost="small 约 460 MB 内存；medium/large 在 CPU 上可能跟不上实时",
+            note="4 GB 内存的机器建议 tiny/base",
+        ),
+        Field(
+            key="live.asr_compute_type",
+            label="语音模型精度",
+            description="int8 最快、内存最小，CPU 上通常够用；float32 更准但更慢。",
+            kind="enum",
+            default="int8",
+            choices=("int8", "int8_float32", "float32"),
+            applies=RESTART,
+        ),
+        Field(
+            key="live.asr_threads",
+            label="语音识别线程数",
+            description="Whisper 用几个 CPU 线程。和 OCR 一样，线程不是越多越快；"
+                        "4 往往是普通桌面机的平衡点。",
+            kind="int",
+            default=4,
+            low=1,
+            high=32,
+            unit="线程",
+            applies=RESTART,
+        ),
+        Field(
+            key="live.asr_beam_size",
+            label="语音解码束宽",
+            description="1 = 贪心解码，最快；更大的值会尝试更多候选，略准但明显更慢。"
+                        "直播场景建议保持 1。",
+            kind="int",
+            default=1,
+            low=1,
+            high=5,
+            applies=RESTART,
+        ),
+        Field(
+            key="live.asr_vad",
+            label="二次语音检测",
+            description="能量门之后再用 Whisper 自带的 VAD 过滤一遍。"
+                        "关掉会更快，但音乐和噪声更容易变成假字幕。",
+            kind="bool",
+            default=True,
+            applies=RESTART,
+        ),
+        Field(
+            key="live.context_chars",
+            label="跨句上下文长度",
+            description="把上一句的末尾多少字符作为提示词交给 Whisper，让人名、术语和"
+                        "语气在相邻句子间保持一致。0 = 不携带上下文。",
+            kind="int",
+            default=120,
+            low=0,
+            high=400,
+            applies=RESTART,
+            note="这是提示词，不打开 Whisper 的 condition_on_previous_text，后者会把"
+                 "一次幻觉扩散到之后每一句",
+        ),
+        Field(
+            key="live.silence_ms",
+            label="断句静音（毫秒）",
+            description="停顿多久算一句话结束。越小字幕出现越快，但句子更容易被切碎；"
+                        "越大越完整，延迟也越高。",
+            kind="int",
+            default=600,
+            low=100,
+            high=3000,
+            unit="毫秒",
+            applies=RESTART,
+            cost="这段静音本身会加进每条字幕的延迟",
+        ),
+        Field(
+            key="live.min_speech_ms",
+            label="最短语音（毫秒）",
+            description="短于这个时长的声响当作噪声丢弃（关门、点击、咳嗽）。",
+            kind="int",
+            default=300,
+            low=50,
+            high=3000,
+            unit="毫秒",
+            applies=RESTART,
+        ),
+        Field(
+            key="live.max_segment_s",
+            label="最长一句（秒）",
+            description="连续说话时每隔这么久强制切一段，避免主持人不换气就一直没有字幕。",
+            kind="float",
+            default=8.0,
+            low=1.0,
+            high=28.0,
+            unit="秒",
+            applies=RESTART,
+            note="Whisper 的训练窗口是 30 秒，超过它没有意义",
+        ),
+        Field(
+            key="live.vad_threshold",
+            label="语音门限倍数",
+            description="当前音量超过「学到的环境噪声 × 这个倍数」才算在说话。"
+                        "噪声大、字幕漏触发时调低；音乐一直误触发时调高。",
+            kind="float",
+            default=2.5,
+            low=1.1,
+            high=10.0,
+            applies=RESTART,
+        ),
+        Field(
+            key="live.min_rms",
+            label="绝对静音下限",
+            description="音量低于这个值一律不算语音，防止安静房间里把底噪当成人声。",
+            kind="float",
+            default=0.004,
+            low=0.0005,
+            high=0.1,
+            applies=RESTART,
+        ),
+        Field(
+            key="live.pre_roll_ms",
+            label="句首回看（毫秒）",
+            description="检测到说话时，把之前这么长的音频一起送给识别，避免第一个字被切掉。",
+            kind="int",
+            default=300,
+            low=0,
+            high=1000,
+            unit="毫秒",
+            applies=RESTART,
+        ),
+        Field(
+            key="live.file_realtime",
+            label="按实时速度播放文件",
+            description="用 WAV 文件测试时，按真实播放速度送进识别，方便观察悬浮窗；"
+                        "关闭则尽快跑完，适合脚本验证。",
+            kind="bool",
+            default=False,
+            applies=RESTART,
+        ),
+        Field(
+            key="live.model_dir",
+            label="语音模型缓存目录",
+            description="下载的 Whisper 模型放在哪里；留空 = faster-whisper 的默认缓存。"
+                        "填相对路径时按本配置文件所在目录解析。",
+            kind="path",
+            default="",
+            applies=RESTART,
+        ),
+        Field(
+            key="live.local_files_only",
+            label="只用本地模型",
+            description="开启后绝不联网下载模型；模型缺失时直接报错并告诉你怎么预先下载。"
+                        "想保证观看时完全离线，打开它。",
+            kind="bool",
+            default=False,
+            applies=RESTART,
+        ),
+    ),
+)
+
+# --------------------------------------------------------------------------- #
+# ③ 识别：OCR 引擎
 # --------------------------------------------------------------------------- #
 
 OCR = Category(
     id="ocr",
-    title="② 识别 · OCR 引擎",
+    title="③ 识别 · OCR 引擎",
     summary="RapidOCR / ONNX Runtime 的底层参数。这几项在引擎启动时读取，"
             "改完必须重启，所以放在说明里而不是放在常用位置。",
     fields=(
@@ -358,7 +581,7 @@ OCR = Category(
 
 TRANSLATION = Category(
     id="translation",
-    title="③ 翻译 · 语言与语料库优先",
+    title="④ 翻译 · 语言与语料库优先",
     summary="翻译成什么语言、源语言是什么，以及语料库在多大程度上压过模型。",
     fields=(
         Field(
@@ -417,25 +640,72 @@ TRANSLATION = Category(
         Field(
             key="translation.protect_terms",
             label="术语保护",
-            description="把语料库命中的词先用占位符遮住再送模型，翻译完成后还原。"
+            description="语料库命中的术语优先保留：先让模型翻译「已经替换好术语」的整句，"
+                        "并检查术语是否保留；没保留时再用占位符重试一次。"
                         "这是保证「虚空剑」不会每次被译成不同东西的关键机制。",
             kind="bool",
             default=True,
             applies=RESTART,
-            cost="代价：遮住术语会减少上下文，句子通顺度会略降",
+            cost="代价：术语校验会让个别句子多一次模型调用",
             note="建议保持开启",
         ),
         Field(
             key="translation.protect_min_confidence",
             label="术语保护的置信度门槛",
-            description="只有置信度不低于此值的命中才当作权威并遮罩。设得太低会让"
-                        "音译兜底（置信度 0.10）遮住整句话。",
+            description="只有置信度不低于此值的命中才当作权威术语。设得太低会让"
+                        "音译兜底（置信度 0.10）被当成术语。",
             kind="float",
             default=0.4,
             low=0.0,
             high=1.0,
             applies=RESTART,
-            note="0.4 是实测值：低于它会整句被遮住",
+            note="0.4 是实测值：低于它会误伤整句",
+        ),
+        Field(
+            key="translation.final_translation",
+            label="绘制前完成整句",
+            description="开启时，语料库没有译完的句子会先调用一次本地模型（整帧批量），"
+                        "完成后再显示字幕。关闭时恢复旧的两层显示：先显示语料库结果，"
+                        "模型稍后替换。",
+            kind="bool",
+            default=True,
+            applies=RESTART,
+            cost="开启的代价：字幕晚约 100-300 毫秒出现；关闭的代价：屏幕上会先闪一次"
+                 "半英文的语料库结果",
+            note="追求可读性保持开启；追求第一帧速度可关闭",
+        ),
+        Field(
+            key="translation.join_fragmented_lines",
+            label="合并断行",
+            description="字幕被 OCR 拆成两行时，先把它们拼成一句再翻译。关闭后每行独立"
+                        "翻译，行与行之间没有上下文。规则较保守：上一行没有句末标点、"
+                        "下一行紧邻且字号相近、看起来像续句时才会合并。",
+            kind="bool",
+            default=True,
+            applies=RESTART,
+            cost="满屏互不相关的短标签（没有标点）可能被误判成一句；这种界面建议关闭",
+        ),
+        Field(
+            key="translation.join_max_lines",
+            label="最多合并行数",
+            description="一次最多把几行视觉文本拼成一句。上限存在是为了避免把整屏"
+                        "文字粘成一段。",
+            kind="int",
+            default=3,
+            low=1,
+            high=6,
+            applies=RESTART,
+        ),
+        Field(
+            key="translation.join_max_chars",
+            label="合并后的最大字数",
+            description="合并出的句子超过这个字符数就不再继续拼，避免长段落占用模型"
+                        "时间并拖慢字幕。",
+            kind="int",
+            default=240,
+            low=40,
+            high=1000,
+            applies=RESTART,
         ),
     ),
 )
@@ -446,7 +716,7 @@ TRANSLATION = Category(
 
 MODEL = Category(
     id="model",
-    title="④ 本地模型 · 句子通顺度",
+    title="⑤ 本地模型 · 句子通顺度",
     summary="本地的 NLLB-200 翻译模型。语料库负责术语正确，模型只负责补足语法。"
             "不装模型程序照样能跑，只用语料库与规则。",
     fields=(
@@ -505,7 +775,7 @@ MODEL = Category(
 
 CORPUS = Category(
     id="corpus",
-    title="⑤ 语料库与规则 · 让生词可译",
+    title="⑥ 语料库与规则 · 让生词可译",
     summary="这是本项目区别于通用翻译工具的地方。词条是磁盘上的普通文件，"
             "改完按修改时间自动热加载，不需要重启。注意词条是分语言的："
             "文件里写 \"lang\": \"zh-CN\"（或每条自己写 lang），引擎只会用"
@@ -588,7 +858,7 @@ CORPUS = Category(
 
 PRESENTATION = Category(
     id="presentation",
-    title="⑥ 呈现 · 字幕长什么样",
+    title="⑦ 呈现 · 字幕长什么样",
     summary="外观与版式，立即生效，桌面窗口与悬浮窗共用同一份描述。",
     fields=(
         Field(
@@ -613,6 +883,17 @@ PRESENTATION = Category(
             default="bar",
             choices=("bar", "bare", "minimal", "lines", "inplace", "panel", "hidden"),
             command="set_presentation",
+        ),
+        Field(
+            key="overlay.presentation_file",
+            label="外观设计文件",
+            description="外部 JSON 设计文件的路径（字段见 docs/presentation-spec.md）。"
+                        "运行中修改并保存该文件，界面约半秒内自动套用，不需要重启，"
+                        "适合边看边调。设置后该文件优先于下面的字号、透明度、边距。",
+            kind="path",
+            default=None,
+            applies=RESTART,
+            note="切换文件需要重启；文件内容改动是热应用的",
         ),
         Field(
             key="overlay.subtitle_style",
@@ -734,7 +1015,7 @@ PRESENTATION = Category(
 
 PERFORMANCE = Category(
     id="performance",
-    title="⑦ 性能与内存 · 按机器档位",
+    title="⑧ 性能与内存 · 按机器档位",
     summary="一组预设参数，决定加载哪些组件。改完需要重启。",
     fields=(
         Field(
@@ -757,7 +1038,7 @@ PERFORMANCE = Category(
 
 PLUGINS = Category(
     id="plugins",
-    title="⑧ 插件 · 用你自己的代码扩展",
+    title="⑨ 插件 · 用你自己的代码扩展",
     summary="扩展点目前接通了「翻译后处理」与「导出格式」两项。"
             "插件与引擎同进程运行，Python 无法沙箱化。",
     fields=(
@@ -807,7 +1088,7 @@ PLUGINS = Category(
 
 DIAGNOSTICS = Category(
     id="diagnostics",
-    title="⑨ 诊断与日志 · 看清楚发生了什么",
+    title="⑩ 诊断与日志 · 看清楚发生了什么",
     summary="排查问题时打开。会往终端输出内容，平时保持关闭以免干扰。",
     fields=(
         Field(
@@ -841,6 +1122,7 @@ DIAGNOSTICS = Category(
 
 CATEGORIES: tuple[Category, ...] = (
     CAPTURE,
+    LIVE_AUDIO,
     OCR,
     TRANSLATION,
     MODEL,
@@ -862,6 +1144,12 @@ INTERNAL_KEYS: frozenset[str] = frozenset(
         # height would only fight the layout. Kept rather than deleted so a
         # config carrying it does not become invalid.
         "overlay.bar_height",
+        # Audio plumbing rather than a user choice: 48 kHz is what WASAPI mixes
+        # at, and a 100 ms block is the granularity the segmenter was designed
+        # around. Exposed in config for experiments, but a settings control would
+        # invite values the rest of the module has not been measured against.
+        "live.capture_rate",
+        "live.block_ms",
     }
 )
 

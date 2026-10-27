@@ -1,11 +1,13 @@
-# Project Watashi -- working prototype (M1 + M3 + UI architecture + desktop UI)
+# Project Watashi -- working prototype (M1 + M3 + live audio + UI architecture + desktop UI)
 
 A runnable Python prototype of the pipeline the project is built around:
 
 ```
 capture region -> change detection -> local OCR -> corpus + rules -> on-screen overlay
                                                           |
-                                                          +-> local NMT model (async refinement)
+                                                          +-> local NMT model (batched, before painting)
+
+live audio -> VAD phrases -> local ASR (faster-whisper) -> the same corpus/rules/model/overlay
 ```
 
 It exists to answer four questions with measurements instead of assumptions:
@@ -471,6 +473,134 @@ Japanese written entirely in kanji, which reads as Chinese.
 
 ---
 
+## Live audio (a stream without subtitles)
+
+Every path above starts from pixels. A livestream with no subtitles has no
+pixels to read -- the words exist only as sound -- so this is a second input
+path, not a second application:
+
+    system loopback / microphone / WAV
+      -> energy VAD + phrase segmentation   (watashi/live.py)
+      -> faster-whisper on the CPU          (watashi/live.py)
+      -> corpus + rules + local NMT         (watashi/pipeline.py, unchanged)
+      -> OverlayUpdate                      (watashi/events.py, unchanged)
+
+The last two stages are literally the screen pipeline's objects. LivePipeline
+holds a real Pipeline and calls translate_texts(), so corpus precedence,
+scenes, target-language passthrough, the short-term reuse cache, refinement and
+corrections behave exactly as they do on a frame. It duck-types
+start/stop/pause/resume/stats/to_dict/config, which is why the overlay, the
+desktop window, the web panel, --json-lines, the hotkeys and every existing
+command work without knowing the input changed.
+
+### Run it
+
+    prototype\run.cmd fetch_model --asr small     # one-time weights, ~460 MiB
+    prototype\run.cmd --list-audio-devices        # loopback entries are stream audio
+    prototype\run.cmd --live --mode both          # watch a stream, read subtitles
+    prototype\run.cmd --live --audio-device 2     # by index from the listing
+    prototype\run.cmd --live --audio-source microphone
+    prototype\run.cmd --live --audio-file talk.wav --mode none --print
+    prototype\run.cmd --live --asr-model base --asr-language en
+
+--live turns the mode on; any of --audio-source, --audio-device, --audio-file,
+--asr-model, --asr-language, --asr-threads or --no-asr-vad implies it, so a flag
+cannot be silently ignored. --synthetic and --live are refused together: both
+replace the input.
+
+In this mode the desktop window disables 框选区域 and 选择窗口 and its 采集 tab
+says 声音来源 instead of a rectangle; the commands themselves are refused rather
+than accepted as no-ops, for the same reason set_region leaves window capture.
+
+### How a phrase becomes a subtitle
+
+1. **Energy gate.** 100 ms blocks; a phrase starts when RMS exceeds the learned
+   noise floor times live.vad_threshold. The floor is learned only while the
+   gate is closed, so a loud phrase cannot raise its own threshold.
+2. **Segmentation.** The phrase ends after live.silence_ms of quiet, or after
+   live.max_segment_s of continuous speech. live.pre_roll_ms is kept before the
+   first voiced block so the first phoneme is not clipped; a 200 ms tail is
+   carried into the next phrase after a forced cut.
+3. **Recognition.** faster-whisper (int8, CPU) with condition_on_previous_text
+   off, so one bad phrase does not poison the next. Its own VAD runs on the
+   phrase as a second filter (live.asr_vad).
+4. **Translation and display.** The phrase goes through
+   Pipeline.translate_texts -- the same corpus/rules/model path as a screen line
+   -- and is published as a normal OverlayUpdate with no per-line box. Layouts
+   that need geometry (inplace) fall back to an anchored stack; bar, bare,
+   minimal, lines and panel all work as they are.
+
+Latency is therefore roughly **one phrase + ASR + translation**, not one frame.
+The default 600 ms silence is part of that; lowering it makes subtitles appear
+sooner and cuts sentences more often.
+
+### Configuration
+
+All of it lives in config.yaml under live: and is documented there. The values
+worth touching:
+
+| Key | Meaning | Default |
+| --- | --- | --- |
+| live.source | system loopback, microphone, or file | system |
+| live.device | name substring or listing index; empty = default endpoint | "" |
+| live.asr_model | Whisper size name or a fetched directory | small |
+| live.language | spoken language, or auto | auto |
+| live.silence_ms | quiet that closes a phrase | 600 |
+| live.max_segment_s | forced cut during continuous speech | 8.0 |
+| live.vad_threshold | multiple of the noise floor that counts as speech | 2.5 |
+| live.min_speech_ms | bursts shorter than this are noise | 300 |
+| live.local_files_only | refuse to download a model | false |
+
+The same fields are in the settings schema as the 直播 category, marked
+restart-required because the source, model and segmenter are constructed once.
+
+### What is verified, and what is not
+
+selfcheck_live (headless, in checks.txt) asserts the mechanism without a
+microphone or a model:
+
+- a phrase surrounded by silence becomes exactly one segment; pure silence and a
+  100 ms click become none; a continuous 9 s tone is cut at 3 s;
+- 48 kHz stereo resamples to the expected number of 16 kHz mono samples;
+- a real WAV written by the check reads back completely and then reports its end;
+- the whole chain (WAV -> segmenter -> scripted transcript -> corpus translation
+  -> update) produces two bilingual subtitles, and the scripted transcriber is
+  named as scripted, never as a real model;
+- Session in live mode does not build OCR, refuses set_region and set_fps,
+  accepts pause/target-language changes, and finishes on its own when a finite
+  file ends.
+
+Not verified here: a real WASAPI/PulseAudio device and real Whisper accuracy or
+latency. Both need hardware and a download; calling a fake a measurement would
+be the kind of green check this repository avoids. Measure on your machine with
+--stats-json out.json -- the live counters include segments, audio_seconds,
+asr_load_ms and asr_error.
+
+A generated speech WAV has since been run end-to-end with faster-whisper small
+int8: both phrases were transcribed and translated correctly, at 2.7-2.8 s per
+phrase (ASR + NMT). A 5.7 s clip took 6.7 s to process on a loaded CPU, so it is
+**not yet real-time** there; `asr_model: base`/`tiny` is the lever. A real
+loopback device and WER are still unmeasured.
+
+### Known limitations
+
+- **Music is not speech.** The gate is energy, not a learned voice detector, so
+  loud continuous music can produce a line; live.vad_threshold and live.asr_vad
+  are the knobs. This is documented rather than papered over.
+- **Phrase-level, not word-level.** Nothing appears until a phrase closes (or
+  max_segment_s forces a cut). There is no rolling partial subtitle, which would
+  multiply ASR work and make the line flicker as the model revises it.
+- **One source, no speaker labels.** A stream with two speakers is transcribed
+  as one voice; diarisation is not implemented.
+- **CPU.** Whisper competes with the local NMT model and with whatever is
+  decoding the video. small is the default balance; tiny/base are the low-memory
+  choices, medium/large are not expected to keep up in real time on a laptop CPU.
+- **First start downloads.** Unless fetch_model --asr was run, faster-whisper
+  fetches the weights from Hugging Face. Set live.local_files_only: true after
+  the fetch to make an offline guarantee.
+
+Design notes and failure-mode reasoning: [docs/live-audio.md](../docs/live-audio.md).
+
 ## Plugins (customization axis C)
 
 User code extending the engine, discovered from `plugins/builtin/` and
@@ -756,27 +886,75 @@ Three details that make it work rather than misfire:
 
 Counters: `reused_lines`, `dedup_hits`, `dedup_misses`, `dedup_hit_rate`, `dedup_size`.
 
-### Two-tier display
+### One paint, finished by the model
 
-NMT costs ~200-350 ms per sentence on CPU, against a 150 ms frame budget, so it
-never runs inline. The subtitle bar shows the corpus result instantly and the
-model's version replaces it when ready, both cached by source text. The panel
-labels each entry `语料库` (corpus) or `模型` (model).
+NMT costs ~200-350 ms per sentence on CPU, against a 150 ms frame budget. The
+original answer was a **two-tier display**: paint the corpus result instantly,
+replace it with the model's version a moment later. That is faster by one model
+call and worse in every way a reader notices -- the first thing on screen was
+`the 剑意 of this 宗门 is a myth`, half English and not a sentence.
 
-Model latency, NLLB-200-distilled-600M int8 on CPU:
+The default (`translation.final_translation: true`) now finishes the line before
+painting it:
 
-| Configuration | Per sentence |
-| --- | --- |
-| one at a time, 4 threads | 240 ms |
-| one at a time, 2 threads | 266 ms |
-| **batched (6 at once)** | **73-86 ms (2.8-3.4x faster)** |
-| model load | ~1.4 s (one time) |
-| beam 4 instead of 1 | slower *and* measured worse output |
+1. **Corpus first.** If the corpus answer is already a complete translation the
+   model is never called. Term-only lines (`antidragon superspirit voidsword` ->
+   `反龙 超灵力 虚空剑`) and cache hits cost nothing.
+2. **Translate the code-switched sentence.** Otherwise the corpus answer --
+   source grammar with the corpus terms already inline -- goes through NLLB as
+   one whole sentence. Measured, same terms, same model:
 
-Batching is the biggest single win, which matters if the pipeline is ever
-changed to refine a whole frame's lines at once instead of one at a time.
+   | Source | Corpus | Masked placeholders (old) | Code-switch (new) |
+   | --- | --- | --- | --- |
+   | he broke through to the void realm | he broke through to the 虚空 境界 | 断到 虚空 境界 | **他突破了虚空境界** |
+   | the sword intent of this sect is a myth | the 剑意 of this 宗门 is a myth | 对于此 宗门的 剑意是个神话 | **这宗门的剑意是个神话** |
+   | the antidragon superspirit guard blocked the gate | the 反龙 超灵力 guard blocked the gate | the 反龙 超灵力 guard blocked the gate | **反龙超灵力警卫封锁了这门** |
 
-Reproduce with `prototype\run.cmd bench_nmt`.
+   Masking holes in the source (`<=0>= <=1>=`) was what collapsed the grammar;
+   giving the model the terms in place fixes it without inventing terminology.
+3. **Verify the terms.** If a corpus term did not survive, that line is retried
+   once with placeholders. If that also loses terms, the fluent model sentence
+   is shown and the loss is reported -- never the half-English corpus string.
+
+Every line in a frame is one shared batch, so a frame still pays batch prices
+rather than per-line ones. Measured on the development machine: 8 mixed lines
+finished in **730 ms total (~91 ms/line)** with a warm model, and the same batch
+from cache in **0 ms**. Beam 4 was slower *and* measured worse output, so the
+default stays beam 1.
+
+Set `translation.final_translation: false` to restore the two-tier display:
+instant corpus result, model refinement later. The panel then labels each entry
+`语料库` (corpus) or `模型` (model), and the visible text changes twice.
+
+Reproduce with `prototype\run.cmd bench_nmt` and `prototype\run.cmd --selftest`.
+
+### A wrapped sentence is one sentence
+
+OCR groups boxes that share a visual line, but a two-line subtitle is two
+`OcrLine`s. Translating them separately feeds NLLB two unrelated fragments
+("the sword intent of this" and "sect is a myth"), and NLLB has no memory from
+one call to the next -- passing the previous sentence as extra input does not
+work, because it is a sentence-level translation model, not an instruction
+model.
+
+So `join_fragmented_lines` (default on) joins them *before* translation. The
+rules are conservative, because a wrong join is worse than a missed one:
+
+- the previous line must not end with sentence punctuation;
+- the next line must be vertically adjacent, of similar height, and not a
+  bullet or numbered item;
+- it must look like a continuation: a lowercase Latin start, CJK, or the
+  previous line ended with a comma/dash/bracket;
+- at most `join_max_lines` (3) and `join_max_chars` (240).
+
+The joined line keeps the union of both boxes, so `inplace` still covers all of
+the text it replaces. Turn it off for screens full of independent short labels
+that carry no punctuation. Verified in `selfcheck_session`, including the cases
+that must *not* join (a terminated sentence, an uppercase row, a bullet).
+
+The live path gets its context differently: the tail of the previous phrase is
+passed to Whisper as `initial_prompt` (`live.context_chars`, default 120),
+without enabling `condition_on_previous_text` and its hallucination chain.
 
 ### The model competes with OCR
 
@@ -1215,7 +1393,7 @@ changes from `rule:affix` to `corpus:`, and the answer itself does not change.
 | Tool | Purpose |
 | --- | --- |
 | `watashi_proto.py --selftest` | Headless end-to-end check of OCR + corpus + rules + model. No screen needed. |
-| `check_all.py` | Runs every check CI runs (from `checks.txt`, the same file the workflow reads) on this machine, as a pre-push gate. `--display` adds the four that need a screen. |
+| `check_all.py` | Runs every check CI runs (from `checks.txt`, the same file the workflow reads) on this machine, as a pre-push gate. `--display` adds the five that need a screen. |
 | `selfcheck_session.py` | **Headless verification of the engine boundary**: events, envelope integrity, every command, adapter pass-through. No screen needed. |
 | `selfcheck_correct.py` | **Headless verification of corpus hot reload and real time correction**: the file format, loose matching, both scopes, cache invalidation, the repaint, and mutation-tested assertions. No screen needed. |
 | `selfcheck_corpus.py` | **Headless verification of the corpus and rule engine** (R2 / R3), which had no check of its own: layering and priority, longest match, entry forms, the target-language dimension, rule language identity, explainability, R3's write-back loop, hot reload and damaged files. No screen needed. |
@@ -1269,9 +1447,11 @@ Be aware of these before judging the prototype.
 6. **Change detection is a whole-frame mean.** It cannot notice a small text
    change in one corner of a large region; subtle changes may be missed.
    `diff_threshold` is the tradeoff knob.
-7. **The two-tier display means the visible text changes twice** for a new line:
-   corpus result, then the refined version ~0.2-0.7 s later. That is the price
-   of keeping OCR inside the latency budget.
+7. **Finishing a line before painting it costs one batched model call** on the
+   frames where the corpus answer is incomplete: ~90 ms per mixed line with a
+   warm model, measured. The subtitle therefore appears once, but later than the
+   old two-tier first paint. Set `translation.final_translation: false` to trade
+   a flicker for the faster first paint.
 8. **Source language detection is a heuristic** (CJK ratio, else Latin). It
    handles the en/zh case this project targets and nothing more.
 9. **Click-through is Windows only** (Win32 extended styles).
@@ -1329,13 +1509,14 @@ prototype/
 ├── selfcheck_corpus.py   headless corpus/rule engine verification (R2 / R3)
 ├── selfcheck_library.py  headless corpus editor verification (override, import, export)
 ├── selfcheck_senses.py   headless one-word-several-meanings verification (scenes, conditions, caches)
+├── selfcheck_live.py     headless live-audio verification (segmentation, WAV, chain, session)
 ├── selfcheck_selfcapture.py  headless verification that we do not read our own windows
 ├── selfcheck_deps.py     headless check that a clean install can run the others
 ├── selfcheck_uirender.py photographs the real windows and reads them with OCR
 ├── check_all.py          runs every check CI runs, locally (pre-push gate)
 ├── config.yaml           configuration (paths relative to this file)
 ├── requirements.txt      local-only dependencies
-├── fetch_model.py        one-time, resume-safe model download
+├── fetch_model.py        one-time NMT download; --asr fetches speech weights
 ├── bench_ocr.py          OCR latency benchmark
 ├── bench_nmt.py          model benchmark: batching, term protection, contention
 ├── diagnose_ort.py       ONNX Runtime isolation / thread sweep
@@ -1361,6 +1542,7 @@ prototype/
     ├── plugins.py        extension points, discovery, failure isolation
     ├── presentation.py   declarative spec, presets, pure layout maths
     ├── pipeline.py       threaded capture/OCR pipeline, latest-frame backpressure
+    ├── live.py           audio capture, VAD segmentation, ASR, LivePipeline
     ├── lang.py           language detection and the target-language gate
     ├── profiles.py       memory tiers (lean / balanced / full)
     ├── web.py            in-process settings panel (FastAPI + SSE)

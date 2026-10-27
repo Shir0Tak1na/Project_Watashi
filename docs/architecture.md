@@ -11,6 +11,12 @@ The core translation path is:
 
 screen capture -> OCR -> text normalization -> dictionary rules -> local LLM -> final output -> cache
 
+A second input path feeds the *same* core when there is no text to read (a
+livestream without subtitles):
+
+system loopback / microphone / WAV -> energy VAD phrases -> local ASR
+  -> text normalization -> dictionary rules -> local LLM -> final output -> cache
+
 with one deliberate exception ahead of all of it: a **human correction**, which
 outranks the dictionary and stops the model from being consulted at all. A wrong
 answer from an authoritative corpus is not a gap, so the only thing that can fix it

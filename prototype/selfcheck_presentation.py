@@ -12,7 +12,9 @@ in well under a second.
 
 from __future__ import annotations
 
+import json
 import sys
+import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -27,7 +29,9 @@ from watashi.presentation import (
     LayoutSpec,
     PresentationSpec,
     compute_blocks,
+    load_presentation_file,
     measure_block_text,
+    presentation_file_path,
     resolve_presentation,
 )
 
@@ -317,6 +321,71 @@ def main() -> int:
         resolved({"subtitle_size": 0}).element("target").font.size >= 6,
         "0 means 'leave it alone', and the floor protects the rest",
     )
+
+    print("")
+    print("-- a design file is the zero-code interface, and it is authoritative --")
+    # The file is what a user edits while looking at the screen. Two failure modes
+    # matter more than the feature: legacy scalar settings silently painting over a
+    # hand-written value, and a half-saved file taking the overlay down.
+    config = AppConfig.load()
+    config.overlay["presentation_file"] = "../config/presentation.json"
+    relative = presentation_file_path(config)
+    check.check(
+        "a relative design path resolves against the config directory",
+        relative is not None
+        and relative == (config.base_dir / ".." / "config" / "presentation.json"),
+        f"got {relative}",
+    )
+
+    with tempfile.TemporaryDirectory() as tmp:
+        design = Path(tmp) / "design.json"
+        payload = PresentationSpec.preset("bar").to_dict()
+        payload["name"] = "night"
+        payload["background"]["opacity"] = 0.33
+        payload["elements"][2]["font"]["size"] = 31
+        design.write_text(json.dumps(payload), encoding="utf-8")
+
+        config = AppConfig.load()
+        config.presentation = "bar"
+        config.overlay.update(
+            {
+                "presentation_file": str(design),
+                "subtitle_size": 40,
+                "bar_alpha": 0.9,
+                "bar_bottom_margin": 10,
+            }
+        )
+        loaded = resolve_presentation(config)
+        check.check(
+            "the file wins over the legacy scalar overrides",
+            loaded.name == "night"
+            and abs(loaded.background.opacity - 0.33) < 1e-6
+            and loaded.element("target").font.size == 31
+            and loaded.layout.offset[1] == -90,
+            f"name={loaded.name} alpha={loaded.background.opacity} "
+            f"size={loaded.element('target').font.size} offset={loaded.layout.offset}",
+        )
+        check.check(
+            "the same file loads directly",
+            load_presentation_file(design).name == "night",
+        )
+
+        config = AppConfig.load()
+        config.presentation = str(design)
+        config.overlay["presentation_file"] = None
+        check.check(
+            "a .json value in presentation is treated as a file, not a preset",
+            presentation_file_path(config) == design,
+            f"got {presentation_file_path(config)}",
+        )
+
+        design.write_text("{ half a save", encoding="utf-8")
+        fallback = resolve_presentation(config)
+        check.check(
+            "an invalid file falls back to a usable bar instead of crashing",
+            fallback.layout.mode == "bar" and fallback.element("target") is not None,
+            f"mode={fallback.layout.mode}",
+        )
 
     return check.report()
 

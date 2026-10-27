@@ -152,7 +152,7 @@ class SelfTestReport:
             add(f"    {marker}{word:18s} -> {result:22s} [{where} {confidence:.2f}]")
         add("")
         if self.model_lines:
-            add("-- local translation model (corpus terms protected) --")
+            add("-- local translation model (readable path) --")
             for probe in self.model_lines:
                 add(f"    src     : {probe.source}")
                 add(f"    corpus  : {probe.corpus_text}")
@@ -260,7 +260,7 @@ def run_selftest(
     model_errors = 0
     model = getattr(translator, "model", None)
     if model is not None and getattr(model, "available", False):
-        from .local_nmt import refine_with_nmt
+        from .local_nmt import translate_readable_with_nmt
 
         corpus_store = getattr(translator, "corpus", None)
         protect = getattr(translator, "protect", True)
@@ -271,8 +271,15 @@ def run_selftest(
                 corpus_store.translate(line, target_lang) if corpus_store else None
             )
             try:
-                refinement = refine_with_nmt(
-                    model, corpus_store, line, target_lang, protect, min_conf, source_lang
+                refinement = translate_readable_with_nmt(
+                    model,
+                    corpus_store,
+                    line,
+                    target_lang,
+                    None,
+                    protect,
+                    min_conf,
+                    source_lang,
                 )
                 model_lines.append(
                     ModelProbe(

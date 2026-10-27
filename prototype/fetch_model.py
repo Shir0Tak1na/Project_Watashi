@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
-"""Download a local translation model for Project Watashi (no cloud inference).
+"""Download a local model for Project Watashi (no cloud inference).
 
-This fetches model weights once, into ``models/llm/``, so that the running
-application never needs the network (requirement R1). After this completes,
-translation is 100% local.
+This fetches weights once, so that the running application never needs the
+network (requirement R1). After this completes, translation and speech
+recognition are 100% local.
+
+Translation weights go into ``models/llm/``; ``--asr`` fetches speech weights
+into ``models/whisper/`` instead.
 
 Default model: NLLB-200-distilled-600M, already quantized to int8 and
 converted to CTranslate2 format (~617 MiB). It is a purpose-built neural
@@ -20,6 +23,9 @@ Usage
     run.cmd fetch_model --check         # report what is already present
     run.cmd fetch_model --force         # re-download everything
     run.cmd fetch_model --repo <id> --name <dir>
+
+    run.cmd fetch_model --asr small      # speech weights for live audio
+    run.cmd fetch_model --asr small --check
 """
 
 from __future__ import annotations
@@ -186,6 +192,66 @@ def check(model_dir: Path) -> int:
     return 0
 
 
+#: The files faster-whisper needs to open a CTranslate2 Whisper model. The
+#: tokenizer and vocabulary names differ between converted repos, so only the
+#: ones that are genuinely required are checked.
+ASR_FILES = ("config.json", "model.bin", "tokenizer.json")
+
+
+def asr_destination(args: argparse.Namespace) -> Path:
+    if args.dest:
+        return Path(args.dest).resolve()
+    name = str(args.asr).rstrip("/").split("/")[-1]
+    return (REPO_ROOT / "models" / "whisper" / name).resolve()
+
+
+def fetch_asr(args: argparse.Namespace) -> int:
+    """Download Whisper weights once, so watching a stream can be offline.
+
+    Done through faster-whisper's own downloader rather than a hand-written file
+    list: the file set differs between converted repositories, and guessing it
+    is how a model ends up 99% present and unusable.
+    """
+    target = asr_destination(args)
+    print("=" * 72)
+    print("Project Watashi - local speech recognition model fetch")
+    print("=" * 72)
+    print(f"  model     : {args.asr}")
+    print(f"  target    : {target}")
+    print("  note      : one-time download; watching a stream then never uses the network")
+    print("=" * 72)
+
+    if args.check:
+        missing = [name for name in ASR_FILES if not (target / name).exists()]
+        for name in ASR_FILES:
+            path = target / name
+            size = human(path.stat().st_size) if path.exists() else "MISSING"
+            print(f"  {name:28s} {size}")
+        if missing:
+            print(f"  {len(missing)} file(s) missing -> run again without --check")
+            return 1
+        print("  model looks complete")
+        print("  set live.asr_model to this directory to load it without a download")
+        return 0
+
+    try:
+        from faster_whisper.utils import download_model  # type: ignore
+    except Exception as exc:
+        print("faster-whisper is required: pip install -r prototype/requirements.txt")
+        print(f"  ({type(exc).__name__}: {exc})")
+        return 2
+
+    target.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        result = download_model(str(args.asr), output_dir=str(target), local_files_only=False)
+    except Exception as exc:
+        print(f"  FAILED: {type(exc).__name__}: {exc}")
+        return 1
+    print(f"  model ready in {result}")
+    print("  set live.asr_model to this directory to load it without a download")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="fetch_model",
@@ -198,7 +264,19 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--dest", type=Path, default=None, help="explicit destination directory")
     parser.add_argument("--check", action="store_true", help="only report what is present")
     parser.add_argument("--force", action="store_true", help="re-download even if present")
+    parser.add_argument(
+        "--asr",
+        nargs="?",
+        const="small",
+        default=None,
+        metavar="SIZE_OR_ID",
+        help="fetch a faster-whisper speech model instead (tiny/base/small/medium/"
+             "large-v3, or a Hugging Face id). Default: small",
+    )
     args = parser.parse_args(argv)
+
+    if args.asr:
+        return fetch_asr(args)
 
     model_dir = args.dest or (REPO_ROOT / "models" / "llm" / args.name)
     model_dir = Path(model_dir).resolve()

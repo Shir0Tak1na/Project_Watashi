@@ -21,6 +21,7 @@ subtitle always reflects "now" instead of drifting further and further behind.
 
 from __future__ import annotations
 
+import re
 import threading
 import time
 from collections import deque
@@ -33,8 +34,17 @@ from .capture import ChangeDetector, RegionCapturer
 from .events import OverlayStats, OverlayUpdate, TranslatedLine
 from .lang import has_translatable_content, matches_target
 from .recent import RecentTranslations
-from .ocr import OcrResult, RapidOcrEngine
-from .translate import Context, Translator
+from .ocr import OcrLine, OcrResult, RapidOcrEngine
+from .translate import Context, Outcome, Translator
+
+#: A line that ends with one of these is a complete thought; the next visual
+#: line starts a new one and must not be glued to it.
+_SENTENCE_END = (".", "!", "?", "。", "！", "？", "…", ";", "；", ":", "：")
+#: A continuation is much more likely after these than after a full stop.
+_CONTINUATION_END = (",", "，", "-", "—", "(", "（", "/", "、")
+#: List markers and bullets introduce a new item, not a wrapped sentence.
+_LIST_START = re.compile(r"^\s*(?:[-–—•·*]|\d+\s*[.)、])\s+")
+_CJK_CHAR = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af]")
 
 
 class _LatestSlot:
@@ -104,10 +114,30 @@ class PipelineConfig:
     #: then equally eligible and the engine answers exactly as it did before scenes
     #: existed. Compared against ``Entry.domain`` when a term has several senses.
     scene: str = ""
+    #: Translate before painting, as one batched model call, whenever the corpus
+    #: result is not already a complete translation. Off restores the old
+    #: two-tier display: the half-translated corpus string first, the model's
+    #: answer a moment later.
+    final_translation: bool = True
+    #: Join a sentence that OCR split across two or more visual lines before
+    #: translating it. Without this each fragment is translated alone and loses
+    #: the grammar of the sentence it belongs to.
+    join_fragmented_lines: bool = True
+    #: Never join more than this many visual lines into one sentence.
+    join_max_lines: int = 3
+    #: And never let a joined sentence exceed this many characters.
+    join_max_chars: int = 240
 
 
 class Pipeline:
-    """Runs capture and OCR workers and feeds the overlay."""
+    """Runs capture and OCR workers and feeds the overlay.
+
+    The translation half is also usable on its own through translate_texts,
+    which is how the live audio path reuses corpus precedence, scene handling,
+    passthrough, deduplication and refinement instead of reimplementing them.
+    """
+
+    KIND = "screen"
 
     def __init__(
         self,
@@ -455,6 +485,112 @@ class Pipeline:
                 pass
         return (context.target_lang,)
 
+    # -- sentence assembly ------------------------------------------------ #
+
+    def _merge_ocr_lines(self, lines: list[OcrLine]) -> list[OcrLine]:
+        """Join a sentence OCR split across visual lines before it is translated.
+
+        OCR groups boxes that share a visual line, but a two-line subtitle is two
+        OcrLines. Translating them separately throws away exactly the grammar a
+        sentence translation needs: the model sees "the sword intent of this"
+        and "sect is a myth" as unrelated texts. NLLB has no cross-call memory,
+        so the fix has to happen before translation, not by passing history.
+
+        The join rules are deliberately conservative, because a wrong join is
+        worse than a missed one:
+
+        * the previous line must not end with sentence punctuation;
+        * the next line must be vertically adjacent (a wrapped line, not the next
+          row of a menu), of a similar height, and not a bullet or numbered item;
+        * it must look like a continuation: lowercase Latin start, CJK, or the
+          previous line ended with a comma/dash/bracket;
+        * at most ``join_max_lines`` lines and ``join_max_chars`` characters.
+
+        The merged line keeps the union of the original boxes, so in-place
+        layouts still cover all of the text they replace.
+        """
+        if not self.config.join_fragmented_lines or len(lines) < 2:
+            return lines
+
+        groups: list[list[OcrLine]] = []
+        current: list[OcrLine] = []
+        for line in lines:
+            if not line.text.strip():
+                continue
+            if current and self._looks_continued(current, line):
+                current.append(line)
+            else:
+                if current:
+                    groups.append(current)
+                current = [line]
+        if current:
+            groups.append(current)
+
+        return [
+            group[0] if len(group) == 1 else self._joined_line(group)
+            for group in groups
+        ]
+
+    def _looks_continued(self, group: list[OcrLine], line: OcrLine) -> bool:
+        if len(group) >= max(1, int(self.config.join_max_lines)):
+            return False
+        previous = group[-1]
+        joined_len = sum(len(item.text) for item in group) + len(line.text)
+        if joined_len > max(0, int(self.config.join_max_chars)):
+            return False
+
+        previous_text = previous.text.rstrip()
+        next_text = line.text.strip()
+        if not previous_text or not next_text:
+            return False
+        if previous_text.endswith(_SENTENCE_END):
+            return False
+        if _LIST_START.match(next_text):
+            return False
+
+        gap = line.box[1] - previous.box[3]
+        # Overlapping or touching boxes belong to the same wrapped paragraph.
+        # A large gap means another row, or another UI element entirely.
+        if gap > max(6.0, 0.8 * previous.height):
+            return False
+        if abs(line.height - previous.height) > max(4.0, 0.6 * previous.height):
+            return False
+
+        if previous_text.endswith(_CONTINUATION_END):
+            return True
+        first = next_text[0]
+        if _CJK_CHAR.match(first):
+            return True
+        return first.islower()
+
+    @staticmethod
+    def _joined_line(group: list[OcrLine]) -> OcrLine:
+        parts: list[str] = []
+        for line in group:
+            text = line.text.strip()
+            if not text:
+                continue
+            if parts:
+                left = parts[-1][-1]
+                right = text[0]
+                if not (
+                    _CJK_CHAR.match(left)
+                    or _CJK_CHAR.match(right)
+                    or right in ".,!?;:%)]}"
+                ):
+                    parts.append(" ")
+            parts.append(text)
+        text = "".join(parts).strip()
+
+        x1 = min(line.box[0] for line in group)
+        y1 = min(line.box[1] for line in group)
+        x2 = max(line.box[2] for line in group)
+        y2 = max(line.box[3] for line in group)
+        total = sum(max(1, len(line.text)) for line in group)
+        confidence = sum(line.confidence * max(1, len(line.text)) for line in group) / total
+        boxes = [box for line in group for box in (line.boxes or [line.box])]
+        return OcrLine(text=text, confidence=confidence, box=(x1, y1, x2, y2), boxes=boxes)
+
     def _make_update(self, ocr_result: OcrResult, started: float) -> OverlayUpdate | None:
         """Translate each recognised line once, keeping its geometry.
 
@@ -476,12 +612,24 @@ class Pipeline:
         passthrough: list[bool] = []
         traces: list[str] = []
         backends: set[str] = set()
+        #: Lines whose corpus answer is not a complete translation. With a model
+        #: available they are finished in one batch *before* the frame is painted;
+        #: without one they keep the old two-tier behaviour.
+        pending: list[tuple[int, str, Outcome]] = []
+        finalize = (
+            getattr(self.translator, "translate_readable_batch", None)
+            if self.config.final_translation
+            else None
+        )
         declared_source = (self.config.source_lang or "auto").strip().lower()
         context = self._context()
         # What the caches may be keyed on: exactly the parts of this frame's context that
         # the loaded vocabulary can tell apart. Computed once per frame, not per line.
         scope = self._context_scope(context)
-        for ocr_line in ocr_result.lines:
+        # A subtitle wrapped across two visual lines is one sentence. Joining it
+        # before translation is the only way NLLB can see the whole grammar; it
+        # has no memory from one call to the next.
+        for ocr_line in self._merge_ocr_lines(ocr_result.lines):
             if not ocr_line.text.strip():
                 continue
 
@@ -578,12 +726,52 @@ class Pipeline:
                 self.untranslated_lines += 1
             elif outcome.backend:
                 backends.add(outcome.backend)
-            # Remember it so the next frame that reads the same sentence -- which OCR
-            # will render slightly differently -- does not pay for it again.
-            self.recent.put(ocr_line.text, target, scope=scope)
+            if finalize is not None:
+                pending.append((len(translated) - 1, ocr_line.text, outcome))
+            else:
+                # Remember it so the next frame that reads the same sentence -- which OCR
+                # will render slightly differently -- does not pay for it again.
+                self.recent.put(ocr_line.text, target, scope=scope)
 
         if not translated:
             return None
+
+        if pending and finalize is not None:
+            try:
+                refinements = finalize(
+                    [text for _position, text, _outcome in pending],
+                    self.config.target_lang,
+                    context,
+                )
+            except Exception as exc:
+                self._errors += 1
+                print(f"[pipeline] final translation failed: {exc}")
+                refinements = []
+            for (position, source, outcome), refinement in zip(pending, refinements):
+                line = translated[position]
+                final_target = refinement.target_text or line.target
+                if _normalize_for_echo(final_target) == _normalize_for_echo(source):
+                    line.coverage = 0.0
+                    backends.add("untranslated")
+                    self.untranslated_lines += 1
+                elif refinement.used_nmt:
+                    # The model covered the whole line; the corpus coverage only
+                    # describes how much of the wording it did not have to invent.
+                    line.coverage = 1.0
+                    backends.add(refinement.backend)
+                else:
+                    line.coverage = outcome.coverage
+                    if refinement.backend:
+                        backends.add(refinement.backend)
+                line.target = final_target
+                if refinement.is_model_output:
+                    line.confidence = max(line.confidence, 0.9)
+                reason = refinement.fallback_reason
+                traces.append(
+                    f"final[{refinement.backend}]"
+                    + (f": {reason}" if reason else "")
+                )
+                self.recent.put(source, final_target, scope=scope)
 
         passthrough_count = sum(1 for flag in passthrough if flag)
         self.passthrough_lines += passthrough_count
@@ -594,14 +782,16 @@ class Pipeline:
         if mean_confidence < self.config.min_confidence:
             return None
 
-        # Refine the lines that actually needed translating, as a batch. Lines
-        # already in the target language are excluded so the model is not asked
-        # to rewrite text that needed no work.
+        # Two-tier refinement is only for the path that deliberately paints the
+        # corpus answer first. When the frame was finished before painting there
+        # is nothing left to replace.
         needs_refinement = [
             line.source
             for line, was_passthrough in zip(translated, passthrough)
             if not was_passthrough
         ]
+        if finalize is not None:
+            needs_refinement = []
         if needs_refinement:
             submit = getattr(self.translator, "submit", None)
             if callable(submit):
@@ -610,7 +800,7 @@ class Pipeline:
                 except Exception as exc:
                     self._errors += 1
                     print(f"[pipeline] could not queue refinement: {exc}")
-        else:
+        elif all(passthrough):
             self.passthrough_frames += 1
 
         return OverlayUpdate(
@@ -623,6 +813,49 @@ class Pipeline:
             backend=", ".join(sorted(backends)),
             lines=translated,
         )
+
+    def translate_texts(
+        self,
+        texts: list[str] | tuple[str, ...],
+        *,
+        started: float | None = None,
+        recognition_ms: float = 0.0,
+    ) -> OverlayUpdate | None:
+        """Translate strings that came from somewhere other than OCR.
+
+        The live audio path uses this so it inherits *this* pipeline's corpus
+        precedence, scene context, target-language passthrough, short-term
+        reuse, refinement submission and counters. A second translation path
+        would be a second set of rules for the same question, and the two would
+        drift -- which is exactly what the one-engine design exists to prevent.
+
+        recognition_ms is the upstream recognition cost (ASR for live audio).
+        It is recorded as ocr_ms because that is the field every existing
+        surface already shows; stats.mode tells a UI how to label it.
+        """
+        started_at = time.perf_counter() if started is None else started
+        lines = [
+            OcrLine(
+                text=str(text),
+                confidence=1.0,
+                box=None,  # type: ignore[arg-type] - live audio has no geometry
+            )
+            for text in texts
+            if str(text).strip()
+        ]
+        if not lines:
+            return None
+        result = OcrResult(lines=lines, elapsed_ms=max(0.0, float(recognition_ms)))
+        update = self._make_update(result, started_at)
+        elapsed_ms = (time.perf_counter() - started_at) * 1000.0
+        with self._lock:
+            self._frames += 1
+            self._frame_times.append(time.perf_counter())
+            self._total_ms.append(elapsed_ms)
+            self._ocr_ms.append(max(0.0, float(recognition_ms)))
+            self._translate_ms.append(max(0.0, elapsed_ms - float(recognition_ms)))
+        self._last_result = result
+        return update
 
     # -- stats ------------------------------------------------------------ #
 
@@ -711,7 +944,7 @@ class Pipeline:
             "refinements_deferred": int(
                 self.translator.stats().get("refinements_deferred", 0)
             ),
-            "ocr_load_ms": round(self.ocr.load_ms, 1),
+            "ocr_load_ms": round(getattr(self.ocr, "load_ms", 0.0), 1),
             "nmt": {
                 key: value
                 for key, value in self.translator.stats().items()
