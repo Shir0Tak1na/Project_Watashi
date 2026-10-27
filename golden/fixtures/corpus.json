@@ -1,0 +1,29 @@
+{
+  "lang": "zh-CN",
+  "entries": {
+    "bank": [
+      {"target": "银行", "domain": "finance"},
+      {"target": "河岸", "domain": "nature"}
+    ],
+    "crane": [
+      {"target": "账目", "when_line": "account"},
+      {"target": "河流", "when_line": "river"}
+    ],
+    "port": [
+      {"target": "港口", "when_near": ["ship", "barge"]},
+      {"target": "接口", "when_near": ["code", "api"]}
+    ],
+    "quayside": [
+      {"target": "码头", "domain": "harbour", "when_window": "Novel"},
+      {"target": "河岸码头", "domain": "harbour", "when_window": "Report"}
+    ],
+    "reserve": [
+      {"target": "储备", "when_line": "oil"},
+      {"target": "预订", "when_line": "table"}
+    ],
+    "seal": [
+      {"target": "印章", "domain": "legal"},
+      {"target": "封条", "domain": "shipping"}
+    ]
+  }
+}

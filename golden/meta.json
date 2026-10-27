@@ -1,0 +1,17 @@
+{
+  "case_count": 200,
+  "categories": {
+    "conditions": 25,
+    "corpus_exact": 55,
+    "fallback": 15,
+    "live": 25,
+    "model_missing": 10,
+    "rules": 25,
+    "scene": 20,
+    "term_protection": 25
+  },
+  "corpus_digest": "7c21b2645eb3ff5be2369cda5e2191c8ec9a935b103315a7f1a0605e19be7336",
+  "generator": "golden/generate_golden.py",
+  "git_commit": "bff1add23a98041b55fb6093097038dba769f720",
+  "model": "models/llm/nllb-200-distilled-600M-ct2-int8"
+}
