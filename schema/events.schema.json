@@ -1,5 +1,21 @@
 {
   "$defs": {
+    "ErrorInfo": {
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "command",
+        "message"
+      ],
+      "type": "object"
+    },
     "OverlayStats": {
       "additionalProperties": false,
       "properties": {
@@ -119,6 +135,99 @@
       ],
       "type": "object"
     },
+    "ReadyInfo": {
+      "additionalProperties": false,
+      "properties": {
+        "backend": {},
+        "capture_mode": {},
+        "capture_window": {},
+        "corpus_entries": {},
+        "corpus_languages": {},
+        "corrections": {},
+        "corrections_untagged": {},
+        "diff_threshold": {},
+        "fps_target": {},
+        "live": {},
+        "memory_mib": {},
+        "mode": {},
+        "monitor": {},
+        "nmt_available": {},
+        "nmt_error": {},
+        "nmt_load_ms": {},
+        "ocr_load_ms": {},
+        "paused": {},
+        "plugins": {},
+        "presentation": {},
+        "profile": {},
+        "profiles": {},
+        "region": {},
+        "region_box": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "integer"
+              },
+              "maxItems": 4,
+              "minItems": 4,
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "release_stage": {},
+        "rule_ids": {},
+        "rules": {},
+        "scene": {},
+        "scenes": {},
+        "schema_version": {
+          "const": 1,
+          "type": "integer"
+        },
+        "settle_s": {},
+        "source_lang": {},
+        "target_lang": {},
+        "version": {}
+      },
+      "required": [
+        "backend",
+        "capture_mode",
+        "capture_window",
+        "corpus_entries",
+        "corpus_languages",
+        "corrections",
+        "corrections_untagged",
+        "diff_threshold",
+        "fps_target",
+        "live",
+        "memory_mib",
+        "mode",
+        "monitor",
+        "nmt_available",
+        "nmt_error",
+        "nmt_load_ms",
+        "ocr_load_ms",
+        "paused",
+        "plugins",
+        "presentation",
+        "profile",
+        "profiles",
+        "region",
+        "region_box",
+        "release_stage",
+        "rule_ids",
+        "rules",
+        "scene",
+        "scenes",
+        "schema_version",
+        "settle_s",
+        "source_lang",
+        "target_lang",
+        "version"
+      ],
+      "type": "object"
+    },
     "Refinement": {
       "additionalProperties": false,
       "properties": {
@@ -163,6 +272,18 @@
         "source",
         "target",
         "used_model"
+      ],
+      "type": "object"
+    },
+    "StatusInfo": {
+      "additionalProperties": false,
+      "properties": {
+        "message": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "message"
       ],
       "type": "object"
     },
@@ -245,6 +366,25 @@
       "if": {
         "properties": {
           "type": {
+            "const": "ready"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "data": {
+            "$ref": "#/$defs/ReadyInfo"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
             "const": "stats"
           }
         },
@@ -275,6 +415,44 @@
         "properties": {
           "data": {
             "$ref": "#/$defs/Refinement"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "status"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "data": {
+            "$ref": "#/$defs/StatusInfo"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "error"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "data": {
+            "$ref": "#/$defs/ErrorInfo"
           }
         }
       }

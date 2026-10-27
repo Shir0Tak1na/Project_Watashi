@@ -179,6 +179,60 @@ def wire_dataclass_schema(cls: type, encoder: object) -> dict:
 # --------------------------------------------------------------------------- #
 
 
+def session_info_keys() -> list[str]:
+    """The keys of ``Session.info``'s returned literal, read from source.
+
+    ``ready`` is the first event a client reads, so its payload has to be pinned
+    by the schema. The session is not imported here: the return literal in
+    ``session.py`` is the source of truth, and parsing it keeps this generator
+    independent of a configured model or a screen.
+    """
+    import ast
+
+    tree = ast.parse((ROOT / "prototype" / "watashi" / "session.py").read_text("utf-8"))
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.ClassDef) or node.name != "Session":
+            continue
+        for child in node.body:
+            if not isinstance(child, ast.FunctionDef) or child.name != "info":
+                continue
+            for item in ast.walk(child):
+                if isinstance(item, ast.Return) and isinstance(item.value, ast.Dict):
+                    keys = [
+                        key.value
+                        for key in item.value.keys
+                        if isinstance(key, ast.Constant) and isinstance(key.value, str)
+                    ]
+                    if keys:
+                        return keys
+    raise RuntimeError("could not find Session.info's returned dict keys")
+
+
+def build_ready_schema() -> dict:
+    properties: dict[str, dict] = {key: {} for key in session_info_keys()}
+    properties["schema_version"] = {
+        "type": "integer",
+        "const": ev.SCHEMA_VERSION,
+    }
+    properties["region_box"] = {
+        "anyOf": [
+            {
+                "type": "array",
+                "items": {"type": "integer"},
+                "minItems": 4,
+                "maxItems": 4,
+            },
+            {"type": "null"},
+        ]
+    }
+    return {
+        "type": "object",
+        "properties": properties,
+        "required": sorted(properties),
+        "additionalProperties": False,
+    }
+
+
 def build_events_schema() -> dict:
     line_schema = wire_dataclass_schema(ev.TranslatedLine, ev.TranslatedLine.as_dict)
     update_schema = wire_dataclass_schema(ev.OverlayUpdate, ev.encode_update)
@@ -195,6 +249,22 @@ def build_events_schema() -> dict:
         "OverlayUpdate": update_schema,
         "OverlayStats": stats_schema,
         "Refinement": refinement_schema,
+        "ReadyInfo": build_ready_schema(),
+        "StatusInfo": {
+            "type": "object",
+            "properties": {"message": {"type": "string"}},
+            "required": ["message"],
+            "additionalProperties": False,
+        },
+        "ErrorInfo": {
+            "type": "object",
+            "properties": {
+                "command": {"type": "string"},
+                "message": {"type": "string"},
+            },
+            "required": ["command", "message"],
+            "additionalProperties": False,
+        },
     }
     # Pull nested $defs produced by wire_dataclass_schema (none currently) into
     # the root, where the $ref strings point.
@@ -211,6 +281,10 @@ def build_events_schema() -> dict:
             }
         },
     }
+    ready_condition = {
+        "if": {"properties": {"type": {"const": "ready"}}, "required": ["type"]},
+        "then": {"properties": {"data": {"$ref": "#/$defs/ReadyInfo"}}},
+    }
     stats_condition = {
         "if": {"properties": {"type": {"const": "stats"}}, "required": ["type"]},
         "then": {"properties": {"data": {"$ref": "#/$defs/OverlayStats"}}},
@@ -218,6 +292,14 @@ def build_events_schema() -> dict:
     refinement_condition = {
         "if": {"properties": {"type": {"const": "refinement"}}, "required": ["type"]},
         "then": {"properties": {"data": {"$ref": "#/$defs/Refinement"}}},
+    }
+    status_condition = {
+        "if": {"properties": {"type": {"const": "status"}}, "required": ["type"]},
+        "then": {"properties": {"data": {"$ref": "#/$defs/StatusInfo"}}},
+    }
+    error_condition = {
+        "if": {"properties": {"type": {"const": "error"}}, "required": ["type"]},
+        "then": {"properties": {"data": {"$ref": "#/$defs/ErrorInfo"}}},
     }
 
     return {
@@ -236,7 +318,14 @@ def build_events_schema() -> dict:
         },
         "required": ["v", "type", "ts", "data"],
         "additionalProperties": False,
-        "allOf": [event_schema, stats_condition, refinement_condition],
+        "allOf": [
+            event_schema,
+            ready_condition,
+            stats_condition,
+            refinement_condition,
+            status_condition,
+            error_condition,
+        ],
         "$defs": defs,
     }
 
