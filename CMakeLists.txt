@@ -1,4 +1,19 @@
-cmake_minimum_required(VERSION 3.16)
+cmake_minimum_required(VERSION 3.21)
+
+# Dependency resolution. The supported path is the vcpkg manifest in
+# ``vcpkg.json``; this block only selects the toolchain when one is already
+# installed, so a plain ``cmake -S . -B build`` works and CI can pass vcpkg
+# explicitly. It has to sit above ``project()``: a toolchain file must be in
+# place before the first ``project()`` call or it is ignored.
+if(NOT DEFINED CMAKE_TOOLCHAIN_FILE)
+    foreach(root "$ENV{VCPKG_ROOT}" "$ENV{VCPKG_INSTALLATION_ROOT}")
+        if(root AND EXISTS "${root}/scripts/buildsystems/vcpkg.cmake")
+            set(CMAKE_TOOLCHAIN_FILE "${root}/scripts/buildsystems/vcpkg.cmake"
+                CACHE FILEPATH "vcpkg toolchain file")
+            break()
+        endif()
+    endforeach()
+endif()
 
 project(ProjectWatashi LANGUAGES CXX)
 
@@ -6,104 +21,68 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-option(USE_QT "Enable Qt UI" ON)
-option(USE_ONNX "Enable ONNX Runtime backend" ON)
-option(USE_LLAMA_CPP "Enable llama.cpp backend" ON)
-option(USE_PADDLEOCR "Enable PaddleOCR backend" ON)
-option(BUILD_TESTS "Build unit/integration tests" ON)
-
-include_directories(
-    ${CMAKE_SOURCE_DIR}/include
-    ${CMAKE_SOURCE_DIR}/src
-)
-
-find_package(SQLite3 REQUIRED)
-find_package(OpenCV REQUIRED)
-
-if(USE_QT)
-    find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets)
-    set(CMAKE_AUTOMOC ON)
-    set(CMAKE_AUTORCC ON)
-    set(CMAKE_AUTOUIC ON)
+if(MSVC)
+    add_compile_options(/W4 /permissive- /utf-8)
+else()
+    add_compile_options(-Wall -Wextra)
 endif()
 
-if(USE_ONNX)
-    find_package(onnxruntime REQUIRED)
-endif()
-
-if(USE_LLAMA_CPP)
-    message(STATUS "llama.cpp backend enabled")
-endif()
-
-if(USE_PADDLEOCR)
-    message(STATUS "PaddleOCR backend enabled")
-endif()
-
-file(GLOB_RECURSE CORE_SOURCES "${CMAKE_SOURCE_DIR}/src/core/*.cpp")
-file(GLOB_RECURSE OCR_SOURCES "${CMAKE_SOURCE_DIR}/src/ocr/*.cpp")
-file(GLOB_RECURSE LLM_SOURCES "${CMAKE_SOURCE_DIR}/src/llm/*.cpp")
-file(GLOB_RECURSE DB_SOURCES "${CMAKE_SOURCE_DIR}/src/db/*.cpp")
-file(GLOB_RECURSE RULES_SOURCES "${CMAKE_SOURCE_DIR}/src/rules/*.cpp")
-file(GLOB_RECURSE PLUGINS_SOURCES "${CMAKE_SOURCE_DIR}/src/plugins/*.cpp")
-file(GLOB_RECURSE UI_SOURCES "${CMAKE_SOURCE_DIR}/src/ui/*.cpp")
-file(GLOB_RECURSE UTILS_SOURCES "${CMAKE_SOURCE_DIR}/src/utils/*.cpp")
-file(GLOB_RECURSE COMMON_SOURCES "${CMAKE_SOURCE_DIR}/src/common/*.cpp")
-
-set(APP_SOURCES
-    ${CMAKE_SOURCE_DIR}/src/app/main.cpp
-    ${CMAKE_SOURCE_DIR}/src/app/app.cpp
-)
-
-set(PROJECT_SOURCES
-    ${CORE_SOURCES}
-    ${OCR_SOURCES}
-    ${LLM_SOURCES}
-    ${DB_SOURCES}
-    ${RULES_SOURCES}
-    ${PLUGINS_SOURCES}
-    ${UI_SOURCES}
-    ${UTILS_SOURCES}
-    ${COMMON_SOURCES}
-    ${APP_SOURCES}
-)
-
-add_executable(ProjectWatashi ${PROJECT_SOURCES})
-
-# Third-party libraries every target in this project needs, in one place.
+# --------------------------------------------------------------------------- #
+# dependencies
+# --------------------------------------------------------------------------- #
 #
-# `tests/` links the same set. Duplicating the block there would let the two drift,
-# and a test binary linked against a different ONNX Runtime or Qt than the
-# application is a class of failure that wastes an afternoon.
-set(PROJECT_WATASHI_LINK_LIBS
-    SQLite::SQLite3
-    ${OpenCV_LIBS}
+# nlohmann-json is the event payload writer; Catch2 v3 is the test runner.
+# Both are declared in vcpkg.json. When the vcpkg toolchain is not in play the
+# same pinned tags are fetched instead, so the skeleton configures on a machine
+# without vcpkg as long as it can reach GitHub once.
+include(FetchContent)
+
+find_package(nlohmann_json 3.11 CONFIG QUIET)
+if(NOT nlohmann_json_FOUND)
+    message(STATUS "nlohmann-json not found; fetching v3.11.3")
+    FetchContent_Declare(nlohmann_json
+        GIT_REPOSITORY https://github.com/nlohmann/json.git
+        GIT_TAG v3.11.3
+        GIT_SHALLOW TRUE)
+    FetchContent_MakeAvailable(nlohmann_json)
+endif()
+
+find_package(Catch2 3 CONFIG QUIET)
+if(NOT Catch2_FOUND)
+    message(STATUS "Catch2 v3 not found; fetching v3.5.2")
+    FetchContent_Declare(Catch2
+        GIT_REPOSITORY https://github.com/catchorg/Catch2.git
+        GIT_TAG v3.5.2
+        GIT_SHALLOW TRUE)
+    FetchContent_MakeAvailable(Catch2)
+endif()
+
+# --------------------------------------------------------------------------- #
+# targets
+# --------------------------------------------------------------------------- #
+#
+# watashi_core is the whole engine skeleton and holds no main(): the CLI and the
+# tests differ only in how they drive it. Choosing this shape now means the port
+# can grow without having to split the library out of an executable later.
+add_library(watashi_core STATIC
+    src/core/events.cpp
+    src/core/pipeline.cpp
+    src/core/session.cpp
+    src/io/jsonl.cpp
+    src/fake/fake_ocr.cpp
+    src/fake/fake_translator.cpp
 )
+target_include_directories(watashi_core
+    PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include
+    PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+target_link_libraries(watashi_core PUBLIC nlohmann_json::nlohmann_json)
+target_compile_features(watashi_core PUBLIC cxx_std_17)
 
-if(USE_QT)
-    list(APPEND PROJECT_WATASHI_LINK_LIBS
-        Qt6::Core
-        Qt6::Gui
-        Qt6::Widgets
-    )
-endif()
+add_executable(watashi_cli src/cli/main.cpp)
+target_link_libraries(watashi_cli PRIVATE watashi_core)
 
-if(USE_ONNX)
-    list(APPEND PROJECT_WATASHI_LINK_LIBS onnxruntime)
-endif()
-
-target_link_libraries(ProjectWatashi PRIVATE ${PROJECT_WATASHI_LINK_LIBS})
-
-if(USE_LLAMA_CPP)
-    message(STATUS "Link with llama.cpp backend if available")
-endif()
-
-if(USE_PADDLEOCR)
-    message(STATUS "Link with PaddleOCR backend if available")
-endif()
-
-target_compile_definitions(ProjectWatashi PRIVATE PROJECT_WATASHI_BUILD)
-
-if(BUILD_TESTS)
-    enable_testing()
+include(CTest)
+if(BUILD_TESTING)
     add_subdirectory(tests)
 endif()

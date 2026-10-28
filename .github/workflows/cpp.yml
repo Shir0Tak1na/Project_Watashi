@@ -1,0 +1,68 @@
+name: cpp
+
+# Builds the C++ walking skeleton on the same platform it ships on, then feeds
+# the CLI's own output back through the shared stream validator. The Python
+# checks in checks.yml are a separate workflow on purpose: this one must fail
+# when the C++ contract drifts, and mixing the two would make that ambiguous.
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  windows:
+    name: windows-latest / msvc
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # vcpkg ships preinstalled on the windows-latest image. Publishing its
+      # location through GITHUB_ENV lets the cache step below address it: the
+      # `env` context does not see the runner's machine environment.
+      - name: Locate vcpkg
+        run: |
+          if (-not $env:VCPKG_INSTALLATION_ROOT) { throw "VCPKG_INSTALLATION_ROOT is not set" }
+          "VCPKG_ROOT=$env:VCPKG_INSTALLATION_ROOT" >> $env:GITHUB_ENV
+          "VCPKG_DOWNLOADS=$env:VCPKG_INSTALLATION_ROOT/downloads" >> $env:GITHUB_ENV
+
+      # Manifest mode installs into build/vcpkg_installed, so both halves are
+      # cached: the downloads (source archives) and the built packages. The key
+      # follows vcpkg.json, which is the only file that decides what is built.
+      - name: Cache vcpkg downloads and installed packages
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ env.VCPKG_DOWNLOADS }}
+            build/vcpkg_installed
+          key: vcpkg-windows-${{ hashFiles('vcpkg.json') }}
+          restore-keys: |
+            vcpkg-windows-
+
+      - name: Configure
+        run: >
+          cmake -S . -B build -G "Visual Studio 17 2022" -A x64
+          -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake"
+          -DVCPKG_TARGET_TRIPLET=x64-windows
+
+      - name: Build
+        run: cmake --build build --config Release
+
+      - name: Test
+        run: ctest --test-dir build -C Release --output-on-failure
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # The validator is the same file the Python side uses, so the CLI is held
+      # to the one contract rather than a copy of it.
+      - name: CLI stream passes the shared validator
+        run: |
+          ./build/Release/watashi_cli.exe --synthetic --duration 2 --json-lines > build/stream.jsonl
+          python tools/validate_stream.py build/stream.jsonl
