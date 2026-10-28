@@ -1,0 +1,10 @@
+{
+  "channels": 3,
+  "characters": 6623,
+  "frame_sha256": "938c48e3bf7938d15d2169b286241e72eaebd64a36a49c2295a4dced3f279561",
+  "git_commit": "c8ecf3e63ecf49b02a28755a2370a00ebd4c8531",
+  "height": 200,
+  "ocr_ms": 97.62,
+  "python_lines": 2,
+  "width": 1200
+}
