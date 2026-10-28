@@ -40,6 +40,11 @@ class OcrLine:
     confidence: float
     box: tuple[int, int, int, int]  # x1, y1, x2, y2 in region coordinates
     boxes: list[tuple[int, int, int, int]] = field(default_factory=list)
+    #: When this fragment was seen, on the pipeline's monotonic clock. Internal
+    #: only: it never reaches an event, because a subtitle carries no timing and
+    #: a client that needs one reads the envelope's ``ts``.
+    t_start: float | None = None
+    t_end: float | None = None
 
     @property
     def center_y(self) -> float:

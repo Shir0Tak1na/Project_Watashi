@@ -736,6 +736,21 @@ class Pipeline:
         if not translated:
             return None
 
+        # Fragment bookkeeping, internal only. ``started`` is the monotonic moment
+        # the frame arrived on and the OCR cost is already measured, so the end of
+        # the fragment is derived from that measurement rather than sampled again
+        # while painting. ``as_dict`` never emits any of these keys, so the wire
+        # format is unchanged.
+        ocr_end = (
+            started + ocr_result.elapsed_ms / 1000.0
+            if ocr_result.elapsed_ms > 0
+            else None
+        )
+        for utterance_id, line in enumerate(translated, start=1):
+            line.t_start = started
+            line.t_end = ocr_end
+            line.utterance_id = utterance_id
+
         if pending and finalize is not None:
             try:
                 refinements = finalize(

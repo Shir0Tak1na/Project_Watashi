@@ -170,6 +170,13 @@ class TranslatedLine:
     box: tuple[int, int, int, int] | None = None
     confidence: float = 0.0
     coverage: float = 1.0
+    #: Internal fragment bookkeeping, kept off the wire by ``as_dict``: when and
+    #: how long the frame's OCR took (monotonic seconds), which utterance the
+    #: line belongs to, and how many revisions of it have been published.
+    t_start: float | None = None
+    t_end: float | None = None
+    utterance_id: int = 0
+    revision: int = 0
 
     def as_dict(self) -> dict[str, Any]:
         return {

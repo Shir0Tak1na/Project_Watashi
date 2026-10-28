@@ -21,6 +21,7 @@ selfcheck_plugins
 selfcheck_settings
 selfcheck_settle
 selfcheck_session
+selfcheck_contract
 selfcheck_web
 selfcheck_deps
 selfcheck_ci
