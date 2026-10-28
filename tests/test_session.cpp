@@ -26,7 +26,7 @@ std::vector<watashi::Envelope> run_synthetic(double duration = 2.0, double fps =
 /// A source that finds nothing, for the "empty input" case.
 class EmptyOcr final : public watashi::OcrSource {
 public:
-    [[nodiscard]] std::vector<watashi::OcrLine> recognize(int) const override {
+    [[nodiscard]] watashi::OcrResult recognize(const watashi::ImageView&) const override {
         return {};
     }
 };

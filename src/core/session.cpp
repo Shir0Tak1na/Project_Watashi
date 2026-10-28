@@ -3,8 +3,11 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstddef>
+#include <cstdint>
 #include <set>
 #include <string>
+#include <vector>
 
 #if defined(_WIN32)
 #define NOMINMAX
@@ -68,9 +71,18 @@ void Session::run(const Sink& sink) {
          });
 
     frames_ = 0;
+    // The fake source ignores the pixels, but the interface is the real one, so
+    // the session hands it a real buffer of the region's size: a 1200x200x3
+    // blank frame costs 720 KiB once and keeps the seam honest.
+    const std::size_t frame_bytes = static_cast<std::size_t>(std::max(1, options_.region_width)) *
+                                    static_cast<std::size_t>(std::max(1, options_.region_height)) * 3;
+    const std::vector<std::uint8_t> frame(frame_bytes, 0);
+    const ImageView view{frame.data(), std::max(1, options_.region_width),
+                         std::max(1, options_.region_height)};
+
     for (int index = 0; index < frame_count; ++index) {
         const double started = steady_seconds();
-        const OverlayUpdate update = pipeline_.process(index, started);
+        const OverlayUpdate update = pipeline_.process(view, started);
         emit(sink, event_type::kSubtitle, update.to_json());
         ++frames_;
 

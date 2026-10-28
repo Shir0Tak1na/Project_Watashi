@@ -43,13 +43,13 @@ nlohmann::json OverlayUpdate::to_json() const {
 Pipeline::Pipeline(const OcrSource& ocr, const Translator& translator)
     : ocr_(ocr), translator_(translator) {}
 
-OverlayUpdate Pipeline::process(int frame_index, double started_seconds) const {
+OverlayUpdate Pipeline::process(const ImageView& frame, double started_seconds) const {
     OverlayUpdate update;
-    const auto recognition_started = std::chrono::steady_clock::now();
-    const std::vector<OcrLine> recognised = ocr_.recognize(frame_index);
-    const auto recognition_finished = std::chrono::steady_clock::now();
+    const OcrResult recognised = ocr_.recognize(frame);
+    update.ocr_ms = recognised.elapsed_ms;
 
-    for (const auto& line : recognised) {
+    const auto translation_started = std::chrono::steady_clock::now();
+    for (const auto& line : recognised.lines) {
         OverlayLine published;
         published.source = line.text;
         published.target = translator_.translate(line.text);
@@ -65,6 +65,7 @@ OverlayUpdate Pipeline::process(int frame_index, double started_seconds) const {
         update.target_text += published.target;
         update.lines.push_back(std::move(published));
     }
+    const auto finished = std::chrono::steady_clock::now();
 
     update.backend = "fake";
     update.trace = "fake: skeleton path, no OCR and no model";
@@ -80,18 +81,13 @@ OverlayUpdate Pipeline::process(int frame_index, double started_seconds) const {
         update.coverage = coverage / count;
     }
 
-    const auto finished = std::chrono::steady_clock::now();
-    const auto elapsed_ms = [](auto from, auto to) {
-        return std::chrono::duration<double, std::milli>(to - from).count();
-    };
-    update.ocr_ms = elapsed_ms(recognition_started, recognition_finished);
-    update.translate_ms = elapsed_ms(recognition_finished, finished);
+    update.translate_ms =
+        std::chrono::duration<double, std::milli>(finished - translation_started).count();
 
     // Derived from the stamp the frame arrived with, never sampled at paint
     // time: that is the rule the Python pipeline follows for its fragments.
-    const double finished_seconds = std::chrono::duration<double>(
-                                        finished.time_since_epoch())
-                                        .count();
+    const double finished_seconds =
+        std::chrono::duration<double>(finished.time_since_epoch()).count();
     update.latency_ms = (finished_seconds - started_seconds) * 1000.0;
     return update;
 }
