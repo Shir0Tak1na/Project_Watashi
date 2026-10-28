@@ -42,7 +42,7 @@ and the app works offline.
 
 ## Design principles
 
-1. **Local-first** — the main path never requires network access.
+1. **Local-first, not local-only** — the main path works offline by default; external APIs, models on other local devices, and app-collaboration interfaces are opt-in and off by default.
 2. **Externally extensible** — corpora, rules, and plugins are plain files; the
    engine itself does not change.
 3. **Explainable** — every translation records whether it came from the corpus,
@@ -565,6 +565,7 @@ removed: empty directories cannot be committed, nothing referenced them, and the
 ## Notes
 
 - The app performs no cloud calls by default and works offline.
+- External backends are off by default; when enabled they receive only the recognised text — screenshots and audio stay on this machine.
 - Local processing keeps documents, glossaries, and translation history on the
   user's machine.
 - The previous README described an unrelated Tkinter + Google Translate

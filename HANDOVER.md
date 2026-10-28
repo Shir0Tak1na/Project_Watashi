@@ -1,7 +1,7 @@
 # 交接说明 / Handover
 
 > 给接手的人或编码代理：**先读这一页，再读别的。**
-> 最后更新：2026-10-28 00:45（Asia/Shanghai）
+> 最后更新：2026-10-29 00:50（Asia/Shanghai）
 
 ## 一句话状态
 
@@ -37,21 +37,21 @@ Python 原型是**可运行、已实测**的参考实现；C++ 主干是 2026-09
 1. 事件 JSON 与 [events.py](prototype/watashi/events.py) 逐字段一致（`v`/`seq`/`ts` 信封），不许自创形状。
 2. 设置项键名与默认值来自 [settings_schema.py](prototype/watashi/settings_schema.py)，不许加未登记键。
 3. 语料命中即权威，模型不得改写术语；未命中落到模型时必须报告**兜底原因**。
-4. 不许引入原型里没出现过的推理后端。
+4. 推理后端必须实现现有 `Translator` 协议；v1.0 只允许本地后端，外部/局域网后端默认关闭且需先有 ADR。
 5. 模型权重不进 git、不进安装包（见 [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md)）。
 
-## 当前状态（2026-10-28 00:45）
+## 当前状态（2026-10-29 00:40）
 
 | 项 | 状态 |
 | --- | --- |
-| HEAD | `1ffbc44`，tag `v0.0.7a`（2026-09-14） |
-| 工作区 | 29 个已跟踪文件被修改、6 个新文件未跟踪，**未提交** |
-| 工具链 | 本机只有 MSBuild，**没有 `cl.exe`** |
-| CI | 只跑 Python，不编译 C++ |
-| 契约 | 未导出成 schema，且仍在变（`OverlayStats.mode`、呈现文件热重载） |
-| 黄金样本 | 不存在 |
+| HEAD | `3af4f23`（W1.0 fix）；tag `v0.0.8a` 在 `e571cd7` |
+| 工作区 | W1.1 进行中（`include/watashi/ocr.hpp` 未跟踪）；文档已修改，待提交（.git/index.lock 被拒） |
+| 工具链 | VC 工作负载已装；`cl` 需 Developer PowerShell / vcvars |
+| CI | `.github/workflows/cpp.yml`：Windows 构建 + ctest + 双校验 |
+| 契约 | `schema/` 三份；events payload 已开放，ReadyInfo 必填 3 字段 |
+| 黄金样本 | 200 条 + `golden/verify_cases.py` |
 
-## 第一批任务（W0，按顺序）
+## 第一批任务（W0，已完成）
 
 | # | 任务 | 验收 |
 | --- | --- | --- |
