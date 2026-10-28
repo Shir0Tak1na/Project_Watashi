@@ -1,12 +1,13 @@
 # 交接说明 / Handover
 
 > 给接手的人或编码代理：**先读这一页，再读别的。**
-> 最后更新：2026-10-29 00:50（Asia/Shanghai）
+> 最后更新：2026-10-29 07:28（Asia/Shanghai）
 
 ## 一句话状态
 
-Python 原型是**可运行、已实测**的参考实现；C++ 主干是 2026-09-13 的占位、**从未编译过**。
-正式版按 [docs/cpp-v1-plan.md](docs/cpp-v1-plan.md) 执行，当前处于 **W0（开工条件）**，尚未进入 W1（内核切片）。
+Python 原型是**可运行、已实测**的参考实现；C++ 主干已是可编译的 walking skeleton
+（`watashi_core` / `watashi_cli` / ctest），W1.1 起接入**可选**的 ONNX Runtime OCR，默认仍走 fake。
+正式版按 [docs/cpp-v1-plan.md](docs/cpp-v1-plan.md) 执行，当前处于 **W1（内核切片）**：W1.0 骨架、W1.1 可选 ONNX OCR 已完成。
 
 ## 必读顺序（约 30 分钟）
 
@@ -40,12 +41,12 @@ Python 原型是**可运行、已实测**的参考实现；C++ 主干是 2026-09
 4. 推理后端必须实现现有 `Translator` 协议；v1.0 只允许本地后端，外部/局域网后端默认关闭且需先有 ADR。
 5. 模型权重不进 git、不进安装包（见 [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md)）。
 
-## 当前状态（2026-10-29 00:40）
+## 当前状态（2026-10-29）
 
 | 项 | 状态 |
 | --- | --- |
-| HEAD | `3af4f23`（W1.0 fix）；tag `v0.0.8a` 在 `e571cd7` |
-| 工作区 | W1.1 进行中（`include/watashi/ocr.hpp` 未跟踪）；文档已修改，待提交（.git/index.lock 被拒） |
+| HEAD | `df66a24`（文档：外部后端可选）；tag `v0.0.8a` 在 `e571cd7` |
+| 工作区 | 干净：W1.1（`b59d4b9`）与文档提交（`df66a24`）均已推送 |
 | 工具链 | VC 工作负载已装；`cl` 需 Developer PowerShell / vcvars |
 | CI | `.github/workflows/cpp.yml`：Windows 构建 + ctest + 双校验 |
 | 契约 | `schema/` 三份；events payload 已开放，ReadyInfo 必填 3 字段 |
