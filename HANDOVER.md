@@ -78,6 +78,31 @@ Python 原型是**可运行、已实测**的参考实现；C++ 主干已是可�
 
 **W0 全部完成前，不要写 W1 的业务代码。** 这不是流程洁癖：契约还在变，先写的会白写。
 
+## W1 交付记录（2026-10-29）
+
+| 提交 | 内容 |
+| --- | --- |
+| `f7f2138` → `3af4f23` | W1.0 骨架（`watashi_core` / `watashi_cli` / ctest），随后修 ready/stats 与 schema 门 |
+| `b59d4b9` | W1.1 可选 ONNX Runtime OCR；CLI 默认 fake，CI 不依赖模型 |
+
+验收在**当前 HEAD 的 clean-room 克隆**里重跑（不复用旧 `build/`、`build-w11/`）：
+
+- `ctest` 41/41；fake 流 42 事件通过 `tools/validate_stream.py` 与 `tests/validate_events_schema.py`（含「删 `data.region` 必须失败」反例）
+- 50 张渲染帧：归一化一致率 **1.0000**，框数 0 不一致，最大框差 **2 px**
+- 10 张真实屏幕：一致率 **0.9445 / 0.9758**（两次不同时刻抓取），均 ≥0.90
+- 1200×200 ×20：P50 **49.58–50.04 ms**（≤120 ms，且 ≤ baseline×1.2 = 90.70 ms）
+
+复跑用一条命令（重新渲染 50 帧、重新抓 10 张屏幕、跑完全部对照；像素与参考只写 `build/`）：
+
+```powershell
+.venv\Scripts\python.exe tools\check_ocr.py `
+    --det .venv\Lib\site-packages\rapidocr_onnxruntime\models\ch_PP-OCRv4_det_infer.onnx `
+    --rec .venv\Lib\site-packages\rapidocr_onnxruntime\models\ch_PP-OCRv4_rec_infer.onnx `
+    --chars spike\chars.txt
+```
+
+**待补**：W0.6b（CT2/NLLB 的 C++ spike）仍为空，W2 之前必须补；W1.2（语料/规则 v0）尚未开始。
+
 ## 环境坑（本机实测）
 
 - Windows 的 `python` 可能是应用执行别名 → 一律用 `prototype\run.cmd`
