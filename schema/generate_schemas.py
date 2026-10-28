@@ -233,6 +233,19 @@ def build_ready_schema() -> dict:
     }
 
 
+#: Payload objects whose property sets may grow without breaking a v1 reader.
+#: ``StatusInfo`` is deliberately absent: it carries one free-form message and is
+#: not an extension surface of its own.
+OPEN_PAYLOADS = (
+    "TranslatedLine",
+    "OverlayUpdate",
+    "OverlayStats",
+    "Refinement",
+    "ReadyInfo",
+    "ErrorInfo",
+)
+
+
 def build_events_schema() -> dict:
     line_schema = wire_dataclass_schema(ev.TranslatedLine, ev.TranslatedLine.as_dict)
     update_schema = wire_dataclass_schema(ev.OverlayUpdate, ev.encode_update)
@@ -272,6 +285,14 @@ def build_events_schema() -> dict:
         nested = defs[name].pop("$defs", {})
         for nested_name, nested_schema in nested.items():
             defs.setdefault(nested_name, nested_schema)
+
+    # Payloads are the additive-evolution surface: a later minor revision may add
+    # keys (segments, t_start, ...) and a v1 reader must keep accepting the event,
+    # ignoring what it does not know. The envelope above stays closed because
+    # v/type/ts/data/seq *is* the contract -- an unknown key there means a
+    # different protocol, not a richer payload.
+    for name in OPEN_PAYLOADS:
+        defs[name]["additionalProperties"] = True
 
     event_schema = {
         "if": {"properties": {"type": {"const": "subtitle"}}, "required": ["type"]},

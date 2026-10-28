@@ -1,7 +1,7 @@
 {
   "$defs": {
     "ErrorInfo": {
-      "additionalProperties": false,
+      "additionalProperties": true,
       "properties": {
         "command": {
           "type": "string"
@@ -17,7 +17,7 @@
       "type": "object"
     },
     "OverlayStats": {
-      "additionalProperties": false,
+      "additionalProperties": true,
       "properties": {
         "backend": {
           "type": "string"
@@ -89,7 +89,7 @@
       "type": "object"
     },
     "OverlayUpdate": {
-      "additionalProperties": false,
+      "additionalProperties": true,
       "properties": {
         "backend": {
           "type": "string"
@@ -136,7 +136,7 @@
       "type": "object"
     },
     "ReadyInfo": {
-      "additionalProperties": false,
+      "additionalProperties": true,
       "properties": {
         "backend": {},
         "capture_mode": {},
@@ -229,7 +229,7 @@
       "type": "object"
     },
     "Refinement": {
-      "additionalProperties": false,
+      "additionalProperties": true,
       "properties": {
         "backend": {
           "type": "string"
@@ -288,7 +288,7 @@
       "type": "object"
     },
     "TranslatedLine": {
-      "additionalProperties": false,
+      "additionalProperties": true,
       "properties": {
         "box": {
           "anyOf": [
