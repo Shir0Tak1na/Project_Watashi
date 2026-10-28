@@ -6,7 +6,14 @@
         --reference build/w11_fixtures/reference.jsonl \
         --det .venv/Lib/site-packages/rapidocr_onnxruntime/models/ch_PP-OCRv4_det_infer.onnx \
         --rec .venv/Lib/site-packages/rapidocr_onnxruntime/models/ch_PP-OCRv4_rec_infer.onnx \
-        --chars spike/chars.txt
+        --chars spike/chars.txt \
+        --screen-manifest build/w11_screens/manifest.json \
+        --screen-reference build/w11_screens/reference.jsonl
+
+Neither fixture set is committed: ``tests/fixtures/make_ocr_fixtures.py`` produces
+the rendered frames, ``tests/fixtures/capture_screens.py`` captures the real
+ones and records the Python reference for both. Without ``--screen-manifest``
+this prints "screens: not verified" rather than passing on fixtures alone.
 
 What it measures, and why each gate exists:
 
@@ -278,7 +285,10 @@ def main(argv: list[str]) -> int:
         screen = compare_frames(screen_cpp, screen_reference, screen_order)
         print(f"screens: {screen['frames']} frame(s)")
         print(f"  normalised agreement : {screen['agreement']:.4f}")
-        print(f"  max box error        : {screen['max_box_error_px']} px")
+        # Real screens have many small lines whose top-left corners tie, so
+        # pairing them by position is not stable. Reported for context only; the
+        # screen gate is the agreement above.
+        print(f"  max box error        : {screen['max_box_error_px']} px (informational)")
         if screen["agreement"] < SCREEN_MIN_AGREEMENT:
             failures.append(
                 f"screen agreement {screen['agreement']:.4f} < {SCREEN_MIN_AGREEMENT}"
