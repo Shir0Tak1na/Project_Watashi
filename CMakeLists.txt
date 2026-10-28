@@ -79,6 +79,11 @@ target_include_directories(watashi_core
 target_link_libraries(watashi_core PUBLIC nlohmann_json::nlohmann_json)
 target_compile_features(watashi_core PUBLIC cxx_std_17)
 
+# stats.memory_mib comes from the process working set on Windows.
+if(WIN32)
+    target_link_libraries(watashi_core PRIVATE psapi)
+endif()
+
 add_executable(watashi_cli src/cli/main.cpp)
 target_link_libraries(watashi_cli PRIVATE watashi_core)
 

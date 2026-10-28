@@ -45,7 +45,11 @@ Pipeline::Pipeline(const OcrSource& ocr, const Translator& translator)
 
 OverlayUpdate Pipeline::process(int frame_index, double started_seconds) const {
     OverlayUpdate update;
-    for (const auto& line : ocr_.recognize(frame_index)) {
+    const auto recognition_started = std::chrono::steady_clock::now();
+    const std::vector<OcrLine> recognised = ocr_.recognize(frame_index);
+    const auto recognition_finished = std::chrono::steady_clock::now();
+
+    for (const auto& line : recognised) {
         OverlayLine published;
         published.source = line.text;
         published.target = translator_.translate(line.text);
@@ -76,12 +80,19 @@ OverlayUpdate Pipeline::process(int frame_index, double started_seconds) const {
         update.coverage = coverage / count;
     }
 
+    const auto finished = std::chrono::steady_clock::now();
+    const auto elapsed_ms = [](auto from, auto to) {
+        return std::chrono::duration<double, std::milli>(to - from).count();
+    };
+    update.ocr_ms = elapsed_ms(recognition_started, recognition_finished);
+    update.translate_ms = elapsed_ms(recognition_finished, finished);
+
     // Derived from the stamp the frame arrived with, never sampled at paint
     // time: that is the rule the Python pipeline follows for its fragments.
-    const double finished = std::chrono::duration<double>(
-                                std::chrono::steady_clock::now().time_since_epoch())
-                                .count();
-    update.latency_ms = (finished - started_seconds) * 1000.0;
+    const double finished_seconds = std::chrono::duration<double>(
+                                        finished.time_since_epoch())
+                                        .count();
+    update.latency_ms = (finished_seconds - started_seconds) * 1000.0;
     return update;
 }
 

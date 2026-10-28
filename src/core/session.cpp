@@ -6,6 +6,14 @@
 #include <set>
 #include <string>
 
+#if defined(_WIN32)
+#define NOMINMAX
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+
+#include <psapi.h>
+#endif
+
 namespace watashi {
 namespace {
 
@@ -13,6 +21,19 @@ double steady_seconds() {
     return std::chrono::duration<double>(
                std::chrono::steady_clock::now().time_since_epoch())
         .count();
+}
+
+/// Resident memory, in MiB, as the stats contract reports it. 0.0 when the
+/// platform cannot answer, which is honest: the field is present because the
+/// payload is fixed, not because this build measured something it did not.
+double working_set_mib() {
+#if defined(_WIN32)
+    PROCESS_MEMORY_COUNTERS counters{};
+    if (GetProcessMemoryInfo(GetCurrentProcess(), &counters, sizeof(counters))) {
+        return static_cast<double>(counters.WorkingSetSize) / (1024.0 * 1024.0);
+    }
+#endif
+    return 0.0;
 }
 
 constexpr std::string_view kKnownCommands[] = {
@@ -36,6 +57,10 @@ void Session::run(const Sink& sink) {
     emit(sink, event_type::kReady,
          nlohmann::json{
              {"schema_version", kSchemaVersion},
+             {"region", "synthetic " + std::to_string(options_.region_width) + "x" +
+                            std::to_string(options_.region_height)},
+             {"region_box", nlohmann::json::array(
+                                {0, 0, options_.region_width, options_.region_height})},
              {"mode", "synthetic"},
              {"fps", fps},
              {"duration_s", duration},
@@ -52,20 +77,21 @@ void Session::run(const Sink& sink) {
         emit(sink, event_type::kStats,
              nlohmann::json{
                  {"fps", fps},
-                 {"ocr_ms", 0.0},
-                 {"translate_ms", update.latency_ms},
+                 {"ocr_ms", update.ocr_ms},
+                 {"translate_ms", update.translate_ms},
                  {"total_ms", update.latency_ms},
                  {"frames", frames_},
                  {"skipped", 0},
                  {"corpus_entries", 0},
                  {"rules", 0},
                  {"cache_hit_rate", 0.0},
+                 {"backend", "fake"},
+                 {"paused", paused_},
                  {"refinements", 0},
                  {"refinements_pending", 0},
                  {"refinements_dropped", 0},
-                 {"memory_mib", 0.0},
+                 {"memory_mib", working_set_mib()},
                  {"mode", "synthetic"},
-                 {"backend", "fake"},
              });
     }
 

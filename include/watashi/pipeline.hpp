@@ -51,6 +51,11 @@ struct OverlayUpdate {
     double coverage = 1.0;
     double confidence = 1.0;
     double latency_ms = 0.0;
+    //: Measured split of the work above. Internal only: ``to_json`` publishes
+    //: ``latency_ms`` because that is the field the contract has, while the
+    //: session reports the two halves in ``stats``.
+    double ocr_ms = 0.0;
+    double translate_ms = 0.0;
     std::string trace;
     std::string backend;
     bool refined = false;

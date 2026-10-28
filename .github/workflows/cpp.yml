@@ -60,9 +60,24 @@ jobs:
         with:
           python-version: "3.12"
 
+      # CI-only dependency. It is not in prototype/requirements.txt because the
+      # Python self checks must keep working without it; only this job validates
+      # the CLI's output against the generated payload schema.
+      - name: Install the schema validator (CI only)
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install jsonschema
+
       # The validator is the same file the Python side uses, so the CLI is held
       # to the one contract rather than a copy of it.
       - name: CLI stream passes the shared validator
         run: |
           ./build/Release/watashi_cli.exe --synthetic --duration 2 --json-lines > build/stream.jsonl
           python tools/validate_stream.py build/stream.jsonl
+
+      # validate_stream.py checks ordering and types, not payload shapes. This
+      # runs the generated schema over the same file and also asserts that a
+      # ready event without data.region is rejected, so the check cannot pass by
+      # having quietly stopped enforcing anything.
+      - name: CLI stream passes events.schema.json
+        run: python tests/validate_events_schema.py build/stream.jsonl

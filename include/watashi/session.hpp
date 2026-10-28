@@ -23,6 +23,11 @@ namespace watashi {
 struct SessionOptions {
     double duration_s = 2.0;
     double fps = 10.0;
+    /// The synthetic region the ready event describes. Real capture will replace
+    /// this, but a client that draws a box needs the origin and size from
+    /// somewhere today.
+    int region_width = 1200;
+    int region_height = 200;
 };
 
 /// Drives a Pipeline and publishes its events in contract order.

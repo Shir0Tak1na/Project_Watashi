@@ -228,8 +228,13 @@ def build_ready_schema() -> dict:
     return {
         "type": "object",
         "properties": properties,
-        "required": sorted(properties),
-        "additionalProperties": False,
+        # Only the fields a reader must understand are required. Pinning all
+        # forty Session.info keys made every new surface a schema change and
+        # made a skeleton that knows just its own region illegal, even though
+        # the payload is open for additive evolution. The contract a client
+        # actually keys on is: which version, and where the region is.
+        "required": ["region", "region_box", "schema_version"],
+        "additionalProperties": True,
     }
 
 

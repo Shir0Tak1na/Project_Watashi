@@ -102,6 +102,33 @@ TEST_CASE("ready carries the schema version") {
     REQUIRE(events.front().data.at("schema_version") == watashi::kSchemaVersion);
 }
 
+TEST_CASE("ready describes the synthetic region") {
+    const auto events = run_synthetic();
+    const auto& data = events.front().data;
+
+    REQUIRE(data.at("region") == "synthetic 1200x200");
+    const auto& box = data.at("region_box");
+    REQUIRE(box.is_array());
+    REQUIRE(box.size() == 4);
+    REQUIRE(box.at(0) == 0);
+    REQUIRE(box.at(1) == 0);
+    REQUIRE(box.at(2) == 1200);
+    REQUIRE(box.at(3) == 200);
+}
+
+TEST_CASE("stats carry paused and the measured split") {
+    const auto events = run_synthetic();
+    const auto stats = std::find_if(
+        events.begin(), events.end(),
+        [](const watashi::Envelope& event) { return event.type == "stats"; });
+    REQUIRE(stats != events.end());
+
+    REQUIRE(stats->data.at("paused") == false);
+    REQUIRE(stats->data.at("ocr_ms").get<double>() >= 0.0);
+    REQUIRE(stats->data.at("translate_ms").get<double>() >= 0.0);
+    REQUIRE(stats->data.at("memory_mib").get<double>() >= 0.0);
+}
+
 TEST_CASE("a zero-length run still emits ready and stopped") {
     const auto events = run_synthetic(0.0, 10.0);
 
