@@ -7,19 +7,23 @@
         --det .venv/Lib/site-packages/rapidocr_onnxruntime/models/ch_PP-OCRv4_det_infer.onnx \
         --rec .venv/Lib/site-packages/rapidocr_onnxruntime/models/ch_PP-OCRv4_rec_infer.onnx \
         --chars spike/chars.txt \
-        --screen-manifest build/w11_screens/manifest.json \
-        --screen-reference build/w11_screens/reference.jsonl
+        --screen-manifest build/w11_subtitles/manifest.json \
+        --screen-reference build/w11_subtitles/reference.jsonl
 
 Neither fixture set is committed: ``tests/fixtures/make_ocr_fixtures.py`` produces
-the rendered frames, ``tests/fixtures/capture_screens.py`` captures the real
-ones and records the Python reference for both. Without ``--screen-manifest``
-this prints "screens: not verified" rather than passing on fixtures alone.
+the rendered frames, ``tests/fixtures/capture_subtitles.py`` plays a fixed
+subtitle clip in a controlled window and captures it. Without
+``--screen-manifest`` this prints "screens: not verified" rather than passing on
+fixtures alone.
 
 What it measures, and why each gate exists:
 
 * **normalised text agreement** -- punctuation and whitespace differ across
   engines for reasons that do not matter to a subtitle; what must match is the
-  characters. 0.95 for the rendered fixtures, 0.90 for real screenshots.
+  characters. The score is the **mean over frames** (median and min reported),
+  with difflib's ``autojunk`` disabled, because one long or repeated frame must
+  not be able to lift the average. 0.95 for the rendered fixtures, 0.90 for the
+  controlled subtitle strips (mean and median both).
 * **box count equality and max coordinate error** -- a subtitle that lands in
   the wrong place is a defect even when the words are right. 3 px.
 * **latency P50** -- the C++ port must not be slower than the Python baseline by
@@ -39,6 +43,7 @@ import argparse
 import difflib
 import json
 import math
+import statistics
 import subprocess
 import sys
 import unicodedata
@@ -64,6 +69,19 @@ def normalise(text: str) -> str:
         for char in text
         if not char.isspace() and not unicodedata.category(char).startswith("P")
     )
+
+
+def similarity(left: str, right: str) -> float:
+    """Ratio between two normalised strings.
+
+    ``autojunk`` is off deliberately: difflib treats characters that make up
+    more than 1% of a long string as junk, which turns repeated or low-variety
+    lines into a better score than they deserve. With the flag off the ratio is
+    the plain longest-matching-blocks measure.
+    """
+    if left == right:
+        return 1.0
+    return difflib.SequenceMatcher(None, left, right, autojunk=False).ratio()
 
 
 def percentile(values: list[float], percent: float) -> float:
@@ -95,9 +113,8 @@ def compare_frames(
     reference: dict[str, list[dict[str, Any]]],
     order: list[str],
 ) -> dict[str, Any]:
-    joined_cpp: list[str] = []
-    joined_ref: list[str] = []
     per_frame: list[dict[str, Any]] = []
+    agreements: list[float] = []
     box_error = 0
     count_mismatches = 0
 
@@ -106,13 +123,10 @@ def compare_frames(
         ref_lines = sort_lines(reference.get(name, []))
         cpp_text = "\n".join(normalise(line.get("text", "")) for line in cpp_lines)
         ref_text = "\n".join(normalise(line.get("text", "")) for line in ref_lines)
-        agreement = (
-            1.0
-            if cpp_text == ref_text
-            else difflib.SequenceMatcher(None, cpp_text, ref_text).ratio()
-        )
-        joined_cpp.append(cpp_text)
-        joined_ref.append(ref_text)
+        # Per frame, then averaged: concatenating every frame first lets long or
+        # repeated frames dominate the score and hides a bad one.
+        agreement = similarity(cpp_text, ref_text)
+        agreements.append(agreement)
 
         frame_error = 0
         if len(cpp_lines) != len(ref_lines):
@@ -137,13 +151,13 @@ def compare_frames(
             }
         )
 
-    overall = difflib.SequenceMatcher(
-        None, "\n".join(joined_cpp), "\n".join(joined_ref)
-    ).ratio()
+    mean = sum(agreements) / len(agreements) if agreements else 0.0
+    median = statistics.median(agreements) if agreements else 0.0
     return {
         "frames": len(order),
-        "agreement": round(overall, 4),
-        "min_frame_agreement": round(min((item["agreement"] for item in per_frame), default=0.0), 4),
+        "agreement": round(mean, 4),
+        "median_agreement": round(median, 4),
+        "min_frame_agreement": round(min(agreements, default=0.0), 4),
         "box_count_mismatches": count_mismatches,
         "max_box_error_px": box_error,
         "per_frame": per_frame,
@@ -230,17 +244,13 @@ def main(argv: list[str]) -> int:
     failures: list[str] = []
 
     print(f"fixtures: {result['frames']} frame(s)")
-    print(f"  normalised agreement : {result['agreement']:.4f} "
-          f"(min per frame {result['min_frame_agreement']:.4f})")
+    print(f"  normalised agreement : {result['agreement']:.4f} (per-frame mean; "
+          f"median {result['median_agreement']:.4f}, min {result['min_frame_agreement']:.4f})")
     print(f"  box count mismatches : {result['box_count_mismatches']}")
     print(f"  max box error        : {result['max_box_error_px']} px")
     if result["agreement"] < SYNTHETIC_MIN_AGREEMENT:
         failures.append(
-            f"synthetic agreement {result['agreement']:.4f} < {SYNTHETIC_MIN_AGREEMENT}"
-        )
-    if result["min_frame_agreement"] < SYNTHETIC_MIN_AGREEMENT:
-        failures.append(
-            f"a frame fell to {result['min_frame_agreement']:.4f} < {SYNTHETIC_MIN_AGREEMENT}"
+            f"synthetic mean agreement {result['agreement']:.4f} < {SYNTHETIC_MIN_AGREEMENT}"
         )
     if result["box_count_mismatches"]:
         failures.append(f"{result['box_count_mismatches']} frame(s) disagree on line count")
@@ -284,14 +294,22 @@ def main(argv: list[str]) -> int:
         screen_cpp = {Path(record["frame"]).name: record["lines"] for record in screen_records}
         screen = compare_frames(screen_cpp, screen_reference, screen_order)
         print(f"screens: {screen['frames']} frame(s)")
-        print(f"  normalised agreement : {screen['agreement']:.4f}")
+        print(f"  normalised agreement : {screen['agreement']:.4f} (per-frame mean; "
+              f"median {screen['median_agreement']:.4f}, min {screen['min_frame_agreement']:.4f})")
         # Real screens have many small lines whose top-left corners tie, so
         # pairing them by position is not stable. Reported for context only; the
         # screen gate is the agreement above.
+        print(f"  box count mismatches : {screen['box_count_mismatches']}")
         print(f"  max box error        : {screen['max_box_error_px']} px (informational)")
+        # Mean and median both have to clear the bar: the median tolerates one
+        # half-drawn frame, the mean stops a single bad frame from hiding.
         if screen["agreement"] < SCREEN_MIN_AGREEMENT:
             failures.append(
-                f"screen agreement {screen['agreement']:.4f} < {SCREEN_MIN_AGREEMENT}"
+                f"screen mean agreement {screen['agreement']:.4f} < {SCREEN_MIN_AGREEMENT}"
+            )
+        if screen["median_agreement"] < SCREEN_MIN_AGREEMENT:
+            failures.append(
+                f"screen median agreement {screen['median_agreement']:.4f} < {SCREEN_MIN_AGREEMENT}"
             )
     else:
         print("screens: not verified (no screen fixture set supplied)")

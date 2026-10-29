@@ -88,18 +88,22 @@ Python 原型是**可运行、已实测**的参考实现；C++ 主干已是可�
 验收在**当前 HEAD 的 clean-room 克隆**里重跑（不复用旧 `build/`、`build-w11/`）：
 
 - `ctest` 41/41；fake 流 42 事件通过 `tools/validate_stream.py` 与 `tests/validate_events_schema.py`（含「删 `data.region` 必须失败」反例）
-- 50 张渲染帧：归一化一致率 **1.0000**，框数 0 不一致，最大框差 **2 px**
-- 10 张真实屏幕：一致率 **0.9445 / 0.9758**（两次不同时刻抓取），均 ≥0.90
-- 1200×200 ×20：P50 **49.58–50.04 ms**（≤120 ms，且 ≤ baseline×1.2 = 90.70 ms）
+- 一致性口径：**逐帧一致率的均值**（同时报中位数与最小值），difflib `autojunk=False`；屏幕门槛要求均值与中位数都 ≥0.90
+- 50 张渲染帧：均值 **1.0000**（中位数/最小 1.0000），框数 0 不一致，最大框差 **2 px**
+- 10 张**受控字幕**：固定 mp4 在无边框窗口按 1:1 播放、mss 抓字幕条，抓取帧与显示帧逐像素核对后才记录；均值/中位数 **1.0000**，框数 0 不一致，最大框差 **2 px**
+- 1200×200 ×20：P50 **49.6–52.4 ms**（≤120 ms，且 ≤ baseline×1.2 = 90.70 ms）
+- 旧「桌面/任务栏」截图已废弃并删除：它测的是桌面布局，不是字幕 OCR
 
-复跑用一条命令（重新渲染 50 帧、重新抓 10 张屏幕、跑完全部对照；像素与参考只写 `build/`）：
+复跑用一条命令（重新渲染 50 帧、重新播放并抓取字幕条、跑完全部对照；像素与参考只写输出目录）：
 
 ```powershell
 .venv\Scripts\python.exe tools\check_ocr.py `
     --det .venv\Lib\site-packages\rapidocr_onnxruntime\models\ch_PP-OCRv4_det_infer.onnx `
     --rec .venv\Lib\site-packages\rapidocr_onnxruntime\models\ch_PP-OCRv4_rec_infer.onnx `
-    --chars spike\chars.txt
+    --chars spike\chars.txt --out build-w11
 ```
+
+`--out` 未指定时自动选 `build/`、`build-w11/` 中第一个可写目录（本机的 Python 写 `build/` 会 PermissionError）。
 
 **待补**：W0.6b（CT2/NLLB 的 C++ spike）仍为空，W2 之前必须补；W1.2（语料/规则 v0）尚未开始。
 

@@ -152,14 +152,17 @@ def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--count", type=int, default=50)
     parser.add_argument("--seed", type=int, default=20261029)
+    parser.add_argument("--out", type=Path, default=OUT,
+                        help="output directory (default build/w11_fixtures)")
     args = parser.parse_args(argv)
 
+    out = args.out
     rng = random.Random(args.seed)
     terms = vocabulary()
     if len(terms) < 8:
         raise SystemExit("vocabulary is too small to compose fixtures")
 
-    OUT.mkdir(parents=True, exist_ok=True)
+    out.mkdir(parents=True, exist_ok=True)
     engine = load_ocr()
 
     manifest = {"width": WIDTH, "height": HEIGHT, "count": args.count, "frames": []}
@@ -168,22 +171,22 @@ def main(argv: list[str]) -> int:
         lines, x, y, scale = layout(rng, terms)
         frame = render(lines, x, y, scale)
         name = f"frame_{index:03d}.bgr"
-        np.ascontiguousarray(frame).tofile(OUT / name)
+        np.ascontiguousarray(frame).tofile(out / name)
         manifest["frames"].append({"file": name, "source": lines})
         references.append({"frame": name, "lines": reference_for(engine, frame)})
         if (index + 1) % 10 == 0:
             print(f"  {index + 1}/{args.count} frames")
 
-    (OUT / "manifest.json").write_text(
+    (out / "manifest.json").write_text(
         json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
-    with (OUT / "reference.jsonl").open("w", encoding="utf-8", newline="\n") as handle:
+    with (out / "reference.jsonl").open("w", encoding="utf-8", newline="\n") as handle:
         for record in references:
             handle.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")
 
     lines_total = sum(len(item["lines"]) for item in references)
-    print(f"wrote {args.count} frames, {lines_total} reference line(s) to {OUT}")
+    print(f"wrote {args.count} frames, {lines_total} reference line(s) to {out}")
     return 0
 
 
