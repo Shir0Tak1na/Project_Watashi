@@ -1,13 +1,17 @@
 // watashi_cli
 //
-// Two modes, one binary:
+// Three modes, one binary:
 //
 //   watashi_cli --synthetic --duration 2 --json-lines      fake OCR (default)
 //   watashi_cli --ocr onnx --frame f.bgr --det d --rec r --chars c
+//   watashi_cli --capture screen --region 60,60,1200,200 --ocr onnx \
+//               --translator corpus --duration 5 --json-lines
 //
 // The fake path is what CI runs: it needs no model and no screen. The ONNX path
 // loads the PP-OCRv4 det/rec models the caller points at and prints one JSON
 // object per frame. Raw BGR buffers only -- the CLI never decodes an image file.
+// --capture is the live path: it grabs frames, skips OCR while the screen is
+// still, and emits the same ready/subtitle/stats/stopped stream.
 
 #include <algorithm>
 #include <chrono>
@@ -16,10 +20,12 @@
 #include <exception>
 #include <fstream>
 #include <iostream>
+#include <memory>
 #include <stdexcept>
 #include <string>
 #include <vector>
 
+#include "watashi/capture.hpp"
 #include "watashi/events.hpp"
 #include "watashi/corpus.hpp"
 #include "watashi/ocr.hpp"
@@ -42,6 +48,14 @@ void usage(std::ostream& out) {
            "  --fps N                synthetic frames per second, default 10\n"
            "  --json-lines           write the NDJSON event stream to stdout\n"
            "\n"
+           "capture:\n"
+           "  --capture MODE         screen, window or synthetic\n"
+           "  --region x,y,w,h       desktop rectangle in physical pixels (screen)\n"
+           "  --hwnd N               window handle (window)\n"
+           "  --window-title TEXT    pick the window whose title contains TEXT (window)\n"
+           "  --diff-threshold 0..1  still-screen threshold, default 0.02; 0 disables\n"
+           "  --bench PATH           write capture and end-to-end percentiles here\n"
+           "\n"
            "onnx:\n"
            "  --frame PATH           raw BGR8 frame, repeatable\n"
            "  --det PATH             detection model\n"
@@ -51,7 +65,7 @@ void usage(std::ostream& out) {
            "  --size WxH             frame size, default 1200x200\n"
            "  --repeat N             timed passes per frame, default 1\n"
            "\n"
-           "corpus (no model, no OCR):\n"
+           "corpus (no model):\n"
            "  --corpus LAYER=PATH    LAYER is user, domain or general; repeatable\n"
            "  --rules PATH           rule file, repeatable\n"
            "  --target LANG          target language, default zh-CN\n"
@@ -193,6 +207,184 @@ int run_corpus(const CorpusArgs& args) {
     return 0;
 }
 
+struct CaptureArgs {
+    std::string mode;  // empty: the live path was not asked for
+    bool has_region = false;
+    watashi::CaptureRect region;
+    std::uintptr_t hwnd = 0;
+    std::string window_title;
+    double diff_threshold = 0.02;
+    std::string bench;
+    std::string dump_frame;
+};
+
+/// Writes the first frame as a raw BGR file, for checking what a live capture
+/// actually saw. Debugging aid; never used by the measured runs.
+class FirstFrameDump final : public watashi::CaptureSource {
+public:
+    FirstFrameDump(watashi::CaptureSource& inner, std::string path)
+        : inner_(inner), path_(std::move(path)) {}
+
+    [[nodiscard]] watashi::CaptureFrame grab() override {
+        watashi::CaptureFrame frame = inner_.grab();
+        if (!written_) {
+            written_ = true;
+            std::ofstream file(path_, std::ios::binary | std::ios::trunc);
+            file.write(reinterpret_cast<const char*>(frame.bgr.data()),
+                       static_cast<std::streamsize>(frame.bgr.size()));
+        }
+        return frame;
+    }
+
+    [[nodiscard]] watashi::CaptureInfo info() const override { return inner_.info(); }
+
+private:
+    watashi::CaptureSource& inner_;
+    std::string path_;
+    bool written_ = false;
+};
+
+std::unique_ptr<watashi::CaptureSource> make_capture_source(
+    const CaptureArgs& args,
+    int width,
+    int height) {
+    using namespace watashi;
+    if (args.mode == "synthetic") {
+        SyntheticCapture::Options options;
+        options.width = args.has_region ? std::max(1, args.region.width) : width;
+        options.height = args.has_region ? std::max(1, args.region.height) : height;
+        return std::make_unique<SyntheticCapture>(options);
+    }
+
+    if (args.mode == "screen") {
+        return std::make_unique<ScreenCapture>(
+            ScreenCapture::Options{args.region, args.has_region});
+    }
+    if (args.mode == "window") {
+        std::uintptr_t hwnd = args.hwnd;
+        if (hwnd == 0 && !args.window_title.empty()) {
+            hwnd = find_window_by_title(args.window_title);
+        }
+        if (hwnd == 0) {
+            throw CaptureError(
+                args.window_title.empty()
+                    ? std::string("--capture window needs --hwnd or --window-title")
+                    : "no visible window title contains \"" + args.window_title + "\"");
+        }
+        return std::make_unique<WindowCapture>(WindowCapture::Options{hwnd});
+    }
+    throw std::invalid_argument("--capture must be screen, window or synthetic");
+}
+
+int run_capture(
+    const CaptureArgs& args,
+    const std::string& ocr_mode,
+    const std::string& translator_name,
+    const CorpusArgs& corpus_args,
+    const watashi::OnnxOcr::Options& onnx,
+    double duration,
+    double fps,
+    bool json_lines,
+    int width,
+    int height) {
+    // ``base`` stays alive for the whole run: the dumping wrapper only borrows it.
+    std::unique_ptr<watashi::CaptureSource> base =
+        make_capture_source(args, width, height);
+    std::unique_ptr<watashi::CaptureSource> source;
+    if (args.dump_frame.empty()) {
+        source = std::move(base);
+    } else {
+        source = std::make_unique<FirstFrameDump>(*base, args.dump_frame);
+    }
+
+    std::unique_ptr<watashi::OcrSource> ocr;
+    if (ocr_mode == "fake") {
+        ocr = std::make_unique<watashi::FakeOcr>();
+    } else if (ocr_mode == "onnx") {
+        if (onnx.det_model.empty() || onnx.rec_model.empty() || onnx.charset_file.empty()) {
+            std::cerr << "watashi_cli: --capture with --ocr onnx needs --det, --rec and --chars\n";
+            return 2;
+        }
+        ocr = std::make_unique<watashi::OnnxOcr>(onnx);
+    } else {
+        std::cerr << "watashi_cli: --ocr must be fake or onnx\n";
+        return 2;
+    }
+
+    std::unique_ptr<watashi::CorpusStore> store;
+    std::unique_ptr<watashi::Translator> translator;
+    if (translator_name == "corpus") {
+        watashi::CorpusStore::Options options;
+        options.user_dirs = corpus_args.user_dirs;
+        options.domain_dirs = corpus_args.domain_dirs;
+        options.general_dirs = corpus_args.general_dirs;
+        options.rule_files = corpus_args.rule_files;
+        store = std::make_unique<watashi::CorpusStore>(options);
+        translator = std::make_unique<watashi::CorpusTranslator>(*store);
+        if (!store->last_error().empty()) {
+            std::cerr << "corpus: last error: " << store->last_error() << "\n";
+        }
+        std::cerr << "corpus: " << store->size() << " entries, " << store->rule_count()
+                  << " rules\n";
+    } else if (translator_name == "fake") {
+        translator = std::make_unique<watashi::FakeTranslator>();
+    } else {
+        std::cerr << "watashi_cli: --translator must be fake or corpus\n";
+        return 2;
+    }
+
+    watashi::SessionOptions options{duration, fps};
+    options.capture = source.get();
+    options.diff.threshold = args.diff_threshold;
+    options.backend_label = translator_name == "corpus" ? "corpus" : "fake";
+    options.context = watashi::TranslateContext{
+        corpus_args.target, corpus_args.scene, corpus_args.window};
+    options.bench_path = args.bench;
+
+    watashi::Session session(options, *ocr, *translator);
+    const auto sink = [json_lines](const watashi::Envelope& envelope) {
+        if (json_lines) {
+            watashi::write_json_line(std::cout, envelope);
+        } else if (envelope.type == "subtitle") {
+            std::cout << '[' << envelope.seq << "] "
+                      << envelope.data.value("source", std::string{}) << " -> "
+                      << envelope.data.value("target", std::string{}) << '\n';
+        } else {
+            std::cout << '[' << envelope.seq << "] " << envelope.type << '\n';
+        }
+    };
+    session.run(sink);
+    std::cout.flush();
+    if (!args.bench.empty()) {
+        std::cerr << "bench: " << args.bench << '\n';
+    }
+    return 0;
+}
+
+watashi::CaptureRect parse_region(const std::string& value) {
+    const auto first = value.find(',');
+    if (first == std::string::npos) {
+        throw std::invalid_argument("expected x,y,w,h");
+    }
+    const auto second = value.find(',', first + 1);
+    if (second == std::string::npos) {
+        throw std::invalid_argument("expected x,y,w,h");
+    }
+    const auto third = value.find(',', second + 1);
+    if (third == std::string::npos) {
+        throw std::invalid_argument("expected x,y,w,h");
+    }
+    watashi::CaptureRect rect;
+    rect.x = std::stoi(value.substr(0, first));
+    rect.y = std::stoi(value.substr(first + 1, second - first - 1));
+    rect.width = std::stoi(value.substr(second + 1, third - second - 1));
+    rect.height = std::stoi(value.substr(third + 1));
+    if (rect.width <= 0 || rect.height <= 0) {
+        throw std::invalid_argument("width and height must be positive");
+    }
+    return rect;
+}
+
 int run_onnx(
     const std::vector<std::string>& frames,
     const watashi::OnnxOcr::Options& options,
@@ -243,6 +435,10 @@ int run_onnx(
 }  // namespace
 
 int main(int argc, char** argv) {
+    // Before anything DPI-sensitive: Windows locks the awareness in once a
+    // window or device context exists.
+    (void)watashi::enable_per_monitor_dpi();
+
     bool synthetic = false;
     bool json_lines = false;
     double duration = 2.0;
@@ -253,6 +449,7 @@ int main(int argc, char** argv) {
     std::string mode = "fake";
     std::string translator_name = "fake";
     CorpusArgs corpus;
+    CaptureArgs capture;
     std::vector<std::string> frames;
     watashi::OnnxOcr::Options onnx;
 
@@ -294,6 +491,25 @@ int main(int argc, char** argv) {
                 load_text_file(argv[++index], corpus.texts);
             } else if (argument == "--synthetic") {
                 synthetic = true;
+            } else if (argument == "--capture" && index + 1 < argc) {
+                capture.mode = argv[++index];
+            } else if (argument == "--region" && index + 1 < argc) {
+                capture.region = parse_region(argv[++index]);
+                capture.has_region = true;
+            } else if (argument == "--hwnd" && index + 1 < argc) {
+                capture.hwnd = static_cast<std::uintptr_t>(
+                    std::stoull(argv[++index], nullptr, 0));
+            } else if (argument == "--window-title" && index + 1 < argc) {
+                capture.window_title = argv[++index];
+            } else if (argument == "--diff-threshold" && index + 1 < argc) {
+                capture.diff_threshold = std::stod(argv[++index]);
+                if (!(capture.diff_threshold >= 0.0 && capture.diff_threshold <= 1.0)) {
+                    throw std::invalid_argument("expected 0..1");
+                }
+            } else if (argument == "--bench" && index + 1 < argc) {
+                capture.bench = argv[++index];
+            } else if (argument == "--dump-frame" && index + 1 < argc) {
+                capture.dump_frame = argv[++index];
             } else if (argument == "--json-lines") {
                 json_lines = true;
             } else if (argument == "--duration" && index + 1 < argc) {
@@ -335,6 +551,11 @@ int main(int argc, char** argv) {
     }
 
     try {
+        if (!capture.mode.empty()) {
+            return run_capture(
+                capture, mode, translator_name, corpus, onnx, duration, fps, json_lines, width,
+                height);
+        }
         if (translator_name == "corpus") {
             corpus.json_lines = json_lines;
             if (corpus.texts.empty()) {

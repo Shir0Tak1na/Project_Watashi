@@ -1,0 +1,93 @@
+{
+  "kind": "capture-bench",
+  "git_commit": "3077e3008ee64cff9646f09c4539834dbed8bc21",
+  "gate": {
+    "capture_ms_p50": 10.0
+  },
+  "machine": {
+    "cpu": "12th Gen Intel(R) Core(TM) i7-12700H",
+    "logical_cpus": 20,
+    "platform": "Windows-11-10.0.26300",
+    "onnxruntime": "1.30.0",
+    "display": "NVIDIA GeForce RTX 3060 Laptop GPU + GameViewer Virtual Display Adapter",
+    "desktop": "2560x1600 at 0,0"
+  },
+  "runs": {
+    "screen_1200x200+60+60": {
+      "command": "watashi_cli --capture screen --region 60,60,1200,200 --ocr onnx --translator corpus --duration 5 --fps 10",
+      "frames": 18,
+      "ocr_calls": 6,
+      "skipped": 12,
+      "capture_ms": {
+        "count": 18,
+        "p50": 264.6111,
+        "p95": 272.1188,
+        "min": 206.5552,
+        "max": 272.1188
+      },
+      "e2e_ms": {
+        "count": 18,
+        "p50": 265.6119,
+        "p95": 340.4284,
+        "min": 207.0906,
+        "max": 340.4284
+      },
+      "ocr_ms": {
+        "count": 6,
+        "p50": 64.7522,
+        "p95": 68.2328,
+        "min": 53.0969,
+        "max": 68.2328
+      }
+    },
+    "window_watashi-subtitles": {
+      "command": "watashi_cli --capture window --window-title \"watashi subtitles\" --ocr onnx --translator corpus --duration 5 --fps 10",
+      "frames": 50,
+      "ocr_calls": 5,
+      "skipped": 45,
+      "capture_ms": {
+        "count": 50,
+        "p50": 2.0527,
+        "p95": 2.3723,
+        "min": 1.5829,
+        "max": 3.009
+      },
+      "e2e_ms": {
+        "count": 50,
+        "p50": 2.5851,
+        "p95": 69.1801,
+        "min": 2.0858,
+        "max": 75.226
+      },
+      "ocr_ms": {
+        "count": 5,
+        "p50": 60.6949,
+        "p95": 68.1855,
+        "min": 56.6474,
+        "max": 68.1855
+      }
+    },
+    "static_screen_2s": {
+      "command": "watashi_cli --capture screen --region 60,60,1200,200 --ocr onnx --translator corpus --duration 2 --fps 10 (window held on one frame)",
+      "frames": 8,
+      "ocr_calls": 1,
+      "skipped": 7,
+      "last_diff": 0.0
+    },
+    "soak_10min": {
+      "command": "watashi_cli --capture screen --region 60,60,1200,200 --ocr fake --translator fake --duration 600 --fps 10",
+      "frames": 2268,
+      "events": 4538,
+      "last_event": "stopped",
+      "handles_start": 129,
+      "handles_end": 129,
+      "handles_delta": 0,
+      "stderr_problems": false
+    }
+  },
+  "verdict": {
+    "window_capture_p50": "pass",
+    "screen_capture_p50": "environment-blocked",
+    "note": "GDI BitBlt of the screen on this host costs ~265 ms per grab at every size (20x10 and 1200x200 measure the same), and mss (an independent GDI client) measures 264-268 ms for the same rectangle. DXGI Desktop Duplication cannot even be opened here (E_ACCESSDENIED, -2147024891), and the desktop is served through a GameViewer virtual display adapter. Window capture through the same GDI code path measures 2.05 ms p50, so the implementation is not what costs 265 ms; the composited screen readback on this desktop is. The 10 ms gate is therefore reported as failed for screen mode rather than papered over, and window mode is recorded as the passing measurement."
+  }
+}

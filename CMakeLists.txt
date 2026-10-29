@@ -122,6 +122,9 @@ endfunction()
 # tests differ only in how they drive it. Choosing this shape now means the port
 # can grow without having to split the library out of an executable later.
 add_library(watashi_core STATIC
+    src/capture/capture.cpp
+    src/capture/change_detector.cpp
+    src/capture/synthetic_capture.cpp
     src/core/events.cpp
     src/core/pipeline.cpp
     src/core/session.cpp
@@ -143,9 +146,10 @@ target_link_libraries(watashi_core
 )
 target_compile_features(watashi_core PUBLIC cxx_std_17)
 
-# stats.memory_mib comes from the process working set on Windows.
+# stats.memory_mib comes from the process working set on Windows; capture needs
+# GDI, USER32 (DPI awareness, window enumeration) and DWM's frame bounds.
 if(WIN32)
-    target_link_libraries(watashi_core PRIVATE psapi)
+    target_link_libraries(watashi_core PRIVATE psapi user32 gdi32 dwmapi winmm)
 endif()
 
 add_executable(watashi_cli src/cli/main.cpp)

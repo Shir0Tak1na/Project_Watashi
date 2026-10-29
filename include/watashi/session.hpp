@@ -13,21 +13,36 @@
 #include <string>
 #include <string_view>
 
+#include "watashi/capture.hpp"
 #include "watashi/events.hpp"
 #include "watashi/pipeline.hpp"
 
 namespace watashi {
 
-/// What the synthetic run should produce. Duration is in seconds and frames are
+/// What a run should produce. Duration is in seconds and frames are
 /// ``duration_s * fps``, rounded, so 2 s at 10 fps is 20 subtitles.
+///
+/// With ``capture`` set the pixels come from that source and the loop is paced
+/// at ``fps``; without it the session synthesises one blank frame per tick,
+/// which is the CI default and keeps every existing stream identical.
 struct SessionOptions {
     double duration_s = 2.0;
     double fps = 10.0;
-    /// The synthetic region the ready event describes. Real capture will replace
-    /// this, but a client that draws a box needs the origin and size from
-    /// somewhere today.
+    /// The synthetic region the ready event describes when ``capture`` is
+    /// null. A capture source reports its own.
     int region_width = 1200;
     int region_height = 200;
+    /// Non-owning: the caller keeps the source alive for the whole run.
+    CaptureSource* capture = nullptr;
+    /// ``threshold > 0`` turns on the still-screen check: an unchanged frame
+    /// skips OCR and is counted in ``stats.skipped``.
+    DiffOptions diff;
+    /// What ``ready`` and ``stats`` call the translator ("fake", "corpus").
+    std::string backend_label = "fake";
+    /// Target language, scene and window handed to the translator.
+    TranslateContext context;
+    /// Write capture/end-to-end percentiles here after the run, when set.
+    std::string bench_path;
 };
 
 /// Drives a Pipeline and publishes its events in contract order.

@@ -17,7 +17,11 @@ This fixture is controlled and still real screen pixels:
 4. every capture is checked against the displayed video frame, so a capture of
    the wrong window fails loudly instead of producing plausible nonsense;
 5. the Python reference is computed on the *captured* pixels, so both engines
-   read the same bytes.
+   read the same bytes;
+6. ``--hold`` keeps the window on screen after recording, and ``--loop`` replays
+   the clip while it holds, which is how a live ``--capture window`` run gets
+   both a still screen and a changing one. ``--title`` names the window so
+   ``--window-title`` can find it.
 
 Nothing here is committed: the mp4, frames and reference live under the output
 directory (build/ by default), because screen pixels are machine-specific.
@@ -138,6 +142,22 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--out", type=Path, default=ROOT / "build" / "w11_subtitles")
     parser.add_argument("--count", type=int, default=len(SUBTITLES))
     parser.add_argument("--position", default="60,60")
+    parser.add_argument(
+        "--title",
+        default="",
+        help="window title, so --capture window --window-title can find it",
+    )
+    parser.add_argument(
+        "--hold",
+        type=float,
+        default=0.0,
+        help="seconds to keep the window open after recording, so a live capture can read it",
+    )
+    parser.add_argument(
+        "--loop",
+        action="store_true",
+        help="during --hold, replay the clip instead of freezing the last frame",
+    )
     args = parser.parse_args(argv)
 
     out = args.out
@@ -168,6 +188,8 @@ def main(argv: list[str]) -> int:
         root.overrideredirect(True)  # decorations would offset the content area
         root.geometry(f"{WIDTH}x{HEIGHT}+{left}+{top}")
         root.attributes("-topmost", True)
+        if args.title:
+            root.title(args.title)
         label = tk.Label(root, borderwidth=0, highlightthickness=0)
         label.pack()
     except Exception as error:  # noqa: BLE001 - no display is a legitimate outcome
@@ -213,6 +235,35 @@ def main(argv: list[str]) -> int:
                 np.ascontiguousarray(captured).tofile(out / name)
                 manifest["frames"].append({"file": name})
                 references.append({"frame": name, "lines": reference_for(engine, captured)})
+
+        # A live --capture run needs the window to stay where it is for a while.
+        # --loop replays the clip so the overlay sees changing text; without it
+        # the last recorded frame stays on screen, which is the still case.
+        if args.hold > 0:
+            print(
+                f"holding {WIDTH}x{HEIGHT}+{left}+{top} for {args.hold:.1f}s "
+                f"({'looping' if args.loop else 'static'}); Ctrl+C to stop early",
+                file=sys.stderr,
+                flush=True,
+            )
+            photos = (
+                [
+                    ImageTk.PhotoImage(Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)))
+                    for frame in played
+                ]
+                if args.loop
+                else []
+            )
+            deadline = time.monotonic() + args.hold
+            tick = 0
+            while time.monotonic() < deadline:
+                if photos:
+                    photo = photos[tick % len(photos)]
+                    label.configure(image=photo)
+                    label.image = photo
+                    tick += 1
+                root.update()
+                time.sleep(0.25 if photos else 0.05)
     finally:
         root.destroy()
 
