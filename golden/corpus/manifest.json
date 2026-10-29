@@ -1,0 +1,13 @@
+{
+  "cases": 120,
+  "cases_sha256": "6e9e5cc119638ce079a4654f2d984597dd87f9a2da55f9b8e3c4c6a40839fa73",
+  "config_digest": "bf4ba30ac5a19585f127485b6b7c29bbded85a9269f229905a08bf610165dc74",
+  "corpus": {
+    "domain": "data/domain",
+    "general": "data/general",
+    "user": "data/user"
+  },
+  "git_commit": "437ed60e84e063f235b1367f220c323462cd4c44",
+  "rules": "data/rules.json",
+  "schema_version": 1
+}

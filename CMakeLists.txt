@@ -129,6 +129,9 @@ add_library(watashi_core STATIC
     src/fake/fake_ocr.cpp
     src/fake/fake_translator.cpp
     src/ocr/onnx_ocr.cpp
+    src/corpus/corpus_store.cpp
+    src/corpus/rules.cpp
+    src/corpus/corpus_translator.cpp
 )
 target_include_directories(watashi_core
     PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include

@@ -1,6 +1,8 @@
 add_executable(watashi_tests
+    test_corpus.cpp
     test_events.cpp
     test_ocr.cpp
+    test_rules.cpp
     test_session.cpp
 )
 target_link_libraries(watashi_tests PRIVATE watashi_core Catch2::Catch2WithMain)

@@ -1,0 +1,52 @@
+{
+  "entries": {
+    "bank": [
+      {
+        "target": "银行",
+        "when_line": "转账|account|finance"
+      },
+      {
+        "target": "河岸",
+        "when_line": "river|岸边"
+      }
+    ],
+    "core": [
+      {
+        "target": "内丹",
+        "when_line": "丹|pill"
+      },
+      {
+        "target": "核心",
+        "when_near": "reactor"
+      },
+      {
+        "priority": 1,
+        "target": "内核"
+      }
+    ],
+    "gate": {
+      "target": "宗门大门",
+      "when_window": "Watashi"
+    },
+    "gg": {
+      "target": "干得漂亮"
+    },
+    "level": {
+      "priority": 5,
+      "target": "层级"
+    },
+    "signal": [
+      {
+        "priority": 9,
+        "target": "信号"
+      },
+      {
+        "priority": 3,
+        "target": "讯号"
+      }
+    ],
+    "sword": {
+      "target": "本门之剑"
+    }
+  }
+}

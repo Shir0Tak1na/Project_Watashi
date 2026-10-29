@@ -40,8 +40,11 @@ nlohmann::json OverlayUpdate::to_json() const {
     };
 }
 
-Pipeline::Pipeline(const OcrSource& ocr, const Translator& translator)
-    : ocr_(ocr), translator_(translator) {}
+Pipeline::Pipeline(
+    const OcrSource& ocr,
+    const Translator& translator,
+    TranslateContext context)
+    : ocr_(ocr), translator_(translator), context_(std::move(context)) {}
 
 OverlayUpdate Pipeline::process(const ImageView& frame, double started_seconds) const {
     OverlayUpdate update;
@@ -50,12 +53,13 @@ OverlayUpdate Pipeline::process(const ImageView& frame, double started_seconds) 
 
     const auto translation_started = std::chrono::steady_clock::now();
     for (const auto& line : recognised.lines) {
+        const Translation translated = translator_.translate(line.text, context_);
         OverlayLine published;
         published.source = line.text;
-        published.target = translator_.translate(line.text);
+        published.target = translated.target;
         published.box = line.box;
         published.confidence = line.confidence;
-        published.coverage = 1.0;
+        published.coverage = translated.coverage;
 
         if (!update.source_text.empty()) {
             update.source_text += '\n';

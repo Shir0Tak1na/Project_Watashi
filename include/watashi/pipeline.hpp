@@ -14,6 +14,7 @@
 #include <nlohmann/json.hpp>
 
 #include "watashi/ocr.hpp"
+#include "watashi/translator.hpp"
 
 namespace watashi {
 
@@ -48,19 +49,12 @@ struct OverlayUpdate {
     [[nodiscard]] nlohmann::json to_json() const;
 };
 
-/// How a line becomes its translation. The real implementation will wrap the
-/// corpus/rules/model path.
-class Translator {
-public:
-    virtual ~Translator() = default;
-    [[nodiscard]] virtual std::string translate(std::string_view source) const = 0;
-};
-
 /// Recognises and translates one frame. Holds references, so the sources must
 /// outlive it -- which is exactly the lifetime ``Session`` gives them.
 class Pipeline {
 public:
-    Pipeline(const OcrSource& ocr, const Translator& translator);
+    Pipeline(const OcrSource& ocr, const Translator& translator,
+             TranslateContext context = {});
 
     /// ``started_seconds`` is the monotonic (steady clock) stamp the frame
     /// arrived on. It is only used for ``latency_ms``; no wall clock is read
@@ -70,6 +64,7 @@ public:
 private:
     const OcrSource& ocr_;
     const Translator& translator_;
+    TranslateContext context_;
 };
 
 /// Deterministic stand-in for OCR: two fixed lines with boxes. Consecutive calls
@@ -80,13 +75,6 @@ public:
 
 private:
     mutable int calls_ = 0;
-};
-
-/// Deterministic stand-in for the translator. A tiny lookup table plus an
-/// echo-with-prefix fallback; no model, no network, no randomness.
-class FakeTranslator final : public Translator {
-public:
-    [[nodiscard]] std::string translate(std::string_view source) const override;
 };
 
 }  // namespace watashi

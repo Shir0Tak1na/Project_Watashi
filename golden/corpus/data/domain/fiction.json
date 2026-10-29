@@ -1,0 +1,25 @@
+{
+  "entries": {
+    "bank": {
+      "domain": "fiction",
+      "target": "河岸"
+    },
+    "core": {
+      "domain": "fiction",
+      "target": "金丹"
+    },
+    "gate": {
+      "domain": "fiction",
+      "target": "山门"
+    },
+    "realm": {
+      "domain": "fiction",
+      "target": "境界",
+      "when_line": "突破|cultivat"
+    },
+    "sword": {
+      "domain": "fiction",
+      "target": "剑意"
+    }
+  }
+}

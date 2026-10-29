@@ -1,0 +1,54 @@
+{
+  "rules": [
+    {
+      "confidence": 0.55,
+      "id": "affix-en-to-zh",
+      "min_stem": 3,
+      "prefixes": {
+        "anti": "反",
+        "cyber": "赛博",
+        "un": "不"
+      },
+      "priority": 10,
+      "suffixes": {
+        "ist": "主义者",
+        "less": "无",
+        "ness": "性"
+      },
+      "target": "zh-CN",
+      "type": "affix"
+    },
+    {
+      "confidence": 0.45,
+      "id": "morpheme-en-to-zh",
+      "priority": 30,
+      "separator": "",
+      "target": "zh-CN",
+      "type": "morpheme"
+    },
+    {
+      "confidence": 0.6,
+      "id": "template-realm-zh-to-en",
+      "pattern": "(?P<base>.+)(境|界)",
+      "priority": 20,
+      "replacement": "{base} Realm",
+      "target": "en",
+      "type": "template"
+    },
+    {
+      "confidence": 0.6,
+      "id": "template-sect-zh-to-en",
+      "pattern": "(?P<base>.+)(宗|门)",
+      "priority": 21,
+      "replacement": "{base} Sect",
+      "target": "en",
+      "type": "template"
+    },
+    {
+      "confidence": 0.1,
+      "id": "transliterate-fallback",
+      "priority": 999,
+      "type": "transliterate"
+    }
+  ]
+}

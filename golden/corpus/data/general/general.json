@@ -1,0 +1,39 @@
+{
+  "entries": {
+    "aether": "以太",
+    "artificial gravity": "人工重力",
+    "bank": "岸",
+    "chapter": "章节",
+    "core": "核心",
+    "cyber": "赛博",
+    "dark matter": "暗物质",
+    "dragon": "龙",
+    "engine": "引擎",
+    "gg": "打得不错",
+    "gravity": "重力",
+    "level": "等级",
+    "myth": "传说",
+    "noob": "新手",
+    "punk": "朋克",
+    "realm": "境界",
+    "river": "河",
+    "sect": "宗门",
+    "signal": "信号",
+    "sword": "剑",
+    "technique": "功法",
+    "wp": "打得好",
+    "剑意": {
+      "lang": "en",
+      "target": "sword intent"
+    },
+    "虚空": {
+      "lang": "en",
+      "target": "void"
+    },
+    "金丹": {
+      "lang": "en",
+      "target": "golden core"
+    }
+  },
+  "lang": "zh-CN"
+}

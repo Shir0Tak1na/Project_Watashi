@@ -21,9 +21,11 @@
 #include <vector>
 
 #include "watashi/events.hpp"
+#include "watashi/corpus.hpp"
 #include "watashi/ocr.hpp"
 #include "watashi/pipeline.hpp"
 #include "watashi/session.hpp"
+#include "watashi/translator.hpp"
 
 namespace {
 
@@ -32,8 +34,9 @@ constexpr int kFrameHeight = 200;
 
 void usage(std::ostream& out) {
     out << "usage: watashi_cli --ocr fake|onnx [options]\n"
+           "       watashi_cli --translator corpus [options]\n"
            "\n"
-           "fake (default):\n"
+           "fake OCR (default):\n"
            "  --synthetic            drive the fake OCR/translator path (required)\n"
            "  --duration SECONDS     run length, default 2\n"
            "  --fps N                synthetic frames per second, default 10\n"
@@ -46,7 +49,16 @@ void usage(std::ostream& out) {
            "  --chars PATH           character table, one character per line\n"
            "  --cls PATH             optional angle classifier\n"
            "  --size WxH             frame size, default 1200x200\n"
-           "  --repeat N             timed passes per frame, default 1\n";
+           "  --repeat N             timed passes per frame, default 1\n"
+           "\n"
+           "corpus (no model, no OCR):\n"
+           "  --corpus LAYER=PATH    LAYER is user, domain or general; repeatable\n"
+           "  --rules PATH           rule file, repeatable\n"
+           "  --target LANG          target language, default zh-CN\n"
+           "  --scene NAME           selected scene\n"
+           "  --window TITLE         window title, for when_window entries\n"
+           "  --text TEXT            one input line, repeatable\n"
+           "  --text-file PATH       one input line per file line\n";
 }
 
 std::vector<std::uint8_t> load_frame(const std::string& path, int width, int height) {
@@ -89,6 +101,94 @@ int run_fake(double duration, double fps, bool json_lines) {
         }
     };
     session.run(sink);
+    std::cout.flush();
+    return 0;
+}
+
+struct CorpusArgs {
+    std::vector<std::string> user_dirs;
+    std::vector<std::string> domain_dirs;
+    std::vector<std::string> general_dirs;
+    std::vector<std::string> rule_files;
+    std::string target = "zh-CN";
+    std::string scene;
+    std::string window;
+    std::vector<std::string> texts;
+    bool json_lines = false;
+};
+
+void load_text_file(const std::string& path, std::vector<std::string>& texts) {
+    std::ifstream file(path, std::ios::binary);
+    if (!file) {
+        throw std::runtime_error("cannot open text file: " + path);
+    }
+    const std::string content((std::istreambuf_iterator<char>(file)),
+                              std::istreambuf_iterator<char>());
+    std::size_t start = 0;
+    while (start < content.size()) {
+        const auto newline = content.find('\n', start);
+        std::string line = content.substr(
+            start, newline == std::string::npos ? std::string::npos : newline - start);
+        if (!line.empty() && line.back() == '\r') {
+            line.pop_back();
+        }
+        texts.push_back(std::move(line));
+        if (newline == std::string::npos) {
+            break;
+        }
+        start = newline + 1;
+    }
+}
+
+int run_corpus(const CorpusArgs& args) {
+    watashi::CorpusStore::Options options;
+    options.user_dirs = args.user_dirs;
+    options.domain_dirs = args.domain_dirs;
+    options.general_dirs = args.general_dirs;
+    options.rule_files = args.rule_files;
+    watashi::CorpusStore store(options);
+    watashi::CorpusTranslator translator(store);
+
+    std::int64_t seq = 0;
+    const watashi::TranslateContext context{args.target, args.scene, args.window};
+    for (const auto& text : args.texts) {
+        const auto started = std::chrono::steady_clock::now();
+        const watashi::Translation translated = translator.translate(text, context);
+        const double elapsed_ms = std::chrono::duration<double, std::milli>(
+                                      std::chrono::steady_clock::now() - started)
+                                      .count();
+
+        watashi::OverlayUpdate update;
+        update.source_text = text;
+        update.target_text = translated.target;
+        update.coverage = translated.coverage;
+        update.confidence = translated.confidence;
+        update.latency_ms = elapsed_ms;
+        update.trace = translated.trace;
+        update.backend = translated.backend;
+        watashi::OverlayLine line;
+        line.source = text;
+        line.target = translated.target;
+        line.confidence = translated.confidence;
+        line.coverage = translated.coverage;
+        update.lines.push_back(line);
+
+        const watashi::Envelope envelope = watashi::encode_event(
+            watashi::event_type::kSubtitle, update.to_json(), ++seq, watashi::now_seconds());
+        if (args.json_lines) {
+            watashi::write_json_line(std::cout, envelope);
+        } else {
+            std::cout << text << " -> " << translated.target << " [" << translated.backend
+                      << " coverage=" << translated.coverage << "]\n";
+        }
+    }
+    if (store.last_error().empty()) {
+        std::cerr << "corpus: " << store.size() << " entries, " << store.rule_count()
+                  << " rules\n";
+    } else {
+        std::cerr << "corpus: " << store.size() << " entries, " << store.rule_count()
+                  << " rules; last error: " << store.last_error() << "\n";
+    }
     std::cout.flush();
     return 0;
 }
@@ -151,6 +251,8 @@ int main(int argc, char** argv) {
     int width = kFrameWidth;
     int height = kFrameHeight;
     std::string mode = "fake";
+    std::string translator_name = "fake";
+    CorpusArgs corpus;
     std::vector<std::string> frames;
     watashi::OnnxOcr::Options onnx;
 
@@ -159,6 +261,37 @@ int main(int argc, char** argv) {
         try {
             if (argument == "--ocr" && index + 1 < argc) {
                 mode = argv[++index];
+            } else if (argument == "--translator" && index + 1 < argc) {
+                translator_name = argv[++index];
+            } else if (argument == "--corpus" && index + 1 < argc) {
+                const std::string spec = argv[++index];
+                const auto separator = spec.find('=');
+                if (separator == std::string::npos) {
+                    throw std::invalid_argument("expected LAYER=PATH");
+                }
+                const std::string layer = spec.substr(0, separator);
+                const std::string path = spec.substr(separator + 1);
+                if (layer == "user") {
+                    corpus.user_dirs.push_back(path);
+                } else if (layer == "domain") {
+                    corpus.domain_dirs.push_back(path);
+                } else if (layer == "general") {
+                    corpus.general_dirs.push_back(path);
+                } else {
+                    throw std::invalid_argument("layer must be user, domain or general");
+                }
+            } else if (argument == "--rules" && index + 1 < argc) {
+                corpus.rule_files.emplace_back(argv[++index]);
+            } else if (argument == "--target" && index + 1 < argc) {
+                corpus.target = argv[++index];
+            } else if (argument == "--scene" && index + 1 < argc) {
+                corpus.scene = argv[++index];
+            } else if (argument == "--window" && index + 1 < argc) {
+                corpus.window = argv[++index];
+            } else if (argument == "--text" && index + 1 < argc) {
+                corpus.texts.emplace_back(argv[++index]);
+            } else if (argument == "--text-file" && index + 1 < argc) {
+                load_text_file(argv[++index], corpus.texts);
             } else if (argument == "--synthetic") {
                 synthetic = true;
             } else if (argument == "--json-lines") {
@@ -202,6 +335,18 @@ int main(int argc, char** argv) {
     }
 
     try {
+        if (translator_name == "corpus") {
+            corpus.json_lines = json_lines;
+            if (corpus.texts.empty()) {
+                std::cerr << "watashi_cli: corpus mode needs --text or --text-file\n";
+                return 2;
+            }
+            return run_corpus(corpus);
+        }
+        if (translator_name != "fake") {
+            std::cerr << "watashi_cli: --translator must be fake or corpus\n";
+            return 2;
+        }
         if (mode == "onnx") {
             onnx.intra_threads = 4;
             onnx.inter_threads = 1;
