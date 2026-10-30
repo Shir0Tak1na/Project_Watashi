@@ -19,6 +19,11 @@ nlohmann::json OverlayLine::to_json() const {
         {"box", box ? box->to_json() : nlohmann::json(nullptr)},
         {"confidence", confidence},
         {"coverage", coverage},
+        {"protected_terms", protected_terms},
+        {"lost_placeholders", lost_placeholders},
+        {"used_model", used_model},
+        {"fallback_reason", fallback_reason.empty() ? nlohmann::json(nullptr)
+                                                    : nlohmann::json(fallback_reason)},
     };
 }
 
@@ -52,14 +57,30 @@ OverlayUpdate Pipeline::process(const ImageView& frame, double started_seconds) 
     update.ocr_ms = recognised.elapsed_ms;
 
     const auto translation_started = std::chrono::steady_clock::now();
+    std::vector<std::string> sources;
+    sources.reserve(recognised.lines.size());
     for (const auto& line : recognised.lines) {
-        const Translation translated = translator_.translate(line.text, context_);
+        sources.push_back(line.text);
+    }
+    // One call per frame: the NMT backend batches its model inference across
+    // the lines, the deterministic backends loop inside the default.
+    const std::vector<Translation> translations =
+        translator_.translate_batch(sources, context_);
+    for (std::size_t index = 0; index < recognised.lines.size() &&
+                                index < translations.size();
+         ++index) {
+        const auto& line = recognised.lines[index];
+        const Translation& translated = translations[index];
         OverlayLine published;
         published.source = line.text;
         published.target = translated.target;
         published.box = line.box;
         published.confidence = line.confidence;
         published.coverage = translated.coverage;
+        published.protected_terms = translated.protected_terms;
+        published.lost_placeholders = translated.lost_placeholders;
+        published.used_model = translated.used_model;
+        published.fallback_reason = translated.fallback_reason;
 
         if (!update.source_text.empty()) {
             update.source_text += '\n';

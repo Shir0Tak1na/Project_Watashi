@@ -25,6 +25,11 @@ struct OverlayLine {
     std::optional<Box> box;
     double confidence = 1.0;
     double coverage = 1.0;
+    //: NMT provenance, empty/zero for the deterministic backends.
+    int protected_terms = 0;
+    int lost_placeholders = 0;
+    bool used_model = false;
+    std::string fallback_reason;
 
     [[nodiscard]] nlohmann::json to_json() const;
 };

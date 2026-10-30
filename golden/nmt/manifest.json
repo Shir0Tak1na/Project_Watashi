@@ -1,0 +1,25 @@
+{
+  "beam_size": 1,
+  "cases": 120,
+  "cases_sha256": "876eddfec1e062c995cb227b17f602e98fb2bcbfc609ffaeea8cc832e5139ad2",
+  "compute_type": "int8",
+  "config_digest": "eebf18fc36628a16b4f9fff40ecfbca2ad60902394bd72ab47096e41a3f7fee8",
+  "corpus": {
+    "domain": "golden/corpus/data/domain",
+    "general": "golden/corpus/data/general",
+    "user": "golden/corpus/data/user"
+  },
+  "git_commit": "7c88dfe6914eaceee18df45b99915bd1deef288a",
+  "intra_threads": 4,
+  "lost_placeholders": 0,
+  "max_decoding_length": 192,
+  "max_input_length": 256,
+  "model": "models/llm/nllb-200-distilled-600M-ct2-int8",
+  "protect": true,
+  "protect_min_confidence": 0.4,
+  "protected_terms": 236,
+  "rules": "golden/corpus/data/rules.json",
+  "schema_version": 1,
+  "selection": "first 120 candidates with used_model=true and lost_placeholders=0",
+  "used_model_cases": 120
+}

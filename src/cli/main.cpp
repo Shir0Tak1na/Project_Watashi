@@ -28,6 +28,7 @@
 #include "watashi/capture.hpp"
 #include "watashi/events.hpp"
 #include "watashi/corpus.hpp"
+#include "watashi/nmt.hpp"
 #include "watashi/ocr.hpp"
 #include "watashi/pipeline.hpp"
 #include "watashi/session.hpp"
@@ -72,7 +73,17 @@ void usage(std::ostream& out) {
            "  --scene NAME           selected scene\n"
            "  --window TITLE         window title, for when_window entries\n"
            "  --text TEXT            one input line, repeatable\n"
-           "  --text-file PATH       one input line per file line\n";
+           "  --text-file PATH       one input line per file line\n"
+           "  --batch-texts          translate all --text/--text-file lines in one\n"
+           "                         model batch (frame-shaped run)\n"
+           "\n"
+           "local NMT (--translator nmt|hybrid):\n"
+           "  --nmt-model PATH       CTranslate2 model dir, default models/llm/\n"
+           "                         nllb-200-distilled-600M-ct2-int8\n"
+           "  --nmt-threads N        intra-op threads, default 4\n"
+           "  --beam N               beam size, default 1\n"
+           "  --protect-terms        keep corpus terms authoritative (default)\n"
+           "  --no-protect-terms     translate without term protection\n";
 }
 
 std::vector<std::uint8_t> load_frame(const std::string& path, int width, int height) {
@@ -129,6 +140,9 @@ struct CorpusArgs {
     std::string window;
     std::vector<std::string> texts;
     bool json_lines = false;
+    /// One batched translate_batch call for all texts, like a frame with many
+    /// lines. Off by default: the reference is recorded line by line.
+    bool batch_texts = false;
 };
 
 void load_text_file(const std::string& path, std::vector<std::string>& texts) {
@@ -154,23 +168,110 @@ void load_text_file(const std::string& path, std::vector<std::string>& texts) {
     }
 }
 
-int run_corpus(const CorpusArgs& args) {
+struct NmtArgs {
+    std::string model = "models/llm/nllb-200-distilled-600M-ct2-int8";
+    int threads = 4;
+    int beam = 1;
+    bool protect = true;
+    std::string source_lang = "auto";
+};
+
+/// One corpus store and one translator, kept alive together. Both the text
+/// path and the capture path build one of these, so they cannot disagree about
+/// which backend they are running.
+struct TranslatorBundle {
+    std::unique_ptr<watashi::CorpusStore> store;
+    std::unique_ptr<watashi::LocalNmt> model;
+    std::unique_ptr<watashi::Translator> translator;
+    std::string label;
+};
+
+TranslatorBundle make_translator(
+    const std::string& name,
+    const CorpusArgs& corpus_args,
+    const NmtArgs& nmt_args) {
     watashi::CorpusStore::Options options;
-    options.user_dirs = args.user_dirs;
-    options.domain_dirs = args.domain_dirs;
-    options.general_dirs = args.general_dirs;
-    options.rule_files = args.rule_files;
-    watashi::CorpusStore store(options);
-    watashi::CorpusTranslator translator(store);
+    options.user_dirs = corpus_args.user_dirs;
+    options.domain_dirs = corpus_args.domain_dirs;
+    options.general_dirs = corpus_args.general_dirs;
+    options.rule_files = corpus_args.rule_files;
+
+    TranslatorBundle bundle;
+    bundle.store = std::make_unique<watashi::CorpusStore>(options);
+
+    if (name == "corpus") {
+        bundle.translator = std::make_unique<watashi::CorpusTranslator>(*bundle.store);
+        bundle.label = "corpus";
+        return bundle;
+    }
+
+    watashi::NmtOptions nmt_options;
+    nmt_options.model_dir = nmt_args.model;
+    nmt_options.intra_threads = nmt_args.threads;
+    nmt_options.beam_size = nmt_args.beam;
+    bundle.model = std::make_unique<watashi::LocalNmt>(nmt_options);
+    if (!bundle.model->available()) {
+        std::cerr << "watashi_cli: NMT unavailable: " << bundle.model->load_error() << "\n";
+    } else {
+        std::cerr << "nmt: loaded in " << bundle.model->load_ms() << " ms ("
+                  << bundle.model->compute_type() << ", " << nmt_args.threads
+                  << " threads, beam " << nmt_args.beam << ")\n";
+    }
+
+    watashi::NmtTranslatorOptions nmt_translator_options;
+    nmt_translator_options.protect = nmt_args.protect;
+    nmt_translator_options.source_lang = nmt_args.source_lang;
+    bundle.translator =
+        std::make_unique<watashi::NmtTranslator>(*bundle.store, *bundle.model,
+                                                 nmt_translator_options);
+    // "nmt" and "hybrid" are the same synchronous corpus-first path here; the
+    // Python hybrid also refines asynchronously, which a one-shot CLI cannot do.
+    bundle.label = "local-nmt";
+    return bundle;
+}
+
+nlohmann::json subtitle_payload(const watashi::OverlayUpdate& update,
+                                const watashi::Translation& translated) {
+    nlohmann::json payload = update.to_json();
+    payload["protected_terms"] = translated.protected_terms;
+    payload["lost_placeholders"] = translated.lost_placeholders;
+    payload["fallback_reason"] = translated.fallback_reason.empty()
+                                     ? nlohmann::json(nullptr)
+                                     : nlohmann::json(translated.fallback_reason);
+    payload["used_model"] = translated.used_model;
+    payload["elapsed_ms"] = translated.elapsed_ms;
+    return payload;
+}
+
+int run_texts(const std::string& name, const CorpusArgs& args, const NmtArgs& nmt_args) {
+    TranslatorBundle bundle = make_translator(name, args, nmt_args);
 
     std::int64_t seq = 0;
     const watashi::TranslateContext context{args.target, args.scene, args.window};
-    for (const auto& text : args.texts) {
+    std::vector<watashi::Translation> translations(args.texts.size());
+    std::vector<double> wall_ms(args.texts.size(), 0.0);
+    if (args.batch_texts && !args.texts.empty()) {
         const auto started = std::chrono::steady_clock::now();
-        const watashi::Translation translated = translator.translate(text, context);
+        translations = bundle.translator->translate_batch(args.texts, context);
         const double elapsed_ms = std::chrono::duration<double, std::milli>(
                                       std::chrono::steady_clock::now() - started)
                                       .count();
+        std::fill(wall_ms.begin(), wall_ms.end(), elapsed_ms);
+    } else {
+        for (std::size_t index = 0; index < args.texts.size(); ++index) {
+            const auto started = std::chrono::steady_clock::now();
+            translations[index] = bundle.translator->translate(args.texts[index], context);
+            wall_ms[index] = std::chrono::duration<double, std::milli>(
+                                 std::chrono::steady_clock::now() - started)
+                                 .count();
+        }
+    }
+
+    for (std::size_t index = 0; index < args.texts.size(); ++index) {
+        const std::string& text = args.texts[index];
+        const watashi::Translation& translated = translations[index];
+        const double elapsed_ms =
+            translated.elapsed_ms > 0.0 ? translated.elapsed_ms : wall_ms[index];
 
         watashi::OverlayUpdate update;
         update.source_text = text;
@@ -185,10 +286,15 @@ int run_corpus(const CorpusArgs& args) {
         line.target = translated.target;
         line.confidence = translated.confidence;
         line.coverage = translated.coverage;
+        line.protected_terms = translated.protected_terms;
+        line.lost_placeholders = translated.lost_placeholders;
+        line.used_model = translated.used_model;
+        line.fallback_reason = translated.fallback_reason;
         update.lines.push_back(line);
 
         const watashi::Envelope envelope = watashi::encode_event(
-            watashi::event_type::kSubtitle, update.to_json(), ++seq, watashi::now_seconds());
+            watashi::event_type::kSubtitle, subtitle_payload(update, translated), ++seq,
+            watashi::now_seconds());
         if (args.json_lines) {
             watashi::write_json_line(std::cout, envelope);
         } else {
@@ -196,12 +302,23 @@ int run_corpus(const CorpusArgs& args) {
                       << " coverage=" << translated.coverage << "]\n";
         }
     }
-    if (store.last_error().empty()) {
-        std::cerr << "corpus: " << store.size() << " entries, " << store.rule_count()
-                  << " rules\n";
+    if (bundle.store->last_error().empty()) {
+        std::cerr << "corpus: " << bundle.store->size() << " entries, "
+                  << bundle.store->rule_count() << " rules\n";
     } else {
-        std::cerr << "corpus: " << store.size() << " entries, " << store.rule_count()
-                  << " rules; last error: " << store.last_error() << "\n";
+        std::cerr << "corpus: " << bundle.store->size() << " entries, "
+                  << bundle.store->rule_count()
+                  << " rules; last error: " << bundle.store->last_error() << "\n";
+    }
+    if (bundle.model) {
+        const watashi::NmtStats stats = bundle.model->stats();
+        const double per_sentence =
+            stats.sentences > 0 ? stats.total_ms / static_cast<double>(stats.sentences) : 0.0;
+        std::cerr << "nmt: " << stats.calls << " call(s), " << stats.sentences
+                  << " sentence(s), " << stats.protected_terms << " protected term(s), "
+                  << stats.lost_placeholders << " lost placeholder(s), " << stats.errors
+                  << " error(s), model_ms=" << stats.total_ms
+                  << ", per_sentence_ms=" << per_sentence << "\n";
     }
     std::cout.flush();
     return 0;
@@ -281,6 +398,7 @@ int run_capture(
     const std::string& ocr_mode,
     const std::string& translator_name,
     const CorpusArgs& corpus_args,
+    const NmtArgs& nmt_args,
     const watashi::OnnxOcr::Options& onnx,
     double duration,
     double fps,
@@ -311,37 +429,34 @@ int run_capture(
         return 2;
     }
 
-    std::unique_ptr<watashi::CorpusStore> store;
-    std::unique_ptr<watashi::Translator> translator;
-    if (translator_name == "corpus") {
-        watashi::CorpusStore::Options options;
-        options.user_dirs = corpus_args.user_dirs;
-        options.domain_dirs = corpus_args.domain_dirs;
-        options.general_dirs = corpus_args.general_dirs;
-        options.rule_files = corpus_args.rule_files;
-        store = std::make_unique<watashi::CorpusStore>(options);
-        translator = std::make_unique<watashi::CorpusTranslator>(*store);
-        if (!store->last_error().empty()) {
-            std::cerr << "corpus: last error: " << store->last_error() << "\n";
+    std::unique_ptr<watashi::Translator> fake_translator;
+    TranslatorBundle bundle;
+    if (translator_name == "fake") {
+        fake_translator = std::make_unique<watashi::FakeTranslator>();
+    } else if (translator_name == "corpus" || translator_name == "nmt" ||
+               translator_name == "hybrid") {
+        bundle = make_translator(translator_name, corpus_args, nmt_args);
+        if (!bundle.store->last_error().empty()) {
+            std::cerr << "corpus: last error: " << bundle.store->last_error() << "\n";
         }
-        std::cerr << "corpus: " << store->size() << " entries, " << store->rule_count()
-                  << " rules\n";
-    } else if (translator_name == "fake") {
-        translator = std::make_unique<watashi::FakeTranslator>();
+        std::cerr << "corpus: " << bundle.store->size() << " entries, "
+                  << bundle.store->rule_count() << " rules\n";
     } else {
-        std::cerr << "watashi_cli: --translator must be fake or corpus\n";
+        std::cerr << "watashi_cli: --translator must be fake, corpus, nmt or hybrid\n";
         return 2;
     }
+    watashi::Translator& translator =
+        bundle.translator ? *bundle.translator : *fake_translator;
 
     watashi::SessionOptions options{duration, fps};
     options.capture = source.get();
     options.diff.threshold = args.diff_threshold;
-    options.backend_label = translator_name == "corpus" ? "corpus" : "fake";
+    options.backend_label = bundle.translator ? bundle.label : "fake";
     options.context = watashi::TranslateContext{
         corpus_args.target, corpus_args.scene, corpus_args.window};
     options.bench_path = args.bench;
 
-    watashi::Session session(options, *ocr, *translator);
+    watashi::Session session(options, *ocr, translator);
     const auto sink = [json_lines](const watashi::Envelope& envelope) {
         if (json_lines) {
             watashi::write_json_line(std::cout, envelope);
@@ -449,6 +564,7 @@ int main(int argc, char** argv) {
     std::string mode = "fake";
     std::string translator_name = "fake";
     CorpusArgs corpus;
+    NmtArgs nmt;
     CaptureArgs capture;
     std::vector<std::string> frames;
     watashi::OnnxOcr::Options onnx;
@@ -479,6 +595,16 @@ int main(int argc, char** argv) {
                 }
             } else if (argument == "--rules" && index + 1 < argc) {
                 corpus.rule_files.emplace_back(argv[++index]);
+            } else if (argument == "--nmt-model" && index + 1 < argc) {
+                nmt.model = argv[++index];
+            } else if (argument == "--nmt-threads" && index + 1 < argc) {
+                nmt.threads = std::max(1, std::atoi(argv[++index]));
+            } else if (argument == "--beam" && index + 1 < argc) {
+                nmt.beam = std::max(1, std::atoi(argv[++index]));
+            } else if (argument == "--protect-terms") {
+                nmt.protect = true;
+            } else if (argument == "--no-protect-terms") {
+                nmt.protect = false;
             } else if (argument == "--target" && index + 1 < argc) {
                 corpus.target = argv[++index];
             } else if (argument == "--scene" && index + 1 < argc) {
@@ -489,6 +615,8 @@ int main(int argc, char** argv) {
                 corpus.texts.emplace_back(argv[++index]);
             } else if (argument == "--text-file" && index + 1 < argc) {
                 load_text_file(argv[++index], corpus.texts);
+            } else if (argument == "--batch-texts") {
+                corpus.batch_texts = true;
             } else if (argument == "--synthetic") {
                 synthetic = true;
             } else if (argument == "--capture" && index + 1 < argc) {
@@ -553,19 +681,21 @@ int main(int argc, char** argv) {
     try {
         if (!capture.mode.empty()) {
             return run_capture(
-                capture, mode, translator_name, corpus, onnx, duration, fps, json_lines, width,
-                height);
+                capture, mode, translator_name, corpus, nmt, onnx, duration, fps, json_lines,
+                width, height);
         }
-        if (translator_name == "corpus") {
+        if (translator_name == "corpus" || translator_name == "nmt" ||
+            translator_name == "hybrid") {
             corpus.json_lines = json_lines;
             if (corpus.texts.empty()) {
-                std::cerr << "watashi_cli: corpus mode needs --text or --text-file\n";
+                std::cerr << "watashi_cli: " << translator_name
+                          << " mode needs --text or --text-file\n";
                 return 2;
             }
-            return run_corpus(corpus);
+            return run_texts(translator_name, corpus, nmt);
         }
         if (translator_name != "fake") {
-            std::cerr << "watashi_cli: --translator must be fake or corpus\n";
+            std::cerr << "watashi_cli: --translator must be fake, corpus, nmt or hybrid\n";
             return 2;
         }
         if (mode == "onnx") {
