@@ -300,7 +300,7 @@ set(SPM_ENABLE_SHARED OFF CACHE BOOL "" FORCE)
 set(SPM_BUILD_TEST OFF CACHE BOOL "" FORCE)
 set(SPM_ENABLE_TCMALLOC OFF CACHE BOOL "" FORCE)
 FetchContent_Declare(sentencepiece
-    URL https://codeload.github.com/google/sentencepiece/tar.gz/refs/tags/${WATASHI_SPM_TAG}.tar.gz
+    URL https://codeload.github.com/google/sentencepiece/tar.gz/refs/tags/${WATASHI_SPM_TAG}
     URL_HASH SHA256=${WATASHI_SPM_SHA256}
     DOWNLOAD_EXTRACT_TIMESTAMP FALSE)
 FetchContent_MakeAvailable(sentencepiece)
@@ -364,6 +364,36 @@ add_executable(watashi_cli src/cli/main.cpp)
 target_link_libraries(watashi_cli PRIVATE watashi_core)
 watashi_copy_onnxruntime(watashi_cli)
 watashi_copy_ctranslate2(watashi_cli)
+
+# --------------------------------------------------------------------------- #
+# native overlay (W3.0)
+# --------------------------------------------------------------------------- #
+#
+# watashi_ui is a viewer, not a second engine: it links the event encoder so
+# both sides decode the same contract, spawns the CLI and paints the frames.
+# It adds no dependency -- Win32 USER32/GDI32 are already in the toolchain,
+# which is why ADR 0009 chose it over Qt6 (see docs/adr/0009-ui-toolkit.md).
+if(WIN32)
+    add_library(watashi_ui_core STATIC
+        src/ui/model.cpp
+        src/ui/layout.cpp
+        src/ui/renderer.cpp
+        src/ui/layered_window.cpp
+        src/ui/child_stream.cpp
+    )
+    target_include_directories(watashi_ui_core
+        PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include
+        PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
+    target_link_libraries(watashi_ui_core
+        PUBLIC nlohmann_json::nlohmann_json
+        PRIVATE watashi_core user32 gdi32 psapi
+    )
+    target_compile_features(watashi_ui_core PUBLIC cxx_std_17)
+
+    add_executable(watashi_ui src/ui/main.cpp)
+    target_link_libraries(watashi_ui PRIVATE watashi_ui_core)
+endif()
 
 # Phase 0 verification: load the CTranslate2 model from C++ and translate the
 # four probe sentences. Kept as a target so the check is reproducible from the

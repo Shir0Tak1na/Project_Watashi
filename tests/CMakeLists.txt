@@ -6,8 +6,9 @@ add_executable(watashi_tests
     test_ocr.cpp
     test_rules.cpp
     test_session.cpp
+    test_ui.cpp
 )
-target_link_libraries(watashi_tests PRIVATE watashi_core Catch2::Catch2WithMain)
+target_link_libraries(watashi_tests PRIVATE watashi_core watashi_ui_core Catch2::Catch2WithMain)
 watashi_copy_onnxruntime(watashi_tests)
 watashi_copy_ctranslate2(watashi_tests)
 
@@ -24,4 +25,14 @@ if(WIN32)
     target_link_libraries(watashi_screen_tests PRIVATE watashi_core)
     watashi_copy_onnxruntime(watashi_screen_tests)
     add_test(NAME capture_screen COMMAND watashi_screen_tests)
+
+    # Child process for the ChildStream tests. It is a fixture executable, not
+    # a test: it prints a fixed number of lines and exits with a chosen code.
+    add_executable(watashi_ui_stream_fixture ui_stream_fixture.cpp)
+
+    # The overlay against the real compositor. Exits 3 without a desktop, so
+    # ctest does not treat an unexercised window path as green.
+    add_executable(watashi_ui_window_tests ui_window_test.cpp)
+    target_link_libraries(watashi_ui_window_tests PRIVATE watashi_ui_core)
+    add_test(NAME overlay_window COMMAND watashi_ui_window_tests)
 endif()
