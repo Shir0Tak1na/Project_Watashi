@@ -1,4 +1,5 @@
-// Pure overlay geometry: DPI conversion, wrapping and the bottom-centre anchor.
+// Pure overlay geometry: DPI conversion, wrapping, anchoring and the
+// presentation spec applied to pixels.
 //
 // Nothing here touches a window or a device context. Text is measured through
 // an injected callback, so the same code is exercised by the unit tests with a
@@ -13,6 +14,7 @@
 #include <vector>
 
 #include "watashi/capture.hpp"
+#include "watashi/ui/presentation.hpp"
 
 namespace watashi::ui {
 
@@ -21,40 +23,46 @@ struct TextExtent {
     int height = 0;
 };
 
-/// UTF-8 text at ``px`` physical pixels -> physical extent. Injected so layout
-/// stays free of GDI. ``bold`` must be the same weight the renderer will paint
-/// with: measuring regular and painting semibold yields a box narrower than the
-/// glyphs, which clips the right edge of a target line.
-using TextMeasure =
-    std::function<TextExtent(const std::string& utf8, int px, bool bold)>;
-
-struct Style {
-    /// Logical (96 dpi) metrics. Every value is scaled once by the target dpi.
-    int max_width = 700;
-    int min_width = 240;
-    int padding_x = 20;
-    int padding_y = 14;
-    int source_px = 15;
-    int target_px = 24;
-    int status_px = 12;
-    int line_gap = 5;
-    int block_gap = 10;
-    int margin_bottom = 110;
-    int margin_side = 24;
-    int radius = 14;
+/// Everything that affects glyph width: physical size, weight and face. The
+/// renderer must paint with exactly these values or a wrapped line is clipped.
+struct MeasureStyle {
+    int px = 12;
+    bool bold = false;
+    bool italic = false;
+    std::string family;
 };
 
-enum class RunKind { kSource, kTarget, kStatus };
+/// UTF-8 text -> physical extent, measured with ``style``.
+using TextMeasure =
+    std::function<TextExtent(const std::string& utf8, const MeasureStyle& style)>;
+
+enum class RunKind { kSource, kTarget, kTrace, kPrevious, kStatus };
+
+struct RunStyle {
+    MeasureStyle metrics;
+    Rgb color{255, 255, 255};
+    /// Effective opacity: element opacity, dimmed when confidence is low.
+    double opacity = 1.0;
+    int outline_px = 0;
+    Rgb outline_color{0, 0, 0};
+};
 
 struct TextRun {
     std::string text;
     RunKind kind = RunKind::kTarget;
-    int px = 0;
+    RunStyle style;
     /// Relative to the overlay's top-left, physical pixels.
     int x = 0;
     int y = 0;
     int width = 0;
     int height = 0;
+};
+
+struct BackgroundPaint {
+    bool plate = true;
+    Rgb color{0, 0, 0};
+    double opacity = 0.72;
+    int radius = 0;
 };
 
 struct Layout {
@@ -64,23 +72,36 @@ struct Layout {
     /// Physical screen position (anchor already applied).
     int x = 0;
     int y = 0;
-    int radius = 0;
     bool empty = true;
+    /// ``mode: hidden``: process the stream but draw nothing.
+    bool hidden = false;
     std::vector<TextRun> runs;
+    BackgroundPaint background;
     int source_lines = 0;
     int target_lines = 0;
     int status_lines = 0;
 };
 
-struct LayoutRequest {
+struct PresentationText {
     std::string source;
     std::string target;
+    std::string trace;
+    std::string previous;
     std::string status;
+    /// 0..1. The spec's "confidence" dimming uses whichever of the two the
+    /// pipeline reports lower, so a partial corpus translation dims like the
+    /// prototype does.
+    double confidence = 1.0;
+    double coverage = 1.0;
+};
+
+struct LayoutRequest {
+    PresentationText text;
     /// The monitor's work area in physical pixels.
     CaptureRect work_area;
     /// 96, 120 or 144 on this project; any value >= 96 is accepted.
     int dpi = 96;
-    Style style;
+    PresentationSpec spec;
 };
 
 /// ``dpi / 96``, clamped to at least 1.0.
@@ -90,9 +111,22 @@ struct LayoutRequest {
 /// the sign; all callers pass non-negative style values.
 [[nodiscard]] int logical_px(int logical, int dpi) noexcept;
 
-/// Bottom-centre position inside ``work_area``. The result is clamped so the
-/// window never leaves the work area horizontally or above its top edge; the
-/// bottom margin is maintained unless the content is taller than the area.
+struct Point {
+    int x = 0;
+    int y = 0;
+};
+
+/// Top-left for a block of ``width``/``height`` at one of the nine anchors,
+/// plus a logical offset. The result is clamped inside the work area.
+[[nodiscard]] Point anchor_position(
+    Anchor anchor,
+    const CaptureRect& work_area,
+    int width,
+    int height,
+    int offset_x,
+    int offset_y) noexcept;
+
+/// Kept from W3.0: bottom-centre with independent bottom/side margins.
 [[nodiscard]] CaptureRect anchor_bottom_center(
     const CaptureRect& work_area,
     int width,
@@ -102,18 +136,20 @@ struct LayoutRequest {
 
 /// Greedy word wrap at ``max_width`` physical pixels, honouring explicit
 /// newlines. A word longer than the line is hard-split at the width instead of
-/// overflowing the plate. ``bold`` selects the weight used for measurement.
+/// overflowing the plate.
 [[nodiscard]] std::vector<std::string> wrap_text(
     const std::string& text,
     int max_width,
-    int font_px,
-    bool bold,
+    const MeasureStyle& style,
     const TextMeasure& measure);
 
-/// Lay out source, target and status; apply the anchor. Empty text with no
-/// status yields ``Layout::empty``.
+/// Lay out the spec's elements plus the status line and apply the anchor.
+/// ``mode: hidden`` yields an empty layout with ``hidden`` set.
 [[nodiscard]] Layout compute_layout(
     const LayoutRequest& request,
     const TextMeasure& measure);
+
+/// The physical style an element's logical font becomes at ``dpi``.
+[[nodiscard]] MeasureStyle measure_style(const FontSpec& font, int dpi);
 
 }  // namespace watashi::ui

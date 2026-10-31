@@ -8,14 +8,13 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
-#include <map>
 #include <string>
 #include <vector>
 
 namespace watashi::ui {
 namespace {
 
-constexpr wchar_t kFontFace[] = L"Microsoft YaHei UI";
+constexpr wchar_t kDefaultFace[] = L"Microsoft YaHei UI";
 
 std::wstring to_wide(const std::string& utf8) {
     if (utf8.empty()) {
@@ -101,7 +100,6 @@ std::uint8_t plate_coverage(int px, int py, int width, int height, int radius) {
     if (radius <= 1) {
         return 255;
     }
-    // Distance from the nearest corner centre.
     const int cx = std::max(radius, std::min(px, width - 1 - radius));
     const int cy = std::max(radius, std::min(py, height - 1 - radius));
     const double dx = static_cast<double>(px - cx);
@@ -111,36 +109,59 @@ std::uint8_t plate_coverage(int px, int py, int width, int height, int radius) {
     return static_cast<std::uint8_t>(alpha * 255.0);
 }
 
-void blend_text(
-    std::uint8_t* pixel,
-    std::uint8_t coverage,
-    std::uint8_t r,
-    std::uint8_t g,
-    std::uint8_t b) {
-    const int cov = coverage;
+void blend(std::uint8_t* pixel,
+           std::uint8_t coverage,
+           std::uint8_t alpha,
+           Rgb color) {
+    const int cov = static_cast<int>(coverage) * alpha / 255;
     const int keep = 255 - cov;
-    pixel[0] = clamp_byte((b * cov + pixel[0] * keep) / 255);
-    pixel[1] = clamp_byte((g * cov + pixel[1] * keep) / 255);
-    pixel[2] = clamp_byte((r * cov + pixel[2] * keep) / 255);
+    pixel[0] = clamp_byte((color.b * cov + pixel[0] * keep) / 255);
+    pixel[1] = clamp_byte((color.g * cov + pixel[1] * keep) / 255);
+    pixel[2] = clamp_byte((color.r * cov + pixel[2] * keep) / 255);
     pixel[3] = clamp_byte(cov + pixel[3] * keep / 255);
 }
 
-std::uint8_t run_color_or_status(const Theme& theme, RunKind kind, int channel) {
-    switch (kind) {
-        case RunKind::kSource:
-            return channel == 0 ? theme.source_r : channel == 1 ? theme.source_g
-                                                                : theme.source_b;
-        case RunKind::kTarget:
-            return channel == 0 ? theme.target_r : channel == 1 ? theme.target_g
-                                                                : theme.target_b;
-        case RunKind::kStatus:
-            break;
+std::uint8_t mask_alpha(const Dib& mask, int x, int y) {
+    if (x < 0 || y < 0 || x >= mask.width || y >= mask.height) {
+        return 0;
     }
-    return channel == 0 ? theme.status_r : channel == 1 ? theme.status_g
-                                                        : theme.status_b;
+    const std::uint8_t* pixel =
+        static_cast<const std::uint8_t*>(mask.bits) +
+        (static_cast<std::size_t>(y) * mask.width + x) * 4;
+    return std::max(pixel[0], std::max(pixel[1], pixel[2]));
+}
+
+void clear_rect(Dib& mask, int x0, int y0, int x1, int y1) {
+    x0 = std::max(0, x0);
+    y0 = std::max(0, y0);
+    x1 = std::min(mask.width, x1);
+    y1 = std::min(mask.height, y1);
+    if (x0 >= x1 || y0 >= y1) {
+        return;
+    }
+    auto* bits = static_cast<std::uint8_t*>(mask.bits);
+    for (int y = y0; y < y1; ++y) {
+        std::memset(
+            bits + (static_cast<std::size_t>(y) * mask.width + x0) * 4,
+            0,
+            static_cast<std::size_t>(x1 - x0) * 4);
+    }
 }
 
 }  // namespace
+
+bool GdiText::FontKey::operator<(const FontKey& other) const {
+    if (family != other.family) {
+        return family < other.family;
+    }
+    if (px != other.px) {
+        return px < other.px;
+    }
+    if (bold != other.bold) {
+        return bold < other.bold;
+    }
+    return italic < other.italic;
+}
 
 GdiText::GdiText() {
     dc_ = CreateCompatibleDC(nullptr);
@@ -158,23 +179,26 @@ GdiText::~GdiText() {
     }
 }
 
-HFONT GdiText::select_font(HDC dc, int px, bool bold) {
-    const auto key = std::make_pair(px, bold);
+HFONT GdiText::select_font(HDC dc, const MeasureStyle& style) {
+    FontKey key{style.family, style.px, style.bold, style.italic};
     const auto found = fonts_.find(key);
     HFONT font = nullptr;
     if (found != fonts_.end()) {
         font = found->second;
     } else {
+        const std::wstring face =
+            style.family.empty() ? std::wstring(kDefaultFace) : to_wide(style.family);
         font = CreateFontW(
-            -px, 0, 0, 0,
-            bold ? FW_SEMIBOLD : FW_NORMAL,
-            FALSE, FALSE, FALSE,
+            -style.px, 0, 0, 0,
+            style.bold ? FW_SEMIBOLD : FW_NORMAL,
+            style.italic ? TRUE : FALSE,
+            FALSE, FALSE,
             DEFAULT_CHARSET,
             OUT_TT_PRECIS,
             CLIP_DEFAULT_PRECIS,
             ANTIALIASED_QUALITY,
             DEFAULT_PITCH | FF_DONTCARE,
-            kFontFace);
+            face.c_str());
         fonts_.emplace(key, font);
     }
     if (dc != nullptr && font != nullptr) {
@@ -183,15 +207,15 @@ HFONT GdiText::select_font(HDC dc, int px, bool bold) {
     return font;
 }
 
-TextExtent GdiText::measure(const std::string& utf8, int px, bool bold) {
+TextExtent GdiText::measure(const std::string& utf8, const MeasureStyle& style) {
     if (dc_ == nullptr) {
         return TextExtent{};
     }
     const std::wstring wide = to_wide(utf8);
-    HFONT font = select_font(dc_, px, bold);
+    HFONT font = select_font(dc_, style);
     TextExtent extent;
     if (font == nullptr) {
-        extent.height = px;
+        extent.height = style.px;
         return extent;
     }
     if (!wide.empty()) {
@@ -206,47 +230,47 @@ TextExtent GdiText::measure(const std::string& utf8, int px, bool bold) {
 }
 
 TextMeasure GdiText::as_measure() {
-    return [this](const std::string& text, int px, bool bold) {
-        return measure(text, px, bold);
+    return [this](const std::string& text, const MeasureStyle& style) {
+        return measure(text, style);
     };
 }
 
-OverlayImage compose_overlay(
-    const Layout& layout,
-    GdiText& text,
-    const Theme& theme) {
+OverlayImage compose_overlay(const Layout& layout, GdiText& text) {
     OverlayImage image;
-    if (layout.empty || layout.width <= 0 || layout.height <= 0) {
+    if (layout.empty || layout.hidden || layout.width <= 0 || layout.height <= 0) {
         return image;
     }
 
-    Dib plate;
-    if (!plate.create(layout.width, layout.height)) {
+    Dib buffer;
+    if (!buffer.create(layout.width, layout.height)) {
         return image;
     }
-    auto* pixels = static_cast<std::uint8_t*>(plate.bits);
+    auto* pixels = static_cast<std::uint8_t*>(buffer.bits);
     const int width = layout.width;
     const int height = layout.height;
-    const int radius = std::max(0, layout.radius);
 
-    for (int y = 0; y < height; ++y) {
-        for (int x = 0; x < width; ++x) {
-            const std::uint8_t coverage = plate_coverage(x, y, width, height, radius);
-            if (coverage == 0) {
-                continue;
+    if (layout.background.plate) {
+        const int radius = std::max(0, layout.background.radius);
+        const int opacity = static_cast<int>(
+            std::lround(layout.background.opacity * 255.0));
+        for (int y = 0; y < height; ++y) {
+            for (int x = 0; x < width; ++x) {
+                const std::uint8_t coverage =
+                    plate_coverage(x, y, width, height, radius);
+                if (coverage == 0 || opacity == 0) {
+                    continue;
+                }
+                const int alpha = coverage * clamp_byte(opacity) / 255;
+                std::uint8_t* pixel =
+                    pixels + (static_cast<std::size_t>(y) * width + x) * 4;
+                pixel[0] = clamp_byte(layout.background.color.b * alpha / 255);
+                pixel[1] = clamp_byte(layout.background.color.g * alpha / 255);
+                pixel[2] = clamp_byte(layout.background.color.r * alpha / 255);
+                pixel[3] = static_cast<std::uint8_t>(alpha);
             }
-            const int alpha = static_cast<int>(coverage) * theme.plate_alpha / 255;
-            std::uint8_t* pixel = pixels + (static_cast<std::size_t>(y) * width + x) * 4;
-            pixel[0] = clamp_byte(theme.plate_b * alpha / 255);
-            pixel[1] = clamp_byte(theme.plate_g * alpha / 255);
-            pixel[2] = clamp_byte(theme.plate_r * alpha / 255);
-            pixel[3] = static_cast<std::uint8_t>(alpha);
         }
     }
 
-    // Text goes into a separate black-and-white surface; its coverage is then
-    // multiplied into the plate buffer. Drawing straight into the plate would
-    // produce opaque glyphs and no soft edges.
     Dib mask;
     if (!mask.create(layout.width, layout.height)) {
         return image;
@@ -254,6 +278,7 @@ OverlayImage compose_overlay(
     SetBkMode(mask.dc, TRANSPARENT);
     SetTextColor(mask.dc, RGB(255, 255, 255));
     SetTextAlign(mask.dc, TA_LEFT | TA_TOP);
+
     for (const auto& run : layout.runs) {
         if (run.text.empty()) {
             continue;
@@ -262,35 +287,58 @@ OverlayImage compose_overlay(
         if (wide.empty()) {
             continue;
         }
-        text.select_font(mask.dc, run.px, run.kind == RunKind::kTarget);
-        TextOutW(mask.dc, run.x, run.y, wide.c_str(), static_cast<int>(wide.size()));
-    }
+        const int outline = std::max(0, run.style.outline_px);
+        const int x0 = run.x - outline;
+        const int y0 = run.y - outline;
+        const int x1 = run.x + std::max(1, run.width) + outline;
+        const int y1 = run.y + std::max(1, run.height) + outline;
+        clear_rect(mask, x0, y0, x1, y1);
 
-    const auto* coverage_bits = static_cast<const std::uint8_t*>(mask.bits);
-    for (const auto& run : layout.runs) {
-        const int x0 = std::max(0, run.x);
-        const int y0 = std::max(0, run.y);
-        const int x1 = std::min(width, run.x + std::max(1, run.width));
-        const int y1 = std::min(height, run.y + std::max(1, run.height));
-        const std::uint8_t color_r = run_color_or_status(theme, run.kind, 0);
-        const std::uint8_t color_g = run_color_or_status(theme, run.kind, 1);
-        const std::uint8_t color_b = run_color_or_status(theme, run.kind, 2);
-        for (int y = y0; y < y1; ++y) {
-            for (int x = x0; x < x1; ++x) {
-                const std::uint8_t* coverage =
-                    coverage_bits + (static_cast<std::size_t>(y) * width + x) * 4;
-                // GDI antialiases with grey; ClearType would tint the channels,
-                // so the maximum channel is the coverage for both cases.
-                const std::uint8_t alpha =
-                    std::max(coverage[0], std::max(coverage[1], coverage[2]));
-                if (alpha == 0) {
+        text.select_font(mask.dc, run.style.metrics);
+        TextOutW(
+            mask.dc, run.x, run.y, wide.c_str(), static_cast<int>(wide.size()));
+
+        const std::uint8_t opacity =
+            clamp_byte(static_cast<int>(std::lround(run.style.opacity * 255.0)));
+
+        // Outline first, sampled from the glyph mask at a one-ring offset.
+        if (outline > 0) {
+            for (int y = std::max(0, y0); y < std::min(height, y1); ++y) {
+                for (int x = std::max(0, x0); x < std::min(width, x1); ++x) {
+                    std::uint8_t coverage = 0;
+                    for (int dy = -outline; dy <= outline; ++dy) {
+                        for (int dx = -outline; dx <= outline; ++dx) {
+                            if (dx * dx + dy * dy > outline * outline) {
+                                continue;
+                            }
+                            coverage = std::max(
+                                coverage, mask_alpha(mask, x - dx, y - dy));
+                        }
+                    }
+                    if (coverage == 0) {
+                        continue;
+                    }
+                    std::uint8_t* pixel =
+                        pixels + (static_cast<std::size_t>(y) * width + x) * 4;
+                    blend(pixel, coverage, opacity, run.style.outline_color);
+                }
+            }
+        }
+
+        for (int y = std::max(0, run.y); y < std::min(height, run.y + run.height); ++y) {
+            for (int x = std::max(0, run.x);
+                 x < std::min(width, run.x + std::max(1, run.width));
+                 ++x) {
+                const std::uint8_t coverage = mask_alpha(mask, x, y);
+                if (coverage == 0) {
                     continue;
                 }
                 std::uint8_t* pixel =
                     pixels + (static_cast<std::size_t>(y) * width + x) * 4;
-                blend_text(pixel, alpha, color_r, color_g, color_b);
+                blend(pixel, coverage, opacity, run.style.color);
             }
         }
+        clear_rect(mask, x0, y0, x1, y1);
     }
 
     image.width = layout.width;

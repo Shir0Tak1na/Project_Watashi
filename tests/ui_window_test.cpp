@@ -86,11 +86,12 @@ int main() {
 
     watashi::ui::GdiText text;
     watashi::ui::LayoutRequest request;
-    request.source = "the sword intent of this sect is a myth";
-    request.target = "本门剑意只是传说";
-    request.status = "ui window test";
+    request.text.source = "the sword intent of this sect is a myth";
+    request.text.target = "本门剑意只是传说";
+    request.text.status = "ui window test";
     request.work_area = primary;
     request.dpi = dpi;
+    request.spec = watashi::ui::PresentationSpec::bar();
     const watashi::ui::Layout layout =
         watashi::ui::compute_layout(request, text.as_measure());
     const watashi::ui::OverlayImage image =

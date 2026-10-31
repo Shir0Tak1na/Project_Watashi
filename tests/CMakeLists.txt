@@ -4,6 +4,7 @@ add_executable(watashi_tests
     test_events.cpp
     test_nmt_semantics.cpp
     test_ocr.cpp
+    test_presentation.cpp
     test_rules.cpp
     test_session.cpp
     test_ui.cpp

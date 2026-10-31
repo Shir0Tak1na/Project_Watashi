@@ -41,16 +41,20 @@ namespace {
 using namespace watashi;
 
 ui::TextMeasure fake_measure(double width_per_px = 0.6) {
-    return [width_per_px](const std::string& text, int px, bool bold) {
+    return [width_per_px](const std::string& text, const ui::MeasureStyle& style) {
         ui::TextExtent extent;
         // Semibold is wider than regular; the layout must measure with the
         // same weight the renderer paints, or the right edge is clipped.
-        const double weight = bold ? 1.15 : 1.0;
+        const double weight = style.bold ? 1.15 : 1.0;
         extent.width = static_cast<int>(std::lround(
-            static_cast<double>(text.size()) * px * width_per_px * weight));
-        extent.height = px;
+            static_cast<double>(text.size()) * style.px * width_per_px * weight));
+        extent.height = style.px;
         return extent;
     };
+}
+
+ui::MeasureStyle style_of(int px, bool bold = false) {
+    return ui::MeasureStyle{px, bold, false, ""};
 }
 
 ui::LayoutRequest request_with(
@@ -58,13 +62,15 @@ ui::LayoutRequest request_with(
     const std::string& target,
     const std::string& status,
     CaptureRect work_area,
-    int dpi) {
+    int dpi,
+    ui::PresentationSpec spec = ui::PresentationSpec::bar()) {
     ui::LayoutRequest request;
-    request.source = source;
-    request.target = target;
-    request.status = status;
+    request.text.source = source;
+    request.text.target = target;
+    request.text.status = status;
     request.work_area = work_area;
     request.dpi = dpi;
+    request.spec = std::move(spec);
     return request;
 }
 
@@ -182,7 +188,7 @@ TEST_CASE("wrap_text breaks greedily at spaces", "[ui][layout]") {
     const ui::TextMeasure measure = fake_measure();
     // 10 px font, 6 px per character: each 10-char word is exactly 60 px.
     const auto lines = ui::wrap_text(
-        "aaaaaaaaaa bbbbbbbbbb cccccccccc", 100, 10, false, measure);
+        "aaaaaaaaaa bbbbbbbbbb cccccccccc", 100, style_of(10), measure);
     REQUIRE(lines.size() == 3);
     REQUIRE(lines[0] == "aaaaaaaaaa");
     REQUIRE(lines[1] == "bbbbbbbbbb");
@@ -191,7 +197,8 @@ TEST_CASE("wrap_text breaks greedily at spaces", "[ui][layout]") {
 
 TEST_CASE("wrap_text keeps explicit newlines", "[ui][layout]") {
     const ui::TextMeasure measure = fake_measure();
-    const auto lines = ui::wrap_text("first line\nsecond line", 1000, 10, false, measure);
+    const auto lines =
+        ui::wrap_text("first line\nsecond line", 1000, style_of(10), measure);
     REQUIRE(lines.size() == 2);
     REQUIRE(lines[0] == "first line");
     REQUIRE(lines[1] == "second line");
@@ -200,7 +207,8 @@ TEST_CASE("wrap_text keeps explicit newlines", "[ui][layout]") {
 TEST_CASE("wrap_text hard-splits a token wider than the line", "[ui][layout]") {
     const ui::TextMeasure measure = fake_measure();
     // 30 chars at 6 px each: 180 px against a 60 px line.
-    const auto lines = ui::wrap_text(std::string(30, 'x'), 60, 10, false, measure);
+    const auto lines =
+        ui::wrap_text(std::string(30, 'x'), 60, style_of(10), measure);
     REQUIRE(lines.size() == 3);
     for (const auto& line : lines) {
         REQUIRE(line.size() == 10);
@@ -211,11 +219,11 @@ TEST_CASE("wrap_text measures the target with its painted semibold weight", "[ui
     const ui::TextMeasure measure = fake_measure();
     // 40 chars are 576 px in regular but 662 px in the 1.15x bold metric.
     const std::string word(40, 'x');
-    REQUIRE(ui::wrap_text(word, 600, 24, false, measure).size() == 1);
-    const auto bold = ui::wrap_text(word, 600, 24, true, measure);
+    REQUIRE(ui::wrap_text(word, 600, style_of(24), measure).size() == 1);
+    const auto bold = ui::wrap_text(word, 600, style_of(24, true), measure);
     REQUIRE(bold.size() == 2);
     for (const auto& line : bold) {
-        REQUIRE(measure(line, 24, true).width <= 600);
+        REQUIRE(measure(line, style_of(24, true)).width <= 600);
     }
 }
 
@@ -226,7 +234,7 @@ TEST_CASE("target runs fit inside the plate at the weight they are painted", "[u
         "this sect's sword intent is only a legend and good game, well played, beginner";
     const ui::Layout layout =
         ui::compute_layout(request_with("", target, "", work, 96), measure);
-    const int padding = ui::logical_px(ui::Style{}.padding_x, 96);
+    const int padding = ui::logical_px(ui::PresentationSpec::bar().background.padding_x, 96);
 
     REQUIRE_FALSE(layout.empty);
     REQUIRE_FALSE(layout.runs.empty());
@@ -234,7 +242,7 @@ TEST_CASE("target runs fit inside the plate at the weight they are painted", "[u
         REQUIRE(run.kind == ui::RunKind::kTarget);
         // The width carried into the compositing box must be the bold width;
         // a regular measurement here was the right-edge clipping bug.
-        REQUIRE(run.width == measure(run.text, run.px, true).width);
+        REQUIRE(run.width == measure(run.text, style_of(run.style.metrics.px, true)).width);
         REQUIRE(run.x + run.width <= layout.width - padding);
     }
 }
@@ -243,8 +251,8 @@ TEST_CASE("renderer measures semibold text at the weight it paints", "[ui][rende
     ui::GdiText text;
     const auto measure = text.as_measure();
     const std::string line = "this sect's sword intent is only a legend";
-    const ui::TextExtent regular = measure(line, 36, false);
-    const ui::TextExtent bold = measure(line, 36, true);
+    const ui::TextExtent regular = measure(line, style_of(36));
+    const ui::TextExtent bold = measure(line, style_of(36, true));
     REQUIRE(bold.width >= regular.width);
 }
 
@@ -252,16 +260,19 @@ TEST_CASE("a long target sentence fits the plate with real 150% metrics", "[ui][
     ui::GdiText text;
     const auto measure = text.as_measure();
     ui::LayoutRequest request;
-    request.target = "this sect's sword intent is only a legend";
+    request.text.target = "this sect's sword intent is only a legend";
     request.work_area = CaptureRect{0, 0, 2560, 1600};
     request.dpi = 144;
+    request.spec = ui::PresentationSpec::bar();
     const ui::Layout layout = ui::compute_layout(request, measure);
-    const int padding = ui::logical_px(ui::Style{}.padding_x, 144);
+    const int padding =
+        ui::logical_px(ui::PresentationSpec::bar().background.padding_x, 144);
 
     REQUIRE_FALSE(layout.empty);
     for (const auto& run : layout.runs) {
         REQUIRE(run.kind == ui::RunKind::kTarget);
-        REQUIRE(run.width == measure(run.text, run.px, true).width);
+        REQUIRE(run.width ==
+                measure(run.text, style_of(run.style.metrics.px, true)).width);
         REQUIRE(run.x + run.width <= layout.width - padding);
     }
 }
@@ -288,9 +299,10 @@ TEST_CASE("compute_layout emits source then target runs, wrapping both", "[ui][l
     REQUIRE(layout.runs[2].text == "本门剑意只是传说");
 
     // The anchor is applied to the final size.
+    const ui::PresentationSpec bar = ui::PresentationSpec::bar();
     REQUIRE(layout.x == work.x + (work.width - layout.width) / 2);
     REQUIRE(layout.y + layout.height ==
-                work.bottom() - ui::logical_px(ui::Style{}.margin_bottom, 96));
+                work.bottom() + ui::logical_px(bar.layout.offset_y, 96));
 }
 
 TEST_CASE("compute_layout treats empty content as nothing to paint", "[ui][layout]") {
@@ -323,7 +335,8 @@ TEST_CASE("layout scales every metric by the dpi", "[ui][layout]") {
 
     REQUIRE(hundred_fifty.width >= hundred.width * 1.4);
     REQUIRE(hundred_fifty.height >= hundred.height * 1.4);
-    REQUIRE(hundred_fifty.runs.front().px == ui::logical_px(15, 144));
+    REQUIRE(hundred_fifty.runs.front().style.metrics.px ==
+            ui::logical_px(16, 144));
 }
 
 TEST_CASE("window styles carry all five required extended bits", "[ui][window]") {
@@ -392,6 +405,38 @@ TEST_CASE("model counts missing and out-of-order seq values", "[ui][model]") {
     REQUIRE(snapshot.missing_records == 3);
     REQUIRE(snapshot.out_of_order == 1);
     REQUIRE(snapshot.last_seq == 5);
+}
+
+TEST_CASE("parse_stream_line reads trace, confidence and coverage", "[ui][model]") {
+    const std::string line = envelope_line(
+        "subtitle",
+        nlohmann::json{
+            {"source", "a"},
+            {"target", "A"},
+            {"trace", "corpus:demo"},
+            {"confidence", 0.42},
+            {"coverage", 0.55},
+        },
+        1);
+    const ui::StreamLine parsed = ui::parse_stream_line(line);
+    REQUIRE(parsed.kind == ui::StreamLineKind::kSubtitle);
+    REQUIRE(parsed.frame.trace == "corpus:demo");
+    REQUIRE(parsed.frame.confidence == Catch::Approx(0.42));
+    REQUIRE(parsed.frame.coverage == Catch::Approx(0.55));
+}
+
+TEST_CASE("model remembers the previous target only when the text changes",
+          "[ui][model]") {
+    ui::UiModel model;
+    model.ingest(subtitle_line("first", "A", 1));
+    REQUIRE(model.snapshot().previous_target.empty());
+
+    model.ingest(subtitle_line("second", "B", 2));
+    REQUIRE(model.snapshot().previous_target == "A");
+
+    // The change detector repeats the last frame; it is not its own history.
+    model.ingest(subtitle_line("second", "B", 3));
+    REQUIRE(model.snapshot().previous_target == "A");
 }
 
 TEST_CASE("model reports the exit code and stderr tail", "[ui][model]") {

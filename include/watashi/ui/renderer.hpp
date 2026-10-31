@@ -5,15 +5,15 @@
 // opaque surface), so text is drawn into a greyscale mask first and composited
 // here. The result is one buffer that ``UpdateLayeredWindow`` accepts as-is.
 //
-// The plate is drawn directly into the pixel buffer, which keeps the blended
-// background identical on every machine and makes the output reproducible.
+// The plate and its colour come from the presentation spec (layout.background);
+// per-run colour, opacity and outline come from the run style, so a spec change
+// visibly changes the buffer and not just the stored state.
 
 #pragma once
 
 #include <cstdint>
 #include <map>
 #include <string>
-#include <utility>
 #include <vector>
 
 #ifndef NOMINMAX
@@ -39,27 +39,9 @@ struct OverlayImage {
     }
 };
 
-struct Theme {
-    std::uint8_t plate_r = 14;
-    std::uint8_t plate_g = 16;
-    std::uint8_t plate_b = 22;
-    /// 0..255. A little translucency keeps the subtitle readable over bright
-    /// scenes without hiding the scene itself.
-    std::uint8_t plate_alpha = 190;
-    std::uint8_t source_r = 198;
-    std::uint8_t source_g = 205;
-    std::uint8_t source_b = 216;
-    std::uint8_t target_r = 246;
-    std::uint8_t target_g = 247;
-    std::uint8_t target_b = 250;
-    std::uint8_t status_r = 236;
-    std::uint8_t status_g = 196;
-    std::uint8_t status_b = 112;
-};
-
-/// One GDI measurement/drawing context. Fonts are cached per size and weight,
-/// because a repaint happens on every new subtitle and creating a font per run
-/// would allocate on the UI thread.
+/// One GDI measurement/drawing context. Fonts are cached per face, size,
+/// weight and slant; a repaint happens on every new subtitle, so creating a
+/// font per run would allocate on the UI thread.
 class GdiText {
 public:
     GdiText();
@@ -68,24 +50,31 @@ public:
     GdiText(const GdiText&) = delete;
     GdiText& operator=(const GdiText&) = delete;
 
-    [[nodiscard]] TextExtent measure(const std::string& utf8, int px, bool bold);
+    [[nodiscard]] TextExtent measure(
+        const std::string& utf8,
+        const MeasureStyle& style);
 
-    /// Selects (and caches) a font into ``dc``. ``bold`` is used for the target
-    /// line, which is the text the user actually reads.
-    HFONT select_font(HDC dc, int px, bool bold);
+    /// Selects (and caches) the font ``style`` describes into ``dc``.
+    HFONT select_font(HDC dc, const MeasureStyle& style);
 
     [[nodiscard]] TextMeasure as_measure();
 
 private:
+    struct FontKey {
+        std::string family;
+        int px = 0;
+        bool bold = false;
+        bool italic = false;
+
+        [[nodiscard]] bool operator<(const FontKey& other) const;
+    };
+
     HDC dc_ = nullptr;
-    std::map<std::pair<int, bool>, HFONT> fonts_;
+    std::map<FontKey, HFONT> fonts_;
 };
 
-/// Compose a premultiplied BGRA image for ``layout``.
-[[nodiscard]] OverlayImage compose_overlay(
-    const Layout& layout,
-    GdiText& text,
-    const Theme& theme = {});
+/// Compose the premultiplied BGRA image the layout describes.
+[[nodiscard]] OverlayImage compose_overlay(const Layout& layout, GdiText& text);
 
 /// Write a screenshot. The alpha channel is flattened over a dark background so
 /// the BMP is readable in any viewer; screenshots are evidence, not assets.

@@ -53,6 +53,11 @@ public:
     /// Does not activate the window.
     void present(const OverlayImage& image, int x, int y);
 
+    /// Shows or hides without activating. ``hidden`` mode in a presentation
+    /// spec needs this: an empty image must remove the window, not leave the
+    /// last frame on screen.
+    void set_visible(bool visible);
+
     /// True once WM_DPICHANGED has been received; the caller re-lays-out.
     bool take_dpi_changed(int& dpi);
 
@@ -74,6 +79,7 @@ private:
     int bitmap_height_ = 0;
     DWORD last_error_ = 0;
     int pending_dpi_ = 0;
+    bool visible_ = false;
 };
 
 }  // namespace watashi::ui

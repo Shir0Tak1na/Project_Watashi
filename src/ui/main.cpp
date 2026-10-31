@@ -81,6 +81,9 @@ struct Args {
     std::string preview_dir;
     std::string report_path;
     std::string final_image;
+    /// Empty means config/presentation.json when it exists, else the built-in
+    /// bar preset.
+    std::string presentation;
     double linger = 8.0;
 };
 
@@ -93,6 +96,8 @@ void usage(std::ostream& out) {
            "  --linger SECONDS       keep the last frame after the stream ends, default 8\n"
            "  --report PATH          write a JSON report of this run\n"
            "  --final-image PATH     write the last composed frame as a BMP\n"
+           "  --presentation PATH    presentation spec; default config/presentation.json\n"
+           "                         when it exists, else the built-in bar preset\n"
            "  --preview DIR          render 96/120/144 dpi proofs and exit (no window)\n"
            "\n"
            "engine (passed through):\n"
@@ -158,6 +163,8 @@ bool parse_args(int argc, char** argv, Args& args) {
             if (!take_value(index, argc, argv, args.cls)) return false;
         } else if (argument == "--chars") {
             if (!take_value(index, argc, argv, args.chars)) return false;
+        } else if (argument == "--presentation") {
+            if (!take_value(index, argc, argv, args.presentation)) return false;
         } else if (argument == "--preview") {
             if (!take_value(index, argc, argv, args.preview_dir)) return false;
         } else if (argument == "--report") {
@@ -314,11 +321,44 @@ std::string sample_target() {
            "他突破到了虚空境界";
 }
 
+/// Explicit --presentation wins; otherwise the shipped config file when it
+/// exists; otherwise the built-in bar preset (empty path).
+std::string resolve_presentation_path(const Args& args, bool& explicit_path) {
+    if (!args.presentation.empty()) {
+        explicit_path = true;
+        return args.presentation;
+    }
+    explicit_path = false;
+    const std::string default_path = "config/presentation.json";
+    std::error_code error;
+    if (std::filesystem::exists(default_path, error)) {
+        return default_path;
+    }
+    return std::string();
+}
+
 int run_preview(const Args& args) {
+    bool explicit_path = false;
+    const std::string spec_path = resolve_presentation_path(args, explicit_path);
+    if (explicit_path) {
+        std::error_code error;
+        if (!std::filesystem::exists(spec_path, error)) {
+            std::cerr << "watashi_ui: presentation file not found: " << spec_path
+                      << "\n";
+            return 2;
+        }
+    }
+
     const CaptureRect work_area = primary_work_area();
     if (work_area.width <= 0 || work_area.height <= 0) {
         std::cerr << "watashi_ui: no desktop session: no monitor reports a work area\n";
         return 3;
+    }
+
+    PresentationWatcher presentation(spec_path);
+    if (!presentation.error().empty()) {
+        std::cerr << "presentation: " << presentation.error()
+                  << "; using the built-in bar preset\n";
     }
 
     std::filesystem::create_directories(args.preview_dir);
@@ -328,12 +368,12 @@ int run_preview(const Args& args) {
 
     for (int dpi : {96, 120, 144}) {
         LayoutRequest request;
-        request.source = sample_source();
-        request.target = sample_target();
-        request.status = "preview · dpi=" + std::to_string(dpi) +
-                         " · bottom-centre anchor";
+        request.text.source = sample_source();
+        request.text.target = sample_target();
+        request.text.status = "preview · dpi=" + std::to_string(dpi);
         request.work_area = work_area;
         request.dpi = dpi;
+        request.spec = presentation.spec();
 
         const Layout layout = compute_layout(request, measure);
         const OverlayImage image = compose_overlay(layout, text);
@@ -360,6 +400,12 @@ int run_preview(const Args& args) {
     payload["work_area"] = rect_json(work_area);
     payload["source"] = sample_source();
     payload["target"] = sample_target();
+    payload["presentation"] = nlohmann::json{
+        {"path", spec_path},
+        {"name", presentation.spec().name},
+        {"revision", presentation.revision()},
+        {"error", presentation.error()},
+    };
     payload["entries"] = nlohmann::json::array();
     for (const auto& entry : entries) {
         payload["entries"].push_back(nlohmann::json{
@@ -430,9 +476,12 @@ struct Run {
     CaptureRect work_area;
     int dpi = 96;
     std::string capture_mode;
+    PresentationWatcher presentation;
 
     std::uint64_t rendered_version = 0;
+    std::uint64_t rendered_revision = 0;
     bool has_version = false;
+    std::uint64_t has_revision = 0;
     std::string rendered_status;
     int rendered_dpi = 0;
     bool presented = false;
@@ -469,37 +518,54 @@ void schedule_quit_if_done(Run& run, const UiSnapshot& snapshot, double now) {
 }
 
 void render_if_dirty(Run& run, const UiSnapshot& snapshot, double now) {
-    const std::string status = status_text(
+    std::string status = status_text(
         snapshot, run.launch_error, run.capture_mode, now);
+    const std::string& presentation_error = run.presentation.error();
+    if (!presentation_error.empty()) {
+        status += " · presentation: " + presentation_error;
+    }
+
     const bool dirty = !run.has_version ||
                        snapshot.version != run.rendered_version ||
                        status != run.rendered_status ||
-                       run.dpi != run.rendered_dpi;
+                       run.dpi != run.rendered_dpi ||
+                       run.presentation.revision() != run.rendered_revision;
     if (!dirty) {
         return;
     }
 
     LayoutRequest request;
-    // W3.0 publishes the frame's own source and target text. ``lines`` and
-    // boxes are deliberately not used yet; this is a display, not a layout
-    // engine.
-    request.source = snapshot.frame.source;
-    request.target = snapshot.frame.target;
-    request.status = status;
+    // The overlay publishes the frame's own source/target/trace text. ``lines``
+    // and boxes are deliberately not used yet: the native surface draws one
+    // bar, not the per-line geometry modes.
+    request.text.source = snapshot.frame.source;
+    request.text.target = snapshot.frame.target;
+    request.text.trace = snapshot.frame.trace;
+    request.text.previous = snapshot.previous_target;
+    request.text.status = status;
+    request.text.confidence = snapshot.frame.confidence;
+    request.text.coverage = snapshot.frame.coverage;
     request.work_area = run.work_area;
     request.dpi = run.dpi;
+    request.spec = run.presentation.spec();
 
     run.layout = compute_layout(request, run.text.as_measure());
     run.image = compose_overlay(run.layout, run.text);
-    run.window.present(run.image, run.layout.x, run.layout.y);
+    if (run.layout.hidden || run.image.empty()) {
+        run.window.set_visible(false);
+    } else {
+        run.window.present(run.image, run.layout.x, run.layout.y);
+        run.window.set_visible(true);
+    }
 
     run.has_version = true;
     run.rendered_version = snapshot.version;
+    run.rendered_revision = run.presentation.revision();
     run.rendered_status = status;
     run.rendered_dpi = run.dpi;
     run.presented = true;
 
-    if (!run.click_checked && !run.layout.empty) {
+    if (!run.click_checked && !run.layout.empty && !run.layout.hidden) {
         run.click_checked = true;
         POINT center{
             run.layout.x + run.layout.width / 2,
@@ -575,6 +641,12 @@ void write_report(
         {"last", run.memory.last},
         {"max", run.memory.maximum},
     };
+    payload["presentation"] = nlohmann::json{
+        {"path", run.presentation.path()},
+        {"name", run.presentation.spec().name},
+        {"revision", run.presentation.revision()},
+        {"error", run.presentation.error()},
+    };
     payload["exit_code"] = exit_code;
 
     std::filesystem::path path(args.report_path);
@@ -604,6 +676,27 @@ int run_overlay(const Args& args) {
     run.linger = args.linger;
     run.started = steady_seconds();
     run.foreground_before = GetForegroundWindow();
+
+    bool explicit_path = false;
+    const std::string spec_path = resolve_presentation_path(args, explicit_path);
+    if (explicit_path) {
+        std::error_code error;
+        if (!std::filesystem::exists(spec_path, error)) {
+            std::cerr << "watashi_ui: presentation file not found: " << spec_path
+                      << "\n";
+            return 2;
+        }
+    }
+    run.presentation.open(spec_path);
+    std::cerr << "presentation: "
+              << (spec_path.empty() ? std::string("built-in bar")
+                                    : spec_path)
+              << " (name=" << run.presentation.spec().name
+              << ", revision=" << run.presentation.revision() << ")\n";
+    if (!run.presentation.error().empty()) {
+        std::cerr << "presentation: " << run.presentation.error()
+                  << "; keeping the built-in bar preset\n";
+    }
 
     if (!run.window.create()) {
         std::cerr << "watashi_ui: no desktop session: CreateWindowExW failed ("
@@ -656,6 +749,18 @@ int run_overlay(const Args& args) {
         }
 
         const double now = steady_seconds();
+        const std::uint64_t spec_revision = run.presentation.revision();
+        const std::string spec_error = run.presentation.error();
+        run.presentation.poll(now);
+        if (run.presentation.revision() != spec_revision) {
+            std::cerr << "presentation: reloaded " << run.presentation.path()
+                      << " (name=" << run.presentation.spec().name
+                      << ", revision=" << run.presentation.revision() << ")\n";
+        } else if (!run.presentation.error().empty() &&
+                   run.presentation.error() != spec_error) {
+            std::cerr << "presentation: " << run.presentation.error()
+                      << "; keeping the previous design\n";
+        }
         const UiSnapshot snapshot = run.model.snapshot();
         render_if_dirty(run, snapshot, now);
         sample_memory(run, now);

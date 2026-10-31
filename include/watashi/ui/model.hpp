@@ -28,11 +28,14 @@ enum class StreamLineKind {
     kMalformed,
 };
 
-/// The part of ``subtitle.data`` the overlay paints in W3.0.
+/// The part of ``subtitle.data`` the overlay paints.
 struct SubtitleFrame {
     std::string source;
     std::string target;
+    std::string trace;
     std::string backend;
+    double confidence = 1.0;
+    double coverage = 1.0;
     std::int64_t seq = 0;
     double latency_ms = 0.0;
     bool valid = false;
@@ -59,6 +62,10 @@ struct StreamLine {
 struct UiSnapshot {
     SubtitleFrame frame;
     bool has_frame = false;
+    /// The target of the frame that was on screen before the current one. The
+    /// spec's ``previous`` element draws it; it only moves when the text
+    /// actually changes, so a repeated frame is not its own history.
+    std::string previous_target;
     std::int64_t last_seq = 0;
 
     std::size_t subtitles = 0;

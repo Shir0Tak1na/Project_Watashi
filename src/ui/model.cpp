@@ -88,10 +88,21 @@ StreamLine parse_stream_line(std::string_view raw) {
     if (const auto* backend = find_string(envelope.data, "backend")) {
         frame.backend = backend->get<std::string>();
     }
+    if (const auto* trace = find_string(envelope.data, "trace")) {
+        frame.trace = trace->get<std::string>();
+    }
     frame.seq = envelope.seq;
     if (const auto found = envelope.data.find("latency_ms");
         found != envelope.data.end() && found->is_number()) {
         frame.latency_ms = found->get<double>();
+    }
+    if (const auto found = envelope.data.find("confidence");
+        found != envelope.data.end() && found->is_number()) {
+        frame.confidence = found->get<double>();
+    }
+    if (const auto found = envelope.data.find("coverage");
+        found != envelope.data.end() && found->is_number()) {
+        frame.coverage = found->get<double>();
     }
     frame.valid = true;
 
@@ -135,6 +146,10 @@ StreamLine UiModel::ingest(std::string_view line) {
     switch (parsed.kind) {
         case StreamLineKind::kSubtitle:
             ++state_.subtitles;
+            if (state_.has_frame && !state_.frame.target.empty() &&
+                state_.frame.target != parsed.frame.target) {
+                state_.previous_target = state_.frame.target;
+            }
             state_.frame = parsed.frame;
             state_.has_frame = true;
             break;

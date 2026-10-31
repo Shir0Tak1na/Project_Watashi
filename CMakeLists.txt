@@ -376,6 +376,7 @@ watashi_copy_ctranslate2(watashi_cli)
 if(WIN32)
     add_library(watashi_ui_core STATIC
         src/ui/model.cpp
+        src/ui/presentation.cpp
         src/ui/layout.cpp
         src/ui/renderer.cpp
         src/ui/layered_window.cpp

@@ -60,7 +60,16 @@ bool LayeredWindow::create() {
     }
     // Show without activating; WS_EX_NOACTIVATE keeps focus where it was.
     ShowWindow(hwnd_, SW_SHOWNOACTIVATE);
+    visible_ = true;
     return true;
+}
+
+void LayeredWindow::set_visible(bool visible) {
+    if (hwnd_ == nullptr || visible_ == visible) {
+        return;
+    }
+    ShowWindow(hwnd_, visible ? SW_SHOWNOACTIVATE : SW_HIDE);
+    visible_ = visible;
 }
 
 void LayeredWindow::destroy() {
@@ -75,6 +84,7 @@ void LayeredWindow::destroy() {
     bits_ = nullptr;
     bitmap_width_ = 0;
     bitmap_height_ = 0;
+    visible_ = false;
     if (hwnd_ != nullptr) {
         DestroyWindow(hwnd_);
         hwnd_ = nullptr;
