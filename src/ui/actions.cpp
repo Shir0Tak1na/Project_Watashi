@@ -23,6 +23,19 @@ std::vector<TrayMenuEntry> tray_menu(bool paused, bool visible) {
     };
 }
 
+TrayAction tray_action(int id) noexcept {
+    switch (id) {
+        case kTrayCommandPause:
+            return TrayAction::kTogglePause;
+        case kTrayCommandVisibility:
+            return TrayAction::kToggleVisibility;
+        case kTrayCommandExit:
+            return TrayAction::kExit;
+        default:
+            return TrayAction::kNone;
+    }
+}
+
 nlohmann::json pause_command(bool should_pause) {
     return nlohmann::json{
         {"cmd", should_pause ? "pause" : "resume"},

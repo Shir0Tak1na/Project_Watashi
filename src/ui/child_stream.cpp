@@ -350,6 +350,10 @@ void ChildStream::stop() {
     impl_->running.store(false);
 }
 
+std::uint32_t ChildStream::process_id() const noexcept {
+    return impl_ != nullptr ? static_cast<std::uint32_t>(impl_->process_id) : 0;
+}
+
 bool ChildStream::running() const {
     return impl_->running.load();
 }

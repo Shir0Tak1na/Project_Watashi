@@ -12,6 +12,31 @@ namespace watashi::ui {
 namespace {
 
 constexpr UINT kIconId = 1;
+constexpr int kOwnerSize = 1;
+constexpr int kOffscreen = -32000;
+
+bool class_registered = false;
+
+LRESULT CALLBACK tray_window_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam) {
+    return DefWindowProcW(hwnd, message, wparam, lparam);
+}
+
+bool ensure_class() {
+    if (class_registered) {
+        return true;
+    }
+    WNDCLASSEXW window_class{};
+    window_class.cbSize = sizeof(window_class);
+    window_class.style = 0;
+    window_class.lpfnWndProc = &tray_window_proc;
+    window_class.hInstance = GetModuleHandleW(nullptr);
+    window_class.lpszClassName = kTrayWindowClass;
+    if (RegisterClassExW(&window_class) == 0) {
+        return false;
+    }
+    class_registered = true;
+    return true;
+}
 
 std::wstring widen(const std::string& text) {
     if (text.empty()) {
@@ -40,32 +65,64 @@ NOTIFYICONDATAW make_icon(HWND owner) {
     return data;
 }
 
+HWND create_owner() {
+    if (!ensure_class()) {
+        return nullptr;
+    }
+    // A normal, activatable top-level window: no WS_EX_NOACTIVATE, no
+    // WS_EX_TRANSPARENT. It is parked offscreen and shown without activation so
+    // SetForegroundWindow can make it foreground when the menu opens.
+    HWND owner = CreateWindowExW(
+        WS_EX_TOOLWINDOW,
+        kTrayWindowClass,
+        kTrayWindowTitle,
+        WS_POPUP,
+        kOffscreen,
+        kOffscreen,
+        kOwnerSize,
+        kOwnerSize,
+        nullptr,
+        nullptr,
+        GetModuleHandleW(nullptr),
+        nullptr);
+    if (owner != nullptr) {
+        ShowWindow(owner, SW_SHOWNOACTIVATE);
+    }
+    return owner;
+}
+
 }  // namespace
 
 TrayIcon::~TrayIcon() {
     remove();
 }
 
-bool TrayIcon::add(HWND owner) {
+bool TrayIcon::add() {
     if (added_) {
         return true;
     }
-    if (owner == nullptr) {
+    if (owner_ == nullptr) {
+        owner_ = create_owner();
+    }
+    if (owner_ == nullptr) {
         return false;
     }
-    owner_ = owner;
     NOTIFYICONDATAW data = make_icon(owner_);
     added_ = Shell_NotifyIconW(NIM_ADD, &data) != FALSE;
+    last_error_ = added_ ? 0 : GetLastError();
     return added_;
 }
 
 void TrayIcon::remove() {
-    if (!added_ || owner_ == nullptr) {
-        return;
+    if (added_ && owner_ != nullptr) {
+        NOTIFYICONDATAW data = make_icon(owner_);
+        Shell_NotifyIconW(NIM_DELETE, &data);
+        added_ = false;
     }
-    NOTIFYICONDATAW data = make_icon(owner_);
-    Shell_NotifyIconW(NIM_DELETE, &data);
-    added_ = false;
+    if (owner_ != nullptr) {
+        DestroyWindow(owner_);
+        owner_ = nullptr;
+    }
 }
 
 int TrayIcon::show_menu(bool paused, bool visible) {
@@ -84,8 +141,9 @@ int TrayIcon::show_menu(bool paused, bool visible) {
 
     POINT cursor{};
     GetCursorPos(&cursor);
-    // The menu has to be dismissed by clicking elsewhere; Windows only does
-    // that reliably when the owner is foreground while the menu is up.
+    // The popup only dismisses by clicking elsewhere while its owner is
+    // foreground. The owner is the tray window on purpose: SetForegroundWindow
+    // on the NOACTIVATE overlay always fails.
     SetForegroundWindow(owner_);
     const int chosen = TrackPopupMenu(
         menu,

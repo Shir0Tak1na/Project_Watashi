@@ -11,6 +11,7 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <string>
@@ -52,6 +53,10 @@ public:
 
     /// Terminates the child and waits for the readers. Safe to call twice.
     void stop();
+
+    /// Process id of the child; 0 before a successful start. Lets a caller
+    /// find the child's windows instead of guessing by title.
+    [[nodiscard]] std::uint32_t process_id() const noexcept;
 
     [[nodiscard]] bool running() const;
     [[nodiscard]] std::string error() const;

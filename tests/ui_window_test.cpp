@@ -40,6 +40,27 @@ void check(bool condition, const char* what) {
     }
 }
 
+/// Shares the lock with the report tests in watashi_tests: ctest -j must not
+/// run another topmost overlay while this test checks click-through and focus.
+class DesktopTestLock {
+public:
+    DesktopTestLock() {
+        handle_ = CreateMutexW(nullptr, FALSE, L"watashi-desktop-test-lock");
+        if (handle_ != nullptr) {
+            WaitForSingleObject(handle_, INFINITE);
+        }
+    }
+    ~DesktopTestLock() {
+        if (handle_ != nullptr) {
+            ReleaseMutex(handle_);
+            CloseHandle(handle_);
+        }
+    }
+
+private:
+    HANDLE handle_ = nullptr;
+};
+
 void pump(int milliseconds) {
     const DWORD deadline = GetTickCount() + static_cast<DWORD>(milliseconds);
     while (GetTickCount() < deadline) {
@@ -56,6 +77,7 @@ void pump(int milliseconds) {
 
 int main() {
     watashi::enable_per_monitor_dpi();
+    DesktopTestLock desktop;
 
     const watashi::CaptureRect primary = watashi::capture_detail::primary_monitor_rect();
     if (primary.width <= 0 || primary.height <= 0) {

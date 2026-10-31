@@ -8,7 +8,7 @@
 namespace watashi::ui {
 namespace {
 
-constexpr wchar_t kClassName[] = L"WatashiOverlayWindow";
+constexpr const wchar_t* kClassName = kOverlayWindowClass;
 
 bool class_registered = false;
 
@@ -47,7 +47,7 @@ bool LayeredWindow::create() {
     hwnd_ = CreateWindowExW(
         styles.extended_style,
         kClassName,
-        L"watashi overlay",
+        kOverlayWindowTitle,
         styles.style,
         -32000, -32000, 1, 1,
         nullptr,

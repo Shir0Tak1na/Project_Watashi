@@ -27,6 +27,11 @@
 
 namespace watashi::ui {
 
+/// Registered class name, public so the window tests can find the overlay.
+inline constexpr wchar_t kOverlayWindowClass[] = L"WatashiOverlayWindow";
+/// Window title, also used by the window tests.
+inline constexpr wchar_t kOverlayWindowTitle[] = L"watashi overlay";
+
 struct WindowStyles {
     DWORD style = 0;
     DWORD extended_style = 0;

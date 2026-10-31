@@ -15,8 +15,11 @@
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
+#include <fstream>
 #include <functional>
+#include <iterator>
 #include <mutex>
+#include <random>
 #include <string>
 #include <thread>
 #include <vector>
@@ -27,7 +30,9 @@
 #include "watashi/events.hpp"
 #include "watashi/ui/actions.hpp"
 #include "watashi/ui/child_stream.hpp"
+#include "watashi/ui/layered_window.hpp"
 #include "watashi/ui/model.hpp"
+#include "watashi/ui/tray.hpp"
 
 namespace {
 
@@ -55,11 +60,114 @@ std::string sibling(const std::string& name) {
     return (module_directory() / std::filesystem::path(name)).string();
 }
 
-/// The CLI is built in build-*/Release, two directories above the test binary.
+/// The CLI and the UI are built in build-*/Release, two directories above the
+/// test binary.
 std::string cli_path() {
     return (module_directory().parent_path().parent_path() / "Release" /
             "watashi_cli.exe")
         .string();
+}
+
+std::string ui_path() {
+    return (module_directory().parent_path().parent_path() / "Release" /
+            "watashi_ui.exe")
+        .string();
+}
+
+/// Finds one of our child's top-level windows by class.
+struct FindContext {
+    DWORD process_id = 0;
+    const wchar_t* class_name = nullptr;
+    HWND found = nullptr;
+};
+
+BOOL CALLBACK find_window_proc(HWND hwnd, LPARAM parameter) {
+    auto* context = reinterpret_cast<FindContext*>(parameter);
+    DWORD process_id = 0;
+    GetWindowThreadProcessId(hwnd, &process_id);
+    if (process_id != context->process_id) {
+        return TRUE;
+    }
+    wchar_t name[128]{};
+    GetClassNameW(hwnd, name, 128);
+    if (std::wstring(name) == std::wstring(context->class_name)) {
+        context->found = hwnd;
+        return FALSE;
+    }
+    return TRUE;
+}
+
+HWND find_child_window(DWORD process_id, const wchar_t* class_name) {
+    FindContext context{process_id, class_name, nullptr};
+    EnumWindows(&find_window_proc, reinterpret_cast<LPARAM>(&context));
+    return context.found;
+}
+
+nlohmann::json read_json(const std::filesystem::path& path) {
+    std::ifstream file(path, std::ios::binary);
+    const std::string text(
+        (std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+    return nlohmann::json::parse(text);
+}
+
+/// A report file that cannot collide with a concurrent test and does not
+/// outlive the case.
+struct TempReport {
+    TempReport() {
+        std::random_device device;
+        std::mt19937 generator(device());
+        const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
+        path = module_directory() /
+               ("watashi_report_" + std::to_string(stamp) + "_" +
+                std::to_string(generator()) + ".json");
+        std::filesystem::remove(path);
+    }
+    ~TempReport() { std::filesystem::remove(path); }
+
+    std::filesystem::path path;
+};
+
+/// Serializes tests that put a real topmost overlay on the screen. ctest -j
+/// otherwise runs the window test beside a report test, and two overlays or a
+/// focus change from another process make the foreground/click-through
+/// assertions meaningless.
+class DesktopTestLock {
+public:
+    DesktopTestLock() {
+        handle_ = CreateMutexW(nullptr, FALSE, L"watashi-desktop-test-lock");
+        if (handle_ != nullptr) {
+            WaitForSingleObject(handle_, INFINITE);
+        }
+    }
+    ~DesktopTestLock() {
+        if (handle_ != nullptr) {
+            ReleaseMutex(handle_);
+            CloseHandle(handle_);
+        }
+    }
+
+private:
+    HANDLE handle_ = nullptr;
+};
+
+/// Starts watashi_ui and waits for it to exit. Returns false when the UI could
+/// not start at all.
+bool run_ui(const std::vector<std::string>& arguments, int timeout_ms,
+            int& exit_code) {
+    bool exited = false;
+    exit_code = -1;
+    ui::ChildStream stream({ui_path(), arguments, "", 6});
+    if (!stream.start(
+            [](const std::string&) {},
+            [&](int code, const std::string&) {
+                exit_code = code;
+                exited = true;
+            })) {
+        return false;
+    }
+    const bool ok = wait_until([&] { return exited; }, timeout_ms);
+    stream.stop();
+    return ok;
 }
 
 std::string envelope_line(
@@ -272,4 +380,153 @@ TEST_CASE("the CLI answers stdin commands and stops on shutdown", "[ui][cli]") {
         REQUIRE(event.data.at("ok") == true);
     }
     REQUIRE(results == 4);
+}
+
+TEST_CASE("tray menu ids map to the three actions", "[ui][actions]") {
+    REQUIRE(static_cast<int>(ui::tray_action(ui::kTrayCommandPause)) ==
+            static_cast<int>(ui::TrayAction::kTogglePause));
+    REQUIRE(static_cast<int>(ui::tray_action(ui::kTrayCommandVisibility)) ==
+            static_cast<int>(ui::TrayAction::kToggleVisibility));
+    REQUIRE(static_cast<int>(ui::tray_action(ui::kTrayCommandExit)) ==
+            static_cast<int>(ui::TrayAction::kExit));
+    REQUIRE(static_cast<int>(ui::tray_action(0)) ==
+            static_cast<int>(ui::TrayAction::kNone));
+    REQUIRE(static_cast<int>(ui::tray_action(1004)) ==
+            static_cast<int>(ui::TrayAction::kNone));
+    REQUIRE(static_cast<int>(ui::tray_action(-1)) ==
+            static_cast<int>(ui::TrayAction::kNone));
+}
+
+TEST_CASE("the tray menu follows every pause and visibility state", "[ui][actions]") {
+    for (int state = 0; state < 4; ++state) {
+        const bool paused = (state & 1) != 0;
+        const bool visible = (state & 2) != 0;
+        const auto menu = ui::tray_menu(paused, visible);
+        REQUIRE(menu.size() == 3);
+        REQUIRE(menu[0].id == ui::kTrayCommandPause);
+        REQUIRE(menu[0].label == (paused ? "Continue" : "Pause"));
+        REQUIRE(menu[0].checked == paused);
+        REQUIRE(menu[1].id == ui::kTrayCommandVisibility);
+        REQUIRE(menu[1].label == (visible ? "Hide" : "Show"));
+        REQUIRE(menu[1].checked == !visible);
+        REQUIRE(menu[2].id == ui::kTrayCommandExit);
+        REQUIRE(menu[2].label == "Exit");
+        REQUIRE_FALSE(menu[2].checked);
+        REQUIRE(static_cast<int>(ui::tray_action(menu[0].id)) ==
+                static_cast<int>(ui::TrayAction::kTogglePause));
+        REQUIRE(static_cast<int>(ui::tray_action(menu[1].id)) ==
+                static_cast<int>(ui::TrayAction::kToggleVisibility));
+        REQUIRE(static_cast<int>(ui::tray_action(menu[2].id)) ==
+                static_cast<int>(ui::TrayAction::kExit));
+    }
+}
+
+TEST_CASE("the tray owner is a different, activatable window", "[ui][tray]") {
+    ui::LayeredWindow overlay;
+    if (!overlay.create()) {
+        SKIP("no desktop session");
+    }
+    ui::TrayIcon tray;
+    REQUIRE(tray.hwnd() == nullptr);
+    tray.add();
+    REQUIRE(tray.hwnd() != nullptr);
+    REQUIRE(tray.hwnd() != overlay.hwnd());
+
+    // The menu's owner must be able to become foreground; the overlay must
+    // keep its NOACTIVATE promise.
+    const DWORD tray_style =
+        static_cast<DWORD>(GetWindowLongPtrW(tray.hwnd(), GWL_EXSTYLE));
+    const DWORD overlay_style =
+        static_cast<DWORD>(GetWindowLongPtrW(overlay.hwnd(), GWL_EXSTYLE));
+    REQUIRE((tray_style & WS_EX_TOOLWINDOW) != 0);
+    REQUIRE((tray_style & WS_EX_NOACTIVATE) == 0);
+    REQUIRE((tray_style & WS_EX_TRANSPARENT) == 0);
+    REQUIRE((overlay_style & WS_EX_NOACTIVATE) != 0);
+    REQUIRE((overlay_style & WS_EX_TRANSPARENT) != 0);
+
+    wchar_t class_name[128]{};
+    GetClassNameW(tray.hwnd(), class_name, 128);
+    REQUIRE(std::wstring(class_name) == std::wstring(ui::kTrayWindowClass));
+    REQUIRE(IsWindowVisible(tray.hwnd()));
+
+    tray.remove();
+    REQUIRE(tray.hwnd() == nullptr);
+}
+
+TEST_CASE("tray.add reports what the shell accepted", "[ui][tray]") {
+    ui::TrayIcon tray;
+    const bool added = tray.add();
+    REQUIRE(tray.hwnd() != nullptr);
+    // The owner exists whether or not a notification area accepted the icon,
+    // so the report's tray.added is the shell's own answer.
+    REQUIRE(tray.present() == added);
+    tray.remove();
+    REQUIRE_FALSE(tray.present());
+    REQUIRE(tray.hwnd() == nullptr);
+}
+
+TEST_CASE("a duration run writes its report", "[ui][report]") {
+    REQUIRE(std::filesystem::exists(ui_path()));
+    DesktopTestLock desktop;
+    TempReport report;
+    int exit_code = -1;
+    const bool exited = run_ui(
+        {"--capture", "synthetic", "--ocr", "fake", "--translator", "fake",
+         "--duration", "1", "--linger", "0", "--report", report.path.string()},
+        15000, exit_code);
+    if (!exited || exit_code == 3) {
+        SKIP("no desktop session");
+    }
+    REQUIRE(exit_code == 0);
+    REQUIRE(std::filesystem::exists(report.path));
+
+    const nlohmann::json document = read_json(report.path);
+    REQUIRE(document.at("exit_reason") == "duration");
+    REQUIRE(document.at("exit_code") == 0);
+    REQUIRE(document.at("hotkeys").at("attempted") == 3);
+    // Registered and failed are the startup measurements, kept after the
+    // cleanup that unregisters every hotkey.
+    const int registered = document.at("hotkeys").at("registered").get<int>();
+    const int failed = document.at("hotkeys").at("failed").get<int>();
+    REQUIRE(registered + failed == 3);
+    REQUIRE(document.at("hotkeys").at("all_registered") == (registered == 3));
+    REQUIRE(document.at("tray").at("added").is_boolean());
+    REQUIRE(document.at("click_through").at("passes").is_boolean());
+}
+
+TEST_CASE("WM_CLOSE writes the report as well", "[ui][report]") {
+    REQUIRE(std::filesystem::exists(ui_path()));
+    DesktopTestLock desktop;
+    TempReport report;
+    bool exited = false;
+    int exit_code = -1;
+    ui::ChildStream stream({ui_path(),
+                            {"--capture", "synthetic", "--ocr", "fake",
+                             "--translator", "fake", "--duration", "30",
+                             "--linger", "0", "--report", report.path.string()},
+                            "", 6});
+    REQUIRE(stream.start(
+        [](const std::string&) {},
+        [&](int code, const std::string&) {
+            exit_code = code;
+            exited = true;
+        }));
+
+    HWND overlay = nullptr;
+    const bool appeared = wait_until(
+        [&] {
+            overlay = find_child_window(stream.process_id(), ui::kOverlayWindowClass);
+            return overlay != nullptr;
+        },
+        5000);
+    if (!appeared) {
+        stream.stop();
+        SKIP("no desktop session");
+    }
+    PostMessageW(overlay, WM_CLOSE, 0, 0);
+    REQUIRE(wait_until([&] { return exited; }, 10000));
+    stream.stop();
+    REQUIRE(exit_code == 0);
+    REQUIRE(std::filesystem::exists(report.path));
+    REQUIRE(read_json(report.path).at("exit_reason") == "wm-close");
 }

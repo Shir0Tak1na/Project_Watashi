@@ -43,8 +43,20 @@ struct TrayMenuEntry {
     bool checked = false;
 };
 
+/// What a chosen menu id does. Kept separate from the menu labels so the
+/// mapping can be asserted without a shell or a window.
+enum class TrayAction {
+    kNone,
+    kTogglePause,
+    kToggleVisibility,
+    kExit,
+};
+
 /// Menu contents for the current state.
 [[nodiscard]] std::vector<TrayMenuEntry> tray_menu(bool paused, bool visible);
+
+/// The action behind a menu id. Unknown ids answer ``kNone``.
+[[nodiscard]] TrayAction tray_action(int id) noexcept;
 
 [[nodiscard]] nlohmann::json pause_command(bool should_pause);
 [[nodiscard]] nlohmann::json target_language_command(std::string_view language);

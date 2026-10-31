@@ -25,6 +25,7 @@
 #include <psapi.h>
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <cstdlib>
@@ -507,6 +508,9 @@ struct Run {
     double linger = 8.0;
     double ended_at = -1.0;
     bool quit_requested = false;
+    /// Why the loop ended: duration, tray-exit, wm-close, console or exception.
+    /// Written to the report so a reader knows which path produced it.
+    std::string finish_reason;
 
     /// Engine pause requested through a hotkey or the tray. The engine itself
     /// is paused by the ``pause`` command; this flag only drives the status
@@ -517,7 +521,10 @@ struct Run {
     bool visibility_dirty = false;
     std::string target_lang = "zh-CN";
     TrayIcon tray;
-    bool hotkeys_registered = false;
+    /// Measured once at startup and kept: the tray is removed before the report
+    /// is written, so reading the icon back then would always answer false.
+    bool tray_added = false;
+    int hotkey_successes = 0;
     int hotkey_failures = 0;
 
     bool click_checked = false;
@@ -538,6 +545,7 @@ void schedule_quit_if_done(Run& run, const UiSnapshot& snapshot, double now) {
     }
     // Always paint the final status at least once before closing.
     if (run.presented && now - run.ended_at >= run.linger) {
+        run.finish_reason = "duration";
         run.quit_requested = true;
         PostQuitMessage(0);
     }
@@ -657,19 +665,20 @@ void handle_hotkey(Run& run, int id) {
 }
 
 void handle_tray_command(Run& run, int id) {
-    switch (id) {
-        case kTrayCommandPause:
+    switch (tray_action(id)) {
+        case TrayAction::kTogglePause:
             toggle_pause(run);
             break;
-        case kTrayCommandVisibility:
+        case TrayAction::kToggleVisibility:
             toggle_visibility(run);
             break;
-        case kTrayCommandExit:
+        case TrayAction::kExit:
+            run.finish_reason = "tray-exit";
             send_command(run, shutdown_command());
             run.quit_requested = true;
             PostQuitMessage(0);
             break;
-        default:
+        case TrayAction::kNone:
             break;
     }
 }
@@ -678,7 +687,7 @@ void register_hotkeys(Run& run) {
     for (const auto& binding : hotkey_bindings()) {
         if (RegisterHotKey(
                 run.window.hwnd(), binding.id, binding.modifiers, binding.virtual_key)) {
-            run.hotkeys_registered = true;
+            ++run.hotkey_successes;
         } else {
             ++run.hotkey_failures;
             std::cerr << "hotkey: Ctrl+Alt+key " << binding.virtual_key
@@ -694,7 +703,6 @@ void unregister_hotkeys(Run& run) {
     for (const auto& binding : hotkey_bindings()) {
         UnregisterHotKey(run.window.hwnd(), binding.id);
     }
-    run.hotkeys_registered = false;
 }
 
 void sample_memory(Run& run, double now) {
@@ -716,7 +724,8 @@ void write_report(
     const std::vector<std::string>& engine_args,
     const Run& run,
     const UiSnapshot& snapshot,
-    int exit_code) {
+    int exit_code,
+    const std::string& finish_reason) {
     if (args.report_path.empty()) {
         return;
     }
@@ -770,10 +779,11 @@ void write_report(
     };
     payload["hotkeys"] = nlohmann::json{
         {"attempted", 3},
+        {"registered", run.hotkey_successes},
         {"failed", run.hotkey_failures},
-        {"registered", run.hotkeys_registered && run.hotkey_failures == 0},
+        {"all_registered", run.hotkey_successes == 3},
     };
-    payload["tray"] = nlohmann::json{{"added", run.tray.present()}};
+    payload["tray"] = nlohmann::json{{"added", run.tray_added}};
     payload["commands"] = nlohmann::json{
         {"paused", run.paused},
         {"hidden", run.hidden_by_user},
@@ -783,6 +793,7 @@ void write_report(
         {"last_ok", snapshot.last_command.ok},
     };
     payload["exit_code"] = exit_code;
+    payload["exit_reason"] = finish_reason.empty() ? "duration" : finish_reason;
 
     std::filesystem::path path(args.report_path);
     if (!path.parent_path().empty()) {
@@ -795,6 +806,32 @@ void write_report(
     }
     file << payload.dump(2) << '\n';
     std::cerr << "report: " << path.string() << "\n";
+}
+
+// The console handler cannot touch the UI: DestroyWindow, the child pipe and
+// the model belong to the main thread. It asks the loop to finish (WM_CLOSE)
+// and waits for finish() to write the report. If the loop is stuck -- for
+// example inside a modal popup menu -- the wait times out and the process is
+// killed by the console subsystem without a report; a forced kill can never
+// write one, and this code does not pretend otherwise.
+std::atomic<HWND> g_console_window{nullptr};
+std::atomic<bool> g_console_requested{false};
+std::atomic<bool> g_console_finished{false};
+
+BOOL WINAPI console_control_handler(DWORD type) {
+    if (type != CTRL_C_EVENT && type != CTRL_BREAK_EVENT && type != CTRL_CLOSE_EVENT) {
+        return FALSE;
+    }
+    g_console_requested.store(true);
+    HWND overlay = g_console_window.load();
+    if (overlay != nullptr) {
+        PostMessageW(overlay, WM_CLOSE, 0, 0);
+    }
+    const DWORD deadline = GetTickCount() + 4000;
+    while (!g_console_finished.load() && GetTickCount() < deadline) {
+        Sleep(20);
+    }
+    return TRUE;
 }
 
 int run_overlay(const Args& args) {
@@ -863,127 +900,179 @@ int run_overlay(const Args& args) {
     // Hotkeys are global: RegisterHotKey works while another window has focus,
     // and the callback only posts a command, it never activates this window.
     register_hotkeys(run);
-    if (run.tray.add(run.window.hwnd())) {
+    run.tray_added = run.tray.add();
+    if (run.tray_added) {
         std::cerr << "tray: icon added\n";
     } else {
-        std::cerr << "tray: unavailable in this session; hotkeys still work\n";
+        std::cerr << "tray: unavailable in this session (Shell_NotifyIcon error "
+                  << run.tray.last_error() << "); hotkeys still work\n";
     }
     std::cerr << "commands: Ctrl+Alt+P pause/resume, Ctrl+Alt+H hide/show, "
                  "Ctrl+Alt+T target language (" << run.target_lang << ")\n";
 
-    // A small explicit loop instead of WM_TIMER: the tick has to run even
-    // when no message arrives, and this keeps the window class free of UI
-    // logic. WM_HOTKEY and the tray callback are handled here so the overlay's
-    // window class stays a pure painter.
-    while (true) {
-        MSG message{};
-        bool quit = false;
-        while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE)) {
-            if (message.message == WM_QUIT) {
-                quit = true;
+    // Every normal exit -- tray Exit, WM_CLOSE, the stream ending on its own --
+    // converges here. The report is written exactly once, after the child and
+    // the tray are stopped, so ``tray.added`` and the stream counters are the
+    // values the run actually measured.
+    bool finished = false;
+    auto finish = [&](int exit_code) -> int {
+        if (finished) {
+            return exit_code;
+        }
+        finished = true;
+        unregister_hotkeys(run);
+        run.tray.remove();
+        stream.stop();
+
+        const UiSnapshot snapshot = run.model.snapshot();
+        if (!args.final_image.empty() && !run.image.empty()) {
+            std::filesystem::path path(args.final_image);
+            if (!path.parent_path().empty()) {
+                std::filesystem::create_directories(path.parent_path());
+            }
+            if (write_bmp(path.string(), run.image)) {
+                std::cerr << "final image: " << path.string() << "\n";
+            } else {
+                std::cerr << "watashi_ui: cannot write final image "
+                          << path.string() << "\n";
+            }
+        }
+
+        write_report(
+            args, cli, engine_args, run, snapshot, exit_code, run.finish_reason);
+
+        std::cerr << "ui: frames=" << snapshot.subtitles
+                  << " malformed=" << snapshot.malformed
+                  << " ignored=" << snapshot.ignored
+                  << " gaps=" << snapshot.missing_records
+                  << " out_of_order=" << snapshot.out_of_order
+                  << " exit=" << snapshot.exit_code
+                  << " | overlay=" << run.layout.width << 'x' << run.layout.height
+                  << '+' << run.layout.x << '+' << run.layout.y
+                  << " dpi=" << run.dpi
+                  << " | click_through="
+                  << ((run.window_under_center != nullptr &&
+                       run.window_under_center != run.window.hwnd())
+                          ? "pass"
+                          : "unknown")
+                  << " | memory_mib=" << run.memory.first << ".."
+                  << run.memory.maximum
+                  << " | reason=" << run.finish_reason << "\n";
+
+        run.window.destroy();
+        g_console_window.store(nullptr);
+        g_console_finished.store(true);
+        SetConsoleCtrlHandler(&console_control_handler, FALSE);
+        return exit_code;
+    };
+
+    g_console_requested.store(false);
+    g_console_finished.store(false);
+    g_console_window.store(run.window.hwnd());
+    SetConsoleCtrlHandler(&console_control_handler, TRUE);
+
+    int exit_code = 0;
+    try {
+        // A small explicit loop instead of WM_TIMER: the tick has to run even
+        // when no message arrives, and this keeps the window class free of UI
+        // logic. WM_HOTKEY and the tray callback are handled here so the
+        // overlay's window class stays a pure painter.
+        while (true) {
+            MSG message{};
+            bool quit = false;
+            while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE)) {
+                if (message.message == WM_QUIT) {
+                    quit = true;
+                    break;
+                }
+                bool handled = false;
+                if (message.message == WM_CLOSE) {
+                    // Ctrl+C/close console posts this; the same handler also
+                    // covers a direct WM_CLOSE. Cleanup and the report happen
+                    // in finish, not in DefWindowProc.
+                    run.finish_reason =
+                        g_console_requested.load() ? "console" : "wm-close";
+                    run.quit_requested = true;
+                    handled = true;
+                } else if (message.message == WM_HOTKEY) {
+                    handle_hotkey(run, static_cast<int>(message.wParam));
+                    handled = true;
+                } else if (message.hwnd == run.tray.hwnd() &&
+                           message.message == kTrayCallbackMessage) {
+                    const UINT event = static_cast<UINT>(message.lParam);
+                    if (event == WM_RBUTTONUP || event == WM_CONTEXTMENU) {
+                        const int chosen =
+                            run.tray.show_menu(run.paused, !run.hidden_by_user);
+                        if (chosen != 0) {
+                            handle_tray_command(run, chosen);
+                        }
+                    }
+                    handled = true;
+                }
+                if (!handled) {
+                    TranslateMessage(&message);
+                    DispatchMessageW(&message);
+                }
+            }
+            if (quit || run.quit_requested) {
                 break;
             }
-            bool handled = false;
-            if (message.message == WM_HOTKEY) {
-                handle_hotkey(run, static_cast<int>(message.wParam));
-                handled = true;
-            } else if (message.hwnd == run.window.hwnd() &&
-                       message.message == kTrayCallbackMessage) {
-                const UINT event = static_cast<UINT>(message.lParam);
-                if (event == WM_RBUTTONUP || event == WM_CONTEXTMENU) {
-                    const int chosen =
-                        run.tray.show_menu(run.paused, !run.hidden_by_user);
-                    if (chosen != 0) {
-                        handle_tray_command(run, chosen);
-                    }
-                }
-                handled = true;
+
+            int new_dpi = 0;
+            if (run.window.take_dpi_changed(new_dpi) && new_dpi > 0) {
+                run.dpi = new_dpi;
+                run.work_area = primary_work_area();
             }
-            if (!handled) {
-                TranslateMessage(&message);
-                DispatchMessageW(&message);
+
+            const double now = steady_seconds();
+            const std::uint64_t spec_revision = run.presentation.revision();
+            const std::string spec_error = run.presentation.error();
+            run.presentation.poll(now);
+            if (run.presentation.revision() != spec_revision) {
+                std::cerr << "presentation: reloaded " << run.presentation.path()
+                          << " (name=" << run.presentation.spec().name
+                          << ", revision=" << run.presentation.revision() << ")\n";
+            } else if (!run.presentation.error().empty() &&
+                       run.presentation.error() != spec_error) {
+                std::cerr << "presentation: " << run.presentation.error()
+                          << "; keeping the previous design\n";
             }
-        }
-        if (quit || run.quit_requested) {
-            break;
+            const UiSnapshot snapshot = run.model.snapshot();
+            render_if_dirty(run, snapshot, now);
+            sample_memory(run, now);
+            schedule_quit_if_done(run, snapshot, now);
+
+            MsgWaitForMultipleObjects(0, nullptr, FALSE, kTimerIntervalMs, QS_ALLINPUT);
         }
 
-        int new_dpi = 0;
-        if (run.window.take_dpi_changed(new_dpi) && new_dpi > 0) {
-            run.dpi = new_dpi;
-            run.work_area = primary_work_area();
+        if (!run.presented) {
+            // A stream that ended before the first tick still gets one honest
+            // frame: "stream ended", with no subtitle invented.
+            const UiSnapshot snapshot = run.model.snapshot();
+            render_if_dirty(run, snapshot, steady_seconds());
         }
 
-        const double now = steady_seconds();
-        const std::uint64_t spec_revision = run.presentation.revision();
-        const std::string spec_error = run.presentation.error();
-        run.presentation.poll(now);
-        if (run.presentation.revision() != spec_revision) {
-            std::cerr << "presentation: reloaded " << run.presentation.path()
-                      << " (name=" << run.presentation.spec().name
-                      << ", revision=" << run.presentation.revision() << ")\n";
-        } else if (!run.presentation.error().empty() &&
-                   run.presentation.error() != spec_error) {
-            std::cerr << "presentation: " << run.presentation.error()
-                      << "; keeping the previous design\n";
-        }
+        // A requested stop (tray Exit, WM_CLOSE, Ctrl+C) happens while the
+        // child is still running, so -1 is not a failure here: the process
+        // ended because it was asked to. Only a failed launch or a nonzero
+        // engine exit is an error.
         const UiSnapshot snapshot = run.model.snapshot();
-        render_if_dirty(run, snapshot, now);
-        sample_memory(run, now);
-        schedule_quit_if_done(run, snapshot, now);
-
-        MsgWaitForMultipleObjects(0, nullptr, FALSE, kTimerIntervalMs, QS_ALLINPUT);
-    }
-
-    if (!run.presented) {
-        // A stream that ended before the first tick still gets one honest
-        // frame: "stream ended", with no subtitle invented.
-        const UiSnapshot snapshot = run.model.snapshot();
-        render_if_dirty(run, snapshot, steady_seconds());
-    }
-
-    unregister_hotkeys(run);
-    run.tray.remove();
-    stream.stop();
-
-    const UiSnapshot snapshot = run.model.snapshot();
-    const int exit_code = snapshot.launch_failed
-                              ? 1
-                              : (snapshot.exit_code == 0 ? 0 : 1);
-
-    if (!args.final_image.empty() && !run.image.empty()) {
-        std::filesystem::path path(args.final_image);
-        if (!path.parent_path().empty()) {
-            std::filesystem::create_directories(path.parent_path());
-        }
-        if (write_bmp(path.string(), run.image)) {
-            std::cerr << "final image: " << path.string() << "\n";
+        if (snapshot.launch_failed) {
+            exit_code = 1;
+        } else if (!snapshot.stream_ended) {
+            exit_code = 0;
         } else {
-            std::cerr << "watashi_ui: cannot write final image " << path.string() << "\n";
+            exit_code = snapshot.exit_code == 0 ? 0 : 1;
         }
+    } catch (const std::exception& error) {
+        // The report still gets written: an exception after the window exists
+        // must not leave the run without a record.
+        std::cerr << "watashi_ui: " << error.what() << "\n";
+        run.finish_reason = "exception";
+        exit_code = 1;
     }
 
-    write_report(args, cli, engine_args, run, snapshot, exit_code);
-
-    std::cerr << "ui: frames=" << snapshot.subtitles
-              << " malformed=" << snapshot.malformed
-              << " ignored=" << snapshot.ignored
-              << " gaps=" << snapshot.missing_records
-              << " out_of_order=" << snapshot.out_of_order
-              << " exit=" << snapshot.exit_code
-              << " | overlay=" << run.layout.width << 'x' << run.layout.height
-              << '+' << run.layout.x << '+' << run.layout.y
-              << " dpi=" << run.dpi
-              << " | click_through="
-              << ((run.window_under_center != nullptr &&
-                   run.window_under_center != run.window.hwnd())
-                      ? "pass"
-                      : "unknown")
-              << " | memory_mib=" << run.memory.first << ".." << run.memory.maximum
-              << "\n";
-
-    run.window.destroy();
-    return exit_code;
+    return finish(exit_code);
 }
 
 }  // namespace
