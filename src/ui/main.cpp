@@ -39,11 +39,13 @@
 #include <nlohmann/json.hpp>
 
 #include "watashi/capture.hpp"
+#include "watashi/ui/actions.hpp"
 #include "watashi/ui/child_stream.hpp"
 #include "watashi/ui/layered_window.hpp"
 #include "watashi/ui/layout.hpp"
 #include "watashi/ui/model.hpp"
 #include "watashi/ui/renderer.hpp"
+#include "watashi/ui/tray.hpp"
 
 namespace {
 
@@ -53,6 +55,7 @@ using namespace watashi::ui;
 constexpr UINT kTimerIntervalMs = 50;
 constexpr double kStaleAfterSeconds = 3.0;
 constexpr double kMemorySampleSeconds = 5.0;
+constexpr double kCommandNoteSeconds = 3.0;
 
 struct Args {
     /// Empty means "watashi_cli.exe next to watashi_ui.exe". A hard-coded build
@@ -209,6 +212,9 @@ std::vector<std::string> engine_arguments(const Args& args) {
         "--ocr", args.ocr,
         "--translator", args.translator,
         "--json-lines",
+        // Hotkeys and the tray send JSON commands down this pipe; without the
+        // flag the engine never reads stdin and every command would be lost.
+        "--command-stdin",
     };
     auto add = [&arguments](const std::string& flag, const std::string& value) {
         if (!value.empty()) {
@@ -431,6 +437,7 @@ std::string status_text(
     const UiSnapshot& snapshot,
     const std::string& launch_error,
     const std::string& capture_mode,
+    bool paused,
     double now) {
     if (!launch_error.empty()) {
         return "cannot start engine: " + launch_error;
@@ -444,8 +451,8 @@ std::string status_text(
         return text;
     }
     std::string text =
-        "live · " + capture_mode + " · " + std::to_string(snapshot.subtitles) +
-        " frame(s)";
+        std::string(paused ? "paused" : "live") + " · " + capture_mode + " · " +
+        std::to_string(snapshot.subtitles) + " frame(s)";
     if (snapshot.malformed > 0) {
         text += " · " + std::to_string(snapshot.malformed) + " bad line(s)";
     }
@@ -455,9 +462,16 @@ std::string status_text(
     if (snapshot.subtitles == 0) {
         text += " · waiting for subtitles";
     }
-    const double quiet = now - snapshot.last_line_seconds;
-    if (quiet > kStaleAfterSeconds) {
-        text += " · no data for " + std::to_string(static_cast<int>(quiet)) + "s";
+    if (!paused) {
+        const double quiet = now - snapshot.last_line_seconds;
+        if (quiet > kStaleAfterSeconds) {
+            text += " · no data for " + std::to_string(static_cast<int>(quiet)) + "s";
+        }
+    }
+    if (!snapshot.last_command.cmd.empty() &&
+        now - snapshot.last_command_seconds <= kCommandNoteSeconds) {
+        text += " · cmd " + snapshot.last_command.cmd +
+                (snapshot.last_command.ok ? " ok" : " failed");
     }
     return text;
 }
@@ -494,6 +508,18 @@ struct Run {
     double ended_at = -1.0;
     bool quit_requested = false;
 
+    /// Engine pause requested through a hotkey or the tray. The engine itself
+    /// is paused by the ``pause`` command; this flag only drives the status
+    /// line and the menu label.
+    bool paused = false;
+    /// UI-only visibility, independent of the engine and of ``mode: hidden``.
+    bool hidden_by_user = false;
+    bool visibility_dirty = false;
+    std::string target_lang = "zh-CN";
+    TrayIcon tray;
+    bool hotkeys_registered = false;
+    int hotkey_failures = 0;
+
     bool click_checked = false;
     HWND foreground_before = nullptr;
     HWND foreground_after = nullptr;
@@ -519,7 +545,7 @@ void schedule_quit_if_done(Run& run, const UiSnapshot& snapshot, double now) {
 
 void render_if_dirty(Run& run, const UiSnapshot& snapshot, double now) {
     std::string status = status_text(
-        snapshot, run.launch_error, run.capture_mode, now);
+        snapshot, run.launch_error, run.capture_mode, run.paused, now);
     const std::string& presentation_error = run.presentation.error();
     if (!presentation_error.empty()) {
         status += " · presentation: " + presentation_error;
@@ -529,7 +555,8 @@ void render_if_dirty(Run& run, const UiSnapshot& snapshot, double now) {
                        snapshot.version != run.rendered_version ||
                        status != run.rendered_status ||
                        run.dpi != run.rendered_dpi ||
-                       run.presentation.revision() != run.rendered_revision;
+                       run.presentation.revision() != run.rendered_revision ||
+                       run.visibility_dirty;
     if (!dirty) {
         return;
     }
@@ -551,12 +578,13 @@ void render_if_dirty(Run& run, const UiSnapshot& snapshot, double now) {
 
     run.layout = compute_layout(request, run.text.as_measure());
     run.image = compose_overlay(run.layout, run.text);
-    if (run.layout.hidden || run.image.empty()) {
+    if (run.hidden_by_user || run.layout.hidden || run.image.empty()) {
         run.window.set_visible(false);
     } else {
         run.window.present(run.image, run.layout.x, run.layout.y);
         run.window.set_visible(true);
     }
+    run.visibility_dirty = false;
 
     run.has_version = true;
     run.rendered_version = snapshot.version;
@@ -565,7 +593,8 @@ void render_if_dirty(Run& run, const UiSnapshot& snapshot, double now) {
     run.rendered_dpi = run.dpi;
     run.presented = true;
 
-    if (!run.click_checked && !run.layout.empty && !run.layout.hidden) {
+    if (!run.click_checked && !run.layout.empty && !run.layout.hidden &&
+        !run.hidden_by_user) {
         run.click_checked = true;
         POINT center{
             run.layout.x + run.layout.width / 2,
@@ -574,6 +603,98 @@ void render_if_dirty(Run& run, const UiSnapshot& snapshot, double now) {
         run.window_under_center = WindowFromPoint(center);
         run.foreground_after = GetForegroundWindow();
     }
+}
+
+bool send_command(Run& run, const nlohmann::json& command) {
+    if (run.stream == nullptr) {
+        std::cerr << "command: " << command.dump() << " (engine not running)\n";
+        return false;
+    }
+    const std::string line = command.dump();
+    const bool sent = run.stream->write_line(line);
+    std::cerr << "command: " << line << (sent ? "" : " (write failed)") << "\n";
+    return sent;
+}
+
+void toggle_pause(Run& run) {
+    run.paused = !run.paused;
+    send_command(run, pause_command(run.paused));
+    // The status line switches between live and paused immediately.
+    run.visibility_dirty = true;
+}
+
+void toggle_visibility(Run& run) {
+    run.hidden_by_user = !run.hidden_by_user;
+    run.visibility_dirty = true;
+    if (run.hidden_by_user) {
+        run.window.set_visible(false);
+    } else {
+        // Re-measure click-through after the window comes back.
+        run.click_checked = false;
+    }
+}
+
+void toggle_language(Run& run) {
+    run.target_lang = next_target_language(run.target_lang);
+    send_command(run, target_language_command(run.target_lang));
+    run.visibility_dirty = true;
+}
+
+void handle_hotkey(Run& run, int id) {
+    switch (id) {
+        case kHotkeyPause:
+            toggle_pause(run);
+            break;
+        case kHotkeyVisibility:
+            toggle_visibility(run);
+            break;
+        case kHotkeyLanguage:
+            toggle_language(run);
+            break;
+        default:
+            break;
+    }
+}
+
+void handle_tray_command(Run& run, int id) {
+    switch (id) {
+        case kTrayCommandPause:
+            toggle_pause(run);
+            break;
+        case kTrayCommandVisibility:
+            toggle_visibility(run);
+            break;
+        case kTrayCommandExit:
+            send_command(run, shutdown_command());
+            run.quit_requested = true;
+            PostQuitMessage(0);
+            break;
+        default:
+            break;
+    }
+}
+
+void register_hotkeys(Run& run) {
+    for (const auto& binding : hotkey_bindings()) {
+        if (RegisterHotKey(
+                run.window.hwnd(), binding.id, binding.modifiers, binding.virtual_key)) {
+            run.hotkeys_registered = true;
+        } else {
+            ++run.hotkey_failures;
+            std::cerr << "hotkey: Ctrl+Alt+key " << binding.virtual_key
+                      << " registration failed (" << GetLastError() << ")\n";
+        }
+    }
+}
+
+void unregister_hotkeys(Run& run) {
+    if (run.window.hwnd() == nullptr) {
+        return;
+    }
+    for (const auto& binding : hotkey_bindings()) {
+        UnregisterHotKey(run.window.hwnd(), binding.id);
+    }
+    run.hotkeys_registered = false;
 }
 
 void sample_memory(Run& run, double now) {
@@ -647,6 +768,20 @@ void write_report(
         {"revision", run.presentation.revision()},
         {"error", run.presentation.error()},
     };
+    payload["hotkeys"] = nlohmann::json{
+        {"attempted", 3},
+        {"failed", run.hotkey_failures},
+        {"registered", run.hotkeys_registered && run.hotkey_failures == 0},
+    };
+    payload["tray"] = nlohmann::json{{"added", run.tray.present()}};
+    payload["commands"] = nlohmann::json{
+        {"paused", run.paused},
+        {"hidden", run.hidden_by_user},
+        {"target_lang", run.target_lang},
+        {"results", snapshot.command_results},
+        {"last_cmd", snapshot.last_command.cmd},
+        {"last_ok", snapshot.last_command.ok},
+    };
     payload["exit_code"] = exit_code;
 
     std::filesystem::path path(args.report_path);
@@ -706,6 +841,7 @@ int run_overlay(const Args& args) {
 
     run.work_area = primary_work_area();
     run.dpi = window_dpi(run.window.hwnd());
+    run.target_lang = args.target_lang.empty() ? "zh-CN" : args.target_lang;
 
     const std::vector<std::string> engine_args = engine_arguments(args);
     ChildStream stream({cli, engine_args, {}, 6});
@@ -724,9 +860,21 @@ int run_overlay(const Args& args) {
                   << run.launch_error << "\n";
     }
 
+    // Hotkeys are global: RegisterHotKey works while another window has focus,
+    // and the callback only posts a command, it never activates this window.
+    register_hotkeys(run);
+    if (run.tray.add(run.window.hwnd())) {
+        std::cerr << "tray: icon added\n";
+    } else {
+        std::cerr << "tray: unavailable in this session; hotkeys still work\n";
+    }
+    std::cerr << "commands: Ctrl+Alt+P pause/resume, Ctrl+Alt+H hide/show, "
+                 "Ctrl+Alt+T target language (" << run.target_lang << ")\n";
+
     // A small explicit loop instead of WM_TIMER: the tick has to run even
     // when no message arrives, and this keeps the window class free of UI
-    // logic. Messages (including WM_DPICHANGED) are dispatched first.
+    // logic. WM_HOTKEY and the tray callback are handled here so the overlay's
+    // window class stays a pure painter.
     while (true) {
         MSG message{};
         bool quit = false;
@@ -735,8 +883,26 @@ int run_overlay(const Args& args) {
                 quit = true;
                 break;
             }
-            TranslateMessage(&message);
-            DispatchMessageW(&message);
+            bool handled = false;
+            if (message.message == WM_HOTKEY) {
+                handle_hotkey(run, static_cast<int>(message.wParam));
+                handled = true;
+            } else if (message.hwnd == run.window.hwnd() &&
+                       message.message == kTrayCallbackMessage) {
+                const UINT event = static_cast<UINT>(message.lParam);
+                if (event == WM_RBUTTONUP || event == WM_CONTEXTMENU) {
+                    const int chosen =
+                        run.tray.show_menu(run.paused, !run.hidden_by_user);
+                    if (chosen != 0) {
+                        handle_tray_command(run, chosen);
+                    }
+                }
+                handled = true;
+            }
+            if (!handled) {
+                TranslateMessage(&message);
+                DispatchMessageW(&message);
+            }
         }
         if (quit || run.quit_requested) {
             break;
@@ -776,6 +942,8 @@ int run_overlay(const Args& args) {
         render_if_dirty(run, snapshot, steady_seconds());
     }
 
+    unregister_hotkeys(run);
+    run.tray.remove();
     stream.stop();
 
     const UiSnapshot snapshot = run.model.snapshot();

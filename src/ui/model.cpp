@@ -70,6 +70,20 @@ StreamLine parse_stream_line(std::string_view raw) {
 
     result.seq = envelope.seq;
     result.type = envelope.type;
+    if (envelope.type == event_type::kCommandResult) {
+        const auto* command = find_string(envelope.data, "cmd");
+        const auto ok = envelope.data.find("ok");
+        if (command == nullptr || ok == envelope.data.end() || !ok->is_boolean()) {
+            return malformed("command_result without a string 'cmd' and boolean 'ok'");
+        }
+        result.kind = StreamLineKind::kCommandResult;
+        result.command.cmd = command->get<std::string>();
+        result.command.ok = ok->get<bool>();
+        if (const auto* detail = find_string(envelope.data, "detail")) {
+            result.command.detail = detail->get<std::string>();
+        }
+        return result;
+    }
     if (envelope.type != event_type::kSubtitle) {
         result.kind = StreamLineKind::kIgnored;
         return result;
@@ -155,6 +169,11 @@ StreamLine UiModel::ingest(std::string_view line) {
             break;
         case StreamLineKind::kIgnored:
             ++state_.ignored;
+            break;
+        case StreamLineKind::kCommandResult:
+            ++state_.command_results;
+            state_.last_command = parsed.command;
+            state_.last_command_seconds = state_.last_line_seconds;
             break;
         case StreamLineKind::kMalformed:
             ++state_.malformed;

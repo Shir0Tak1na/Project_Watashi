@@ -1,5 +1,6 @@
 add_executable(watashi_tests
     test_capture.cpp
+    test_commands.cpp
     test_corpus.cpp
     test_events.cpp
     test_nmt_semantics.cpp
@@ -8,6 +9,7 @@ add_executable(watashi_tests
     test_rules.cpp
     test_session.cpp
     test_ui.cpp
+    test_ui_actions.cpp
 )
 target_link_libraries(watashi_tests PRIVATE watashi_core watashi_ui_core Catch2::Catch2WithMain)
 watashi_copy_onnxruntime(watashi_tests)

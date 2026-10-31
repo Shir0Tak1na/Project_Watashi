@@ -86,6 +86,13 @@ bool ChangeDetector::changed(const ImageView& frame) {
     return !enabled() || last_difference_ > options_.threshold;
 }
 
+void ChangeDetector::set_threshold(double threshold) noexcept {
+    options_.threshold = std::max(0.0, threshold);
+    if (!enabled()) {
+        reset();
+    }
+}
+
 void ChangeDetector::reset() {
     previous_.clear();
     last_difference_ = 1.0;

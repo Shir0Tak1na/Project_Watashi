@@ -330,6 +330,7 @@ add_library(watashi_core STATIC
     src/capture/capture.cpp
     src/capture/change_detector.cpp
     src/capture/synthetic_capture.cpp
+    src/core/commands.cpp
     src/core/events.cpp
     src/core/pipeline.cpp
     src/core/session.cpp
@@ -375,12 +376,14 @@ watashi_copy_ctranslate2(watashi_cli)
 # which is why ADR 0009 chose it over Qt6 (see docs/adr/0009-ui-toolkit.md).
 if(WIN32)
     add_library(watashi_ui_core STATIC
+        src/ui/actions.cpp
         src/ui/model.cpp
         src/ui/presentation.cpp
         src/ui/layout.cpp
         src/ui/renderer.cpp
         src/ui/layered_window.cpp
         src/ui/child_stream.cpp
+        src/ui/tray.cpp
     )
     target_include_directories(watashi_ui_core
         PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include
@@ -388,7 +391,7 @@ if(WIN32)
     )
     target_link_libraries(watashi_ui_core
         PUBLIC nlohmann_json::nlohmann_json
-        PRIVATE watashi_core user32 gdi32 psapi
+        PRIVATE watashi_core user32 gdi32 psapi shell32
     )
     target_compile_features(watashi_ui_core PUBLIC cxx_std_17)
 

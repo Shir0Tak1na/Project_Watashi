@@ -25,6 +25,8 @@ int main(int argc, char** argv) {
     int exit_code = 0;
     int sleep_ms = 0;
     int stderr_lines = 0;
+    int echo_count = 0;
+    bool echo_stdin = false;
     bool final_newline = true;
     std::string text = "line";
     std::string stderr_text = "stderr";
@@ -45,6 +47,10 @@ int main(int argc, char** argv) {
             text = argv[++index];
         } else if (argument == "--no-final-newline") {
             final_newline = false;
+        } else if (argument == "--echo-stdin") {
+            echo_stdin = true;
+        } else if (argument == "--echo-count" && index + 1 < argc) {
+            echo_count = std::atoi(argv[++index]);
         }
     }
 
@@ -60,6 +66,19 @@ int main(int argc, char** argv) {
         std::cerr << stderr_text << ' ' << (index + 1) << '\n';
     }
     std::cerr.flush();
+
+    // For the ChildStream stdin test: read a fixed number of lines and echo
+    // them back on stdout, then exit instead of hanging on the pipe.
+    if (echo_stdin && echo_count > 0) {
+        for (int index = 0; index < echo_count; ++index) {
+            std::string line;
+            if (!std::getline(std::cin, line)) {
+                break;
+            }
+            std::cout << "echo: " << line << '\n';
+            std::cout.flush();
+        }
+    }
 
     if (sleep_ms > 0) {
         std::this_thread::sleep_for(std::chrono::milliseconds(sleep_ms));

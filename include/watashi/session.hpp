@@ -8,12 +8,15 @@
 
 #pragma once
 
+#include <atomic>
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <string>
 #include <string_view>
 
 #include "watashi/capture.hpp"
+#include "watashi/commands.hpp"
 #include "watashi/events.hpp"
 #include "watashi/pipeline.hpp"
 
@@ -43,6 +46,9 @@ struct SessionOptions {
     TranslateContext context;
     /// Write capture/end-to-end percentiles here after the run, when set.
     std::string bench_path;
+    /// Applies ``reload_corpus``. Empty when the run has no corpus; the command
+    /// then answers ``ok: false`` rather than pretending to reload nothing.
+    std::function<std::string()> reload_corpus;
 };
 
 /// Drives a Pipeline and publishes its events in contract order.
@@ -62,18 +68,55 @@ public:
     /// silently ignoring a command is how a surface ends up lying about state.
     [[nodiscard]] Envelope handle_command(std::string_view command);
 
-    [[nodiscard]] bool paused() const noexcept { return paused_; }
+    /// Payload-aware command application, for tests and for the stdin channel.
+    /// Answers ``ok: false`` instead of throwing on a bad or unknown command.
+    [[nodiscard]] Envelope handle_command_json(const nlohmann::json& command);
+
+    /// Thread-safe: the stdin reader posts here while the run loop consumes.
+    void post_command(CommandMessage message);
+    void post_command(const nlohmann::json& document);
+
+    [[nodiscard]] std::shared_ptr<CommandQueue> command_queue() const noexcept {
+        return commands_;
+    }
+
+    [[nodiscard]] bool paused() const noexcept { return paused_.load(); }
+    [[nodiscard]] bool shutdown_requested() const noexcept {
+        return shutdown_.load();
+    }
+    [[nodiscard]] double fps() const noexcept { return fps_; }
+    [[nodiscard]] double diff_threshold() const noexcept { return diff_threshold_; }
+    [[nodiscard]] const TranslateContext& context() const noexcept {
+        return pipeline_.context();
+    }
     [[nodiscard]] std::int64_t last_seq() const noexcept { return seq_; }
     [[nodiscard]] int frames() const noexcept { return frames_; }
 
 private:
     Envelope emit(const Sink& sink, std::string_view type, nlohmann::json data);
 
+    /// Apply one parsed command. ``detector`` is null outside a run; the
+    /// threshold is then remembered for the next one.
+    [[nodiscard]] nlohmann::json apply_command(
+        const nlohmann::json& command,
+        ChangeDetector* detector);
+
+    void drain_commands(const Sink& sink, ChangeDetector* detector);
+
     SessionOptions options_;
     Pipeline pipeline_;
     std::int64_t seq_ = 0;
     int frames_ = 0;
-    bool paused_ = false;
+    std::atomic<bool> paused_{false};
+    std::atomic<bool> shutdown_{false};
+    double fps_ = 10.0;
+    double diff_threshold_ = 0.0;
+    /// Set when a command changed the translation context: the next captured
+    /// frame must be read again even if the screen did not change, because the
+    /// cached subtitle was translated for the old target language.
+    bool reprocess_ = false;
+    std::function<std::string()> reload_corpus_;
+    std::shared_ptr<CommandQueue> commands_ = std::make_shared<CommandQueue>();
 };
 
 }  // namespace watashi

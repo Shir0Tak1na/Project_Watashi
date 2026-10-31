@@ -23,6 +23,8 @@ enum class StreamLineKind {
     kSubtitle,
     /// A valid event of another type, or an empty line.
     kIgnored,
+    /// A ``command_result`` answer from the engine.
+    kCommandResult,
     /// Not an event at all: bad JSON, a contract violation, a subtitle with no
     /// target. Counted, never shown as content.
     kMalformed,
@@ -41,9 +43,16 @@ struct SubtitleFrame {
     bool valid = false;
 };
 
+struct CommandOutcome {
+    std::string cmd;
+    bool ok = false;
+    std::string detail;
+};
+
 struct StreamLine {
     StreamLineKind kind = StreamLineKind::kIgnored;
     SubtitleFrame frame;
+    CommandOutcome command;
     /// Envelope seq when the record decoded far enough to carry one.
     std::int64_t seq = 0;
     std::string type;
@@ -71,9 +80,14 @@ struct UiSnapshot {
     std::size_t subtitles = 0;
     std::size_t malformed = 0;
     std::size_t ignored = 0;
+    std::size_t command_results = 0;
     std::size_t out_of_order = 0;
     /// Records missing between two seq values (``current - last - 1``).
     std::size_t missing_records = 0;
+
+    /// Latest command answer, for the status line.
+    CommandOutcome last_command;
+    double last_command_seconds = 0.0;
 
     std::string last_error;
     std::string stderr_tail;

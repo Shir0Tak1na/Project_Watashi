@@ -23,9 +23,11 @@
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "watashi/capture.hpp"
+#include "watashi/commands.hpp"
 #include "watashi/events.hpp"
 #include "watashi/corpus.hpp"
 #include "watashi/nmt.hpp"
@@ -48,6 +50,8 @@ void usage(std::ostream& out) {
            "  --duration SECONDS     run length, default 2\n"
            "  --fps N                synthetic frames per second, default 10\n"
            "  --json-lines           write the NDJSON event stream to stdout\n"
+           "  --command-stdin        read one JSON command per line from stdin and\n"
+           "                         answer each with a command_result event\n"
            "\n"
            "capture:\n"
            "  --capture MODE         screen, window or synthetic\n"
@@ -113,17 +117,51 @@ nlohmann::json lines_json(const std::vector<watashi::OcrLine>& lines) {
     return array;
 }
 
-int run_fake(double duration, double fps, bool json_lines) {
+/// One line per event for a human, or the NDJSON envelope for a client.
+void print_event(const watashi::Envelope& envelope, bool json_lines) {
+    if (json_lines) {
+        watashi::write_json_line(std::cout, envelope);
+    } else if (envelope.type == "subtitle") {
+        std::cout << '[' << envelope.seq << "] "
+                  << envelope.data.value("source", std::string{}) << " -> "
+                  << envelope.data.value("target", std::string{}) << '\n';
+    } else if (envelope.type == "command_result") {
+        std::cout << '[' << envelope.seq << "] command_result "
+                  << envelope.data.value("cmd", std::string{}) << ' '
+                  << (envelope.data.value("ok", false) ? "ok" : "failed");
+        const std::string detail = envelope.data.value("detail", std::string{});
+        if (!detail.empty()) {
+            std::cout << ' ' << detail;
+        }
+        std::cout << '\n';
+    } else {
+        std::cout << '[' << envelope.seq << "] " << envelope.type << '\n';
+    }
+}
+
+/// Start the stdin reader. The queue outlives the session, and the thread is
+/// detached on purpose: stdin blocks until the caller closes the pipe, and the
+/// process exits immediately after the run, which ends the thread too.
+void start_command_reader(const std::shared_ptr<watashi::CommandQueue>& queue) {
+    std::thread([queue]() {
+        std::string line;
+        while (std::getline(std::cin, line)) {
+            queue->push(watashi::parse_command_line(line));
+        }
+    }).detach();
+}
+
+int run_fake(double duration, double fps, bool json_lines, bool command_stdin) {
     watashi::FakeOcr ocr;
     watashi::FakeTranslator translator;
     watashi::Session session({duration, fps}, ocr, translator);
 
+    if (command_stdin) {
+        start_command_reader(session.command_queue());
+    }
+
     const auto sink = [json_lines](const watashi::Envelope& envelope) {
-        if (json_lines) {
-            watashi::write_json_line(std::cout, envelope);
-        } else {
-            std::cout << '[' << envelope.seq << "] " << envelope.type << '\n';
-        }
+        print_event(envelope, json_lines);
     };
     session.run(sink);
     std::cout.flush();
@@ -403,6 +441,7 @@ int run_capture(
     double duration,
     double fps,
     bool json_lines,
+    bool command_stdin,
     int width,
     int height) {
     // ``base`` stays alive for the whole run: the dumping wrapper only borrows it.
@@ -455,18 +494,23 @@ int run_capture(
     options.context = watashi::TranslateContext{
         corpus_args.target, corpus_args.scene, corpus_args.window};
     options.bench_path = args.bench;
+    if (bundle.store) {
+        options.reload_corpus = [store = bundle.store.get()]() -> std::string {
+            store->reload_if_changed(-1.0, true);
+            if (!store->last_error().empty()) {
+                return "corpus error: " + store->last_error();
+            }
+            return "corpus: " + std::to_string(store->size()) + " entries, " +
+                   std::to_string(store->rule_count()) + " rules";
+        };
+    }
 
     watashi::Session session(options, *ocr, translator);
+    if (command_stdin) {
+        start_command_reader(session.command_queue());
+    }
     const auto sink = [json_lines](const watashi::Envelope& envelope) {
-        if (json_lines) {
-            watashi::write_json_line(std::cout, envelope);
-        } else if (envelope.type == "subtitle") {
-            std::cout << '[' << envelope.seq << "] "
-                      << envelope.data.value("source", std::string{}) << " -> "
-                      << envelope.data.value("target", std::string{}) << '\n';
-        } else {
-            std::cout << '[' << envelope.seq << "] " << envelope.type << '\n';
-        }
+        print_event(envelope, json_lines);
     };
     session.run(sink);
     std::cout.flush();
@@ -556,6 +600,7 @@ int main(int argc, char** argv) {
 
     bool synthetic = false;
     bool json_lines = false;
+    bool command_stdin = false;
     double duration = 2.0;
     double fps = 10.0;
     int repeat = 1;
@@ -640,6 +685,8 @@ int main(int argc, char** argv) {
                 capture.dump_frame = argv[++index];
             } else if (argument == "--json-lines") {
                 json_lines = true;
+            } else if (argument == "--command-stdin") {
+                command_stdin = true;
             } else if (argument == "--duration" && index + 1 < argc) {
                 duration = std::stod(argv[++index]);
             } else if (argument == "--fps" && index + 1 < argc) {
@@ -682,11 +729,16 @@ int main(int argc, char** argv) {
         if (!capture.mode.empty()) {
             return run_capture(
                 capture, mode, translator_name, corpus, nmt, onnx, duration, fps, json_lines,
-                width, height);
+                command_stdin, width, height);
         }
         if (translator_name == "corpus" || translator_name == "nmt" ||
             translator_name == "hybrid") {
             corpus.json_lines = json_lines;
+            if (command_stdin) {
+                std::cerr << "watashi_cli: --command-stdin needs a session run "
+                             "(--capture or --synthetic)\n";
+                return 2;
+            }
             if (corpus.texts.empty()) {
                 std::cerr << "watashi_cli: " << translator_name
                           << " mode needs --text or --text-file\n";
@@ -713,7 +765,7 @@ int main(int argc, char** argv) {
             usage(std::cerr);
             return 2;
         }
-        return run_fake(duration, fps, json_lines);
+        return run_fake(duration, fps, json_lines, command_stdin);
     } catch (const watashi::OcrError& error) {
         std::cerr << "watashi_cli: " << error.what() << "\n";
         return 1;

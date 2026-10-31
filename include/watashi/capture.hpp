@@ -225,6 +225,9 @@ public:
 
     [[nodiscard]] double last_difference() const noexcept { return last_difference_; }
     [[nodiscard]] bool enabled() const noexcept { return options_.threshold > 0.0; }
+    /// Runtime command. A non-positive value turns the check off; the next
+    /// frame is then always treated as changed.
+    void set_threshold(double threshold) noexcept;
     void reset();
 
 private:

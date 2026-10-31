@@ -24,6 +24,8 @@ models/
 
 # --- generated outputs ---
 build/
+# Worker builds use their own directory (build-w31, build-w32, ...).
+build-*/
 dist/
 
 # --- measurement output (written by --stats-json and the benchmark tools) ---

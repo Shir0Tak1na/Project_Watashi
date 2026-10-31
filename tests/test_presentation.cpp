@@ -51,6 +51,15 @@ ui::MeasureStyle style_of(int px, bool bold = false) {
     return ui::MeasureStyle{px, bold, false, ""};
 }
 
+/// Directory of this test executable. It is inside the build tree, so spec
+/// files created here never dirty the checkout, and unlike %TEMP% it is a
+/// normal writable directory for this process.
+std::filesystem::path test_directory() {
+    wchar_t module[32768]{};
+    GetModuleFileNameW(nullptr, module, 32768);
+    return std::filesystem::path(module).parent_path();
+}
+
 /// One throwaway spec file, removed when the test ends.
 class TempSpec {
 public:
@@ -58,7 +67,7 @@ public:
         std::random_device device;
         std::mt19937 generator(device());
         const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
-        path_ = std::filesystem::temp_directory_path() /
+        path_ = test_directory() /
                 ("watashi_spec_" + std::to_string(stamp) + "_" +
                  std::to_string(generator()) + ".json");
     }
@@ -415,7 +424,7 @@ TEST_CASE("an invalid save keeps the previous spec and reports once",
 TEST_CASE("a missing file keeps the last spec and reports it", "[presentation][reload]") {
     const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
     const std::string missing =
-        (std::filesystem::temp_directory_path() /
+        (test_directory() /
          ("watashi_spec_missing_" + std::to_string(stamp) + ".json"))
             .string();
     ui::PresentationWatcher watcher(missing);

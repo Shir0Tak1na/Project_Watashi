@@ -79,6 +79,8 @@ struct ChildStream::Impl {
     DWORD process_id = 0;
     HANDLE stdout_read = nullptr;
     HANDLE stderr_read = nullptr;
+    HANDLE stdin_write = nullptr;
+    std::mutex stdin_mutex;
     std::thread stdout_thread;
     std::thread stderr_thread;
     std::thread wait_thread;
@@ -140,6 +142,7 @@ bool ChildStream::start(LineHandler on_line, ExitHandler on_exit) {
 
     HANDLE stdout_write = nullptr;
     HANDLE stderr_write = nullptr;
+    HANDLE stdin_read = nullptr;
     if (!CreatePipe(&impl_->stdout_read, &stdout_write, &attributes, 0)) {
         impl_->set_error("CreatePipe(stdout) failed: " +
                          std::to_string(GetLastError()));
@@ -152,8 +155,18 @@ bool ChildStream::start(LineHandler on_line, ExitHandler on_exit) {
                          std::to_string(GetLastError()));
         return false;
     }
+    if (!CreatePipe(&stdin_read, &impl_->stdin_write, &attributes, 0)) {
+        CloseHandle(impl_->stdout_read);
+        CloseHandle(stdout_write);
+        CloseHandle(impl_->stderr_read);
+        CloseHandle(stderr_write);
+        impl_->set_error("CreatePipe(stdin) failed: " +
+                         std::to_string(GetLastError()));
+        return false;
+    }
     SetHandleInformation(impl_->stdout_read, HANDLE_FLAG_INHERIT, 0);
     SetHandleInformation(impl_->stderr_read, HANDLE_FLAG_INHERIT, 0);
+    SetHandleInformation(impl_->stdin_write, HANDLE_FLAG_INHERIT, 0);
 
     std::wstring command = quote_argument(widen(impl_->options.executable));
     for (const auto& argument : impl_->options.arguments) {
@@ -165,7 +178,7 @@ bool ChildStream::start(LineHandler on_line, ExitHandler on_exit) {
     startup.dwFlags = STARTF_USESTDHANDLES;
     startup.hStdOutput = stdout_write;
     startup.hStdError = stderr_write;
-    startup.hStdInput = nullptr;
+    startup.hStdInput = stdin_read;
 
     PROCESS_INFORMATION process{};
     const std::wstring working_directory = widen(impl_->options.working_directory);
@@ -183,11 +196,19 @@ bool ChildStream::start(LineHandler on_line, ExitHandler on_exit) {
 
     CloseHandle(stdout_write);
     CloseHandle(stderr_write);
+    CloseHandle(stdin_read);
 
     if (!created) {
         const DWORD code = GetLastError();
         CloseHandle(impl_->stdout_read);
         CloseHandle(impl_->stderr_read);
+        {
+            std::lock_guard<std::mutex> lock(impl_->stdin_mutex);
+            if (impl_->stdin_write != nullptr) {
+                CloseHandle(impl_->stdin_write);
+                impl_->stdin_write = nullptr;
+            }
+        }
         impl_->stdout_read = nullptr;
         impl_->stderr_read = nullptr;
         impl_->set_error("CreateProcessW failed: " + std::to_string(code));
@@ -275,6 +296,29 @@ bool ChildStream::start(LineHandler on_line, ExitHandler on_exit) {
     return true;
 }
 
+bool ChildStream::write_line(std::string_view line) {
+    std::lock_guard<std::mutex> lock(impl_->stdin_mutex);
+    if (impl_->stdin_write == nullptr) {
+        return false;
+    }
+    std::string text(line);
+    text.push_back('\n');
+    std::size_t offset = 0;
+    while (offset < text.size()) {
+        DWORD written = 0;
+        const DWORD remaining = static_cast<DWORD>(text.size() - offset);
+        if (!WriteFile(
+                impl_->stdin_write, text.data() + offset, remaining, &written, nullptr)) {
+            return false;
+        }
+        if (written == 0) {
+            return false;
+        }
+        offset += written;
+    }
+    return true;
+}
+
 void ChildStream::stop() {
     if (!impl_) {
         return;
@@ -295,6 +339,13 @@ void ChildStream::stop() {
     }
     if (impl_->stderr_thread.joinable()) {
         impl_->stderr_thread.join();
+    }
+    {
+        std::lock_guard<std::mutex> lock(impl_->stdin_mutex);
+        if (impl_->stdin_write != nullptr) {
+            CloseHandle(impl_->stdin_write);
+            impl_->stdin_write = nullptr;
+        }
     }
     impl_->running.store(false);
 }

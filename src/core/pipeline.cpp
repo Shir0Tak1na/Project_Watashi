@@ -51,6 +51,10 @@ Pipeline::Pipeline(
     TranslateContext context)
     : ocr_(ocr), translator_(translator), context_(std::move(context)) {}
 
+void Pipeline::set_context(TranslateContext context) {
+    context_ = std::move(context);
+}
+
 OverlayUpdate Pipeline::process(const ImageView& frame, double started_seconds) const {
     OverlayUpdate update;
     const OcrResult recognised = ocr_.recognize(frame);

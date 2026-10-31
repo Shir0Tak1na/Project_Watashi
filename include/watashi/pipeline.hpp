@@ -66,6 +66,12 @@ public:
     /// while building the payload.
     [[nodiscard]] OverlayUpdate process(const ImageView& frame, double started_seconds) const;
 
+    /// Runtime commands change the target language and scene. The session
+    /// applies them on its own thread, between frames, so a caller never races
+    /// with ``process``.
+    void set_context(TranslateContext context);
+    [[nodiscard]] const TranslateContext& context() const noexcept { return context_; }
+
 private:
     const OcrSource& ocr_;
     const Translator& translator_;

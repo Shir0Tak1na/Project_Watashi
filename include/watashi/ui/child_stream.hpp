@@ -46,6 +46,10 @@ public:
     /// ``error`` says why. No callback fires in that case.
     bool start(LineHandler on_line, ExitHandler on_exit);
 
+    /// Writes one command line to the child's stdin (a trailing newline is
+    /// added). Thread-safe; false after the child ended or the pipe broke.
+    bool write_line(std::string_view line);
+
     /// Terminates the child and waits for the readers. Safe to call twice.
     void stop();
 
