@@ -287,9 +287,9 @@
 
 | 接口 | 当前状态 | 目标 |
 | --- | --- | --- |
-| 模型后端 | `prototype/watashi/translate.py` 的 `Translator` 协议；插件 `translator` 扩展点已预留 | 统一描述本机模型、局域网模型服务与外部 API；默认本地，外部需显式启用 |
-| 设置 | `settings_schema.py` + 本地 Web 面板 | 稳定的 schema/API，允许外部工具读写设置；写入前校验，变更可审计 |
-| 应用协作 | 事件/命令契约 + `--json-lines` | 同一契约扩展到 LAN、其他进程与编辑器插件；默认只监听 loopback |
+| 模型后端 | C++ `Translator` 协议：语料/规则 + 本地 CTranslate2 NLLB；Python 原型同契约 | 统一描述本机模型、局域网模型服务与外部 API；默认本地，外部需显式启用 |
+| 设置 | `settings_schema.py` 已冻结；C++ 原生设置页（W3.4）尚未实现；Python 侧有 Web 面板 | 稳定的 schema/API，允许外部工具读写设置；写入前校验，变更可审计 |
+| 应用协作 | 事件/命令契约 + `watashi_cli --json-lines` + stdin JSON 命令；原生/Python 客户端共用 | 同一契约扩展到 LAN、其他进程与编辑器插件；默认只监听 loopback |
 
 三条原则：
 
@@ -303,69 +303,38 @@
 
 # 项目结构
 
-以下为仓库实际结构与目标结构对照，标注 *待实现* 的为规划中内容：
+以下为 2026-10-31 的实际结构（C++ 主干 W1–W3.3 已落地）：
 
-```
+~~~text
 ProjectWatashi/
-├── CMakeLists.txt            # C++ 工程构建脚本
+├── CMakeLists.txt            # C++ 构建脚本（ORT/CT2/Win32 UI）
 ├── README.md                 # 项目说明
-├── Project Watashi.md        # 项目目标与需求文档（本文件）
-├── prototype/                # Python 验证原型（当前唯一可运行实现）
-│   ├── watashi_proto.py      # CLI 入口（Session 的薄客户端）
-│   ├── watashi/session.py    # 引擎门面：事件出、命令入
-│   ├── watashi/events.py     # 契约：事件/命令 schema，零 UI 依赖
-│   ├── watashi/overlay.py    # 悬浮窗
-│   ├── watashi/desktop.py    # 桌面窗口（与悬浮窗共用 Tk root）
-│   ├── watashi/plugins.py    # 插件扩展点与失败隔离
-│   ├── watashi/capture.py    # 区域捕获 / 窗口捕获 / 变化检测
-│   ├── watashi/local_nmt.py  # 本地模型、术语保护
-│   ├── plugins/              # 实际插件目录（builtin / user）
-│   └── selfcheck_*.py        # 8 个自检脚本
-├── config/                   # 系统配置与用户偏好（app.yaml）
-├── docs/                     # 项目开发文档
-│   ├── architecture.md       # 架构总览
-│   ├── screen_ocr_design.md  # 屏幕 OCR 模块设计
-│   └── plugin-api.md         # 插件 API 草案
-├── include/                  # 公共头文件
-│   ├── app/                  # 应用装配
-│   ├── core/                 # 翻译引擎接口
-│   ├── db/                   # SQLite 数据访问接口
-│   ├── llm/                  # 本地 LLM 后端接口
-│   ├── ocr/                  # 屏幕捕获与 OCR 接口
-│   └── plugins/              # 插件接口（IPlugin）
+├── Project Watashi.md        # 目标与需求（本文件）
+├── config/                   # presentation.json；app.yaml 为旧占位
+├── docs/                     # 计划、架构、ADR、呈现规格
+├── include/watashi/          # capture/corpus/rules/nmt/ocr/ui/events/commands
 ├── src/
-│   ├── app/                  # 程序入口与装配
-│   ├── core/                 # 翻译路由与分发
-│   │   ├── translator_engine.cpp
-│   │   ├── fiction_engine/   # *待实现* 虚构词汇推演算法
-│   │   └── network_slang/    # *待实现* 网络用语处理
-│   ├── ocr/                  # 屏幕捕获、预处理、OCR 调度
-│   ├── db/                   # *待实现* 本地 SQLite 词库与缓存
-│   ├── llm/                  # *待实现* 本地 LLM 后端
-│   ├── rules/                # *待实现* 规则引擎
-│   ├── ui/                   # *待实现* 悬浮窗与主控制台
-│   ├── plugins/              # *待实现* 插件加载与隔离
-│   └── utils/                # *待实现* 日志、字符串、加解密
-├── rules/                    # 可编辑语料库与规则（R2 / R3）
-│   ├── slang/                # 网络用语库
-│   ├── fiction/              # 虚构词汇库
-│   └── dictionaries/         # 通用词典
-├── models/                   # 本地模型（ocr / llm / embedding），已 gitignore
-├── plugins/                  # 插件目录（builtin / user）
-└── tests/                    # C++ 测试（目前仅 CMakeLists.txt，无测试源文件）
-```
+│   ├── capture/              # GDI screen/window/synthetic + 变化检测
+│   ├── cli/                  # watashi_cli
+│   ├── core/                 # session、pipeline、事件、命令
+│   ├── corpus/               # 语料库、规则、UTF-8
+│   ├── fake/                 # fake OCR / translator
+│   ├── io/                   # JSONL
+│   ├── nmt/                  # CTranslate2 + NLLB
+│   ├── ocr/                  # ONNX Runtime PP-OCRv4
+│   └── ui/                   # Win32 悬浮窗、呈现、托盘、子进程流
+├── tests/                    # Catch2（240 用例）
+├── tools/                    # 参考生成、差分、流校验
+├── golden/                   # cases / corpus / nmt
+├── schema/                   # events / settings / presentation
+├── prototype/                # Python 参考实现（仍可运行）
+├── models/                   # 本地模型，gitignore
+└── build-*/                  # 各阶段构建目录，gitignore
+~~~
 
-> 注：早期草案中的 `bin/`、`dictionary/` 已分别并入构建产物与 `rules/`，`src/database/` 统一为 `src/db/`。
->
-> 注：标注 *待实现* 的 C++ 目录目前均为占位骨架；已落地的功能在 `prototype/`，
-> 两者共用同一套契约（事件/命令 schema）与同一份插件接口草案（`docs/plugin-api.md`）。
->
-> 注：原脚手架中的空目录 `ui/`、`scripts/`，以及早期的 Python 桥接层 `src/bridge/`
-> （连同其加载的 `plugins/fiction_plugin.py`、`plugins/slang_plugin.py`）已删除：
-> 它们实现的是早期接口 `translate(text, src, tgt) -> dict`，与现行插件注册表
-> （`postprocess` / `export`）不兼容，且全仓库无任何引用。
-> `CMakeLists.txt` 中长期存在 `add_subdirectory(tests)` 而 `tests/CMakeLists.txt` 缺失的问题，
-> 会导致 **CMake 配置期直接失败**，现已补上该文件。
+> 注：早期草案中的 bin/、dictionary/ 已分别并入构建产物与 rules/；src/bridge/ 与
+> 旧插件已删除。脚手架遗留的空目录（src/app、src/db、src/llm 等）不在构建里、
+> 没有源文件，当前因 ACL 仍留在磁盘上，可安全忽略。
 
 ---
 
@@ -382,17 +351,18 @@ ProjectWatashi/
 
 | 阶段 | 目标 | 状态 |
 | --- | --- | --- |
-| M1 最小闭环 | 热键选区 → 截图 → OCR → 语料库匹配 → 悬浮窗双语显示（Windows） | **已完成**（`prototype/`） |
-| M2 可定制 | 语料库与规则引擎落地，支持用户自定义与热加载（R2 / R3） | **已完成**（`prototype/`，含实时纠正闭环） |
-| M3 本地 LLM | 未命中词触发本地模型辅助翻译，含流式输出与缓存（R1） | **已完成**（本地 NMT，非流式；绘制前批量完成整句，异步精修可选） |
-| M4 低延迟达标 | 增量识别、缓存、线程模型优化，实测达成延迟预算（R4） | 部分完成（实测见下） |
-| M5 跨平台 | Linux / macOS 捕获层与 UI 适配 | 未开始 |
-| M6 插件化与移动端 | 插件 API 稳定化，Android 端实验验证 | 插件骨架**已完成**（`prototype/watashi/plugins.py`，API v1，示例插件 2 个，35 项自检通过）；Android 端未开始 |
+| M1 最小闭环 | 热键选区 → 截图 → OCR → 语料库匹配 → 悬浮窗双语显示（Windows） | **C++ W1.1–W1.4 与 Python 原型均已完成** |
+| M2 可定制 | 语料库与规则引擎落地，支持用户自定义与热加载（R2 / R3） | **C++ W1.2 完成，120/120 差分** |
+| M3 本地 LLM | 未命中词触发本地模型辅助翻译，含流式输出与缓存（R1） | **C++ W2 完成（NLLB int8，术语保护 100%，120/120）** |
+| M4 低延迟达标 | 增量识别、缓存、线程模型优化，实测达成延迟预算（R4） | **W3.0–W3.3 已落地；W3.4 设置页待做** |
+| M5 跨平台 | Linux / macOS 捕获层与 UI 适配 | 未开始（v1.0 不做） |
+| M6 插件化与移动端 | 插件 API 稳定化，Android 端实验验证 | Python 插件 API v1 已完成；C++ 插件宿主与 Android 未开始（v1.1） |
 
-> 以上 M1–M3 的验证实现为 Python 原型（`prototype/`），用于先测准管线与延迟数据；
-> C++ 主干（`src/`）仍为占位实现，尚未承接这些成果。
+> C++ 主干已承接 M1–M3 的屏幕路径（W1.1–W3.3）；实时语音（live audio）仍在 Python 原型，属于 v1.1。
 
 ## 界面架构
+
+C++ 原生 UI（`watashi_ui`）已在 W3.0–W3.3 落地；下面仍保留 Python 界面的设计说明，作为参考实现与兼容层。
 
 采用「**一个引擎，多个界面**」：引擎通过统一的**事件/命令契约**对外暴露，
 每个界面只是该契约的适配器。
@@ -429,8 +399,8 @@ ProjectWatashi/
 | --- | --- |
 | CLI / PowerShell | 自动化、CI、无头与远程；`--json-lines` 提供机器可读流；**全部功能操作的入口** |
 | 悬浮窗 | 原生、点击穿透、约 6 MiB；**保持最小、不做深度定制** |
-| 桌面窗口 | `--desktop`：控制、设置与实时输出（字幕/采集/翻译/呈现/插件/诊断六个页签）；与悬浮窗**共用同一个 Tk root**，因为两个 `Tk()` 实例的控件无法互相放置 |
-| Web 面板 | **仅用于调整设置与阅览**：外观版式编辑、引擎设置、字幕与统计只读查看；与引擎同进程，默认仅监听 loopback；**不实现任何功能操作** |
+| 桌面窗口（Python） | `--desktop`：控制、设置与实时输出（字幕/采集/翻译/呈现/插件/诊断六个页签）；C++ 原生桌面/设置窗是 W3.4，尚未实现 |
+| Web 面板（Python） | **仅用于调整设置与阅览**：外观版式编辑、引擎设置、字幕与统计只读查看；与引擎同进程，默认仅监听 loopback；C++ 不实现 HTTP 服务 |
 | 局域网 | 同一契约的另一传输，**默认关闭**，需显式开启 |
 
 > Web 面板的功能边界在**服务端强制**：`/api/command` 只接受设置类命令，

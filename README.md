@@ -75,31 +75,31 @@ system audio / microphone / WAV file
 
 ## Status
 
-The **Python prototype in `prototype/`** implements M1-M3 and runs today: region
-capture, local OCR, a file-driven corpus and rule engine, a local NMT model with
-term protection, and a click-through subtitle overlay. See
-[`prototype/README.md`](prototype/README.md) for measured latency numbers and
-known limitations.
+The Python prototype in `prototype/` remains the behavioural reference and a
+complete runnable implementation.
 
-The **C++ tree in `src/`** is still a skeleton: it has not yet been ported, and
-every layer below is a placeholder.
+The C++ mainline has moved from a walking skeleton to **W1.1-W3.3**: local
+capture, PP-OCRv4, layered corpora/rules, CTranslate2 NLLB, a native Win32
+overlay, declarative presentation, a stdin command channel, global hotkeys and
+a tray. **The W3.3 tray owner and exit report are fixed**; the settings page (W3.4)
+and release hardening (W4) are not started.
 
-| Area | C++ tree (`src/`) | Python prototype (`prototype/`) |
+| Area | C++ tree (src/) | Python prototype (prototype/) |
 | --- | --- | --- |
-| Screen capture / region selection | Stub — returns a blank image | Working (`mss`, plus drag-to-select) |
-| Live audio input | Not implemented | Working (system loopback / microphone / WAV + faster-whisper, offline) |
-| OCR | Stub — returns hardcoded text | Working (RapidOCR ONNX, offline) |
-| Corpus loader | Not implemented — `src/` has no corpus code at all | Working, layered + hot reload |
-| Rule engine | Not implemented | Working (affix / morpheme / template / transliterate) |
-| Local translation model | Not implemented (`src/llm/` empty) | Working (NLLB-200 int8 via CTranslate2) |
-| Term protection (corpus-authoritative translation) | Not implemented | Working, with fallback reporting |
-| Storage / cache | Not implemented | In-memory only |
-| UI, floating overlay | Not implemented | Working (subtitle bar + panel) |
-| Desktop control window | Not implemented | Working (`--desktop`: 字幕 / 采集 / 插件 tabs, sharing one Tk root with the overlay) |
-| Plugins | Not implemented; `include/plugins/plugin_api.h` is still a draft | Extension points v1 with failure isolation, 2 example plugins |
-| UI surface architecture | Not implemented | Working: engine/UI event-contract boundary, CLI, overlay, desktop window and in-process web panel all share one schema |
-| Customization (appearance, layout, profiles) | Not implemented | Working: declarative presentation spec, 7 presets, live switching, memory tiers |
-| Tests | Directories only | `--selftest` plus 21 self-check scripts (16 headless in CI, 5 that need a display); `prototype/README.md` records the current assertion counts |
+| Screen capture | Working: GDI screen / window / synthetic; screen is 265 ms on this host's virtual display, window 2.05 ms | Working (mss, drag-to-select) |
+| Live audio input | Not implemented (v1.1) | Working (loopback / mic / WAV + faster-whisper) |
+| OCR | Working: ONNX Runtime 1.30.0 + PP-OCRv4 (optional load) | Working (RapidOCR ONNX) |
+| Corpus loader | Working: layers, scene, when_*, conflicts, hot reload | Working |
+| Rule engine | Working: affix / morpheme / template / transliterate | Working |
+| Local NMT | Working: CTranslate2 4.8.4 + NLLB-200 int8 | Working (NLLB-200 int8) |
+| Term protection | Working: corpus first, placeholder retry, fallback reason | Working |
+| Storage / cache | In memory only; SQLite not implemented | In memory only |
+| UI, floating overlay | Working: native Win32 layered, click-through/topmost/no-focus; tray has its own owner | Working (Tk bar + panel) |
+| Desktop control window | Not implemented (W3.4) | Working (--desktop) |
+| Plugins | Not implemented (v1.1) | v1 extension points + 2 examples |
+| UI architecture | Working: CLI JSONL + stdin commands; watashi_ui does not link the engine | Working: CLI / overlay / desktop share one schema |
+| Customization | Working: declarative presentation + 400 ms hot reload; settings page pending (W3.4) | Working: 7 presets, live switching |
+| Tests | 240 C++ cases; NMT 120/120 differential; OCR 1.0000 | --selftest + 21 self-check scripts |
 
 ## Runtime requirements
 
@@ -114,11 +114,15 @@ Python prototype (runs today):
   `prototype\run.cmd fetch_model --asr small` (~460 MiB). Without these two
   packages screen translation still works.
 
-Native build (not yet functional):
+Native build (Windows, working):
 
-- CMake >= 3.16 and a C++17 compiler
-- SQLite3, OpenCV (required by `CMakeLists.txt`)
-- Optional: Qt 6 (UI), ONNX Runtime, llama.cpp, PaddleOCR
+- Windows 10/11 x64; CMake >= 3.21; MSVC 2022 (C++17)
+- The first configure needs network once: nlohmann-json, Catch2, ONNX Runtime,
+  CTranslate2 and SentencePiece are fetched by FetchContent, or use the vcpkg
+  manifest
+- No SQLite, OpenCV or Qt; the UI is a Win32 layered window
+- Optional models: PP-OCRv4 (OCR) and NLLB-200 CT2 int8 (NMT); without them the
+  fake / corpus paths still work
 
 ## Build
 
@@ -145,22 +149,22 @@ prototype\run.cmd --selftest
 > **Settings → Apps → Advanced app settings → App execution aliases**
 > (`python.exe`, `python3.exe`).
 
-The native target does not build yet:
+Native build:
 
-```bash
-cmake -S . -B build
-cmake --build build
-```
+~~~powershell
+cmake -S . -B build-w33 -G "Visual Studio 17 2022" -A x64
+cmake --build build-w33 --config Release
+ctest --test-dir build-w33 -C Release --output-on-failure
+~~~
 
-> `CMakeLists.txt` calls `add_subdirectory(tests)` with `BUILD_TESTS=ON` by
-> default, but `tests/` does not yet contain a `CMakeLists.txt`. Configure with
-> `-DBUILD_TESTS=OFF` until that file is added.
+Quick look at the native overlay (fake engine, no models):
 
-Dependency switches:
+~~~powershell
+build-w33\Release\watashi_ui.exe --capture synthetic --duration 30 --ocr fake --translator fake --report build-w33\ui.json
+~~~
 
-```bash
-cmake -S . -B build -DUSE_QT=OFF -DUSE_ONNX=OFF -DUSE_PADDLEOCR=OFF -DBUILD_TESTS=OFF
-```
+Real OCR / NMT needs explicit model paths. Screen capture is about 265 ms on
+this host's GameViewer virtual display; window capture is about 2 ms.
 
 ## Run
 
@@ -245,8 +249,8 @@ override layer merged over the file at load time. That is deliberate — the com
 all of them — and it makes "put it back" a one-file delete. `--config PATH` points the
 prototype at a different file.
 
-The bad news is that `config/app.yaml` is still in the tree: it is a placeholder for the
-C++ skeleton and **no code reads it**. The authoritative list of settings is
+The bad news is that `config/app.yaml` is still in the tree: the C++ mainline does
+not read it yet. The authoritative list of settings is
 `prototype/watashi/settings_schema.py` — one declaration per setting, carrying a key, a
 label and a description, which is what the desktop settings form and the web panel render
 — and the shipped defaults are the `DEFAULTS` dict in `prototype/watashi/config.py`. An
@@ -506,44 +510,46 @@ plugin must never take down the host, and network access is denied by default.
 
 ## Repository layout
 
-```
+~~~text
 ProjectWatashi/
 ├── CMakeLists.txt
-├── .gitignore       # excludes .venv/ and models/ (617 MiB of weights)
-├── config/          # app.yaml — C++ skeleton placeholder, read by no code yet
-├── docs/            # architecture, OCR design, plugin API, presentation spec
-├── include/         # public headers (app, core, db, llm, ocr, plugins)
+├── config/          # presentation.json; app.yaml is a legacy placeholder, unread by C++
+├── docs/            # plan, architecture, ADRs, presentation spec
+├── include/watashi/ # capture/corpus/rules/nmt/ocr/ui/events/commands headers
 ├── src/
-│   ├── app/         # entry point and wiring
-│   ├── core/        # translation routing (fiction_engine, network_slang planned)
-│   ├── ocr/         # capture, preprocessing, OCR scheduling
-│   ├── db/          # local SQLite corpus and cache (planned)
-│   ├── llm/         # local LLM backend (planned)
-│   ├── rules/       # rule engine (planned)
-│   ├── ui/          # overlay and main window (planned)
-│   ├── plugins/     # plugin loading and isolation (planned)
-│   └── utils/       # logging, strings, crypto (planned)
-├── models/          # local models (ocr, llm, embedding) — gitignored
-├── plugins/         # builtin and user plugins
-├── prototype/       # WORKING Python prototype: M1-M3 plus plugin API v1, runs today
-├── rules/           # editable corpora (slang, fiction, dictionaries)
-└── tests/           # C++ tests; CMakeLists.txt only, no sources yet
-```
+│   ├── capture/     # GDI screen/window/synthetic + change detection
+│   ├── cli/         # watashi_cli entry point
+│   ├── core/        # session, pipeline, events, commands
+│   ├── corpus/      # corpus store, rules, UTF-8
+│   ├── fake/        # fake OCR / translator
+│   ├── io/          # JSONL
+│   ├── nmt/         # CTranslate2 + NLLB semantics
+│   ├── ocr/         # ONNX Runtime PP-OCRv4
+│   └── ui/          # Win32 overlay, presentation, tray, child stream
+├── tests/           # Catch2 (240 cases)
+├── tools/           # reference generation, differential, stream validation
+├── golden/          # cases / corpus / nmt
+├── schema/          # events / settings / presentation
+├── prototype/       # Python reference implementation
+├── models/          # local models, gitignored
+└── build-*/         # per-stage build trees, gitignored
+~~~
 
-The empty `ui/` and `scripts/` directories from the original scaffold were
-removed: empty directories cannot be committed, nothing referenced them, and the
-`ui/` role is served by `src/ui/` in the C++ tree and `prototype/watashi/` today.
+The empty scaffold directories (src/app, src/common, src/db, src/llm, src/plugins,
+src/rules, src/utils and their include/ counterparts) are not referenced by the
+build and hold no sources; they remain on disk because the ACL denies deletion.
+They are safe to ignore.
 
 ## Roadmap
 
 | Stage | Goal |
 | --- | --- |
-| M1 | Minimal loop: hotkey region select -> capture -> OCR -> corpus lookup -> bilingual overlay (Windows) — **done in `prototype/`** |
-| M2 | Corpus and rule engine with user authoring and hot reload — **done in `prototype/`** |
-| M3 | Local model fallback with streaming output and caching — **done in `prototype/`** (local NMT, final translation batched before painting; async refinement available as an option) |
-| M4 | Latency budget met: incremental recognition, caching, thread model tuning — **partially measured** |
-| M5 | Cross-platform: Linux and macOS capture and UI adapters |
-| M6 | Stable plugin API; experimental Android target — **plugin API v1 done in `prototype/`**, Android not started |
+| M1 | Minimal loop: capture -> OCR -> corpus -> bilingual overlay — **done in C++ W1.1-W1.4 and in the Python prototype** |
+| M2 | Corpus and rule engine with hot reload — **done in C++ W1.2, 120/120 differential** |
+| M3 | Local NMT fallback, term protection, batching — **done in C++ W2, 120/120, 100% term protection** |
+| M4 | Latency budget and UI: overlay/hotkeys/tray/settings — **W3.0-W3.3 landed; W3.4 settings pending** |
+| M5 | Release hardening: installer, signing, soak, SBOM — **W4, not started** |
+| M6 | Cross-platform and plugin sandbox — **post-v1.0, not in scope** |
 
 ## Portability targets
 

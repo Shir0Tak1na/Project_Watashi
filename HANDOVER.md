@@ -1,127 +1,125 @@
 # 交接说明 / Handover
 
 > 给接手的人或编码代理：**先读这一页，再读别的。**
-> 最后更新：2026-10-29 07:28（Asia/Shanghai）
+> 最后更新：2026-10-31 14:40（Asia/Shanghai）
 
 ## 一句话状态
 
-Python 原型是**可运行、已实测**的参考实现；C++ 主干已是可编译的 walking skeleton
-（`watashi_core` / `watashi_cli` / ctest），W1.1 起接入**可选**的 ONNX Runtime OCR，默认仍走 fake。
-正式版按 [docs/cpp-v1-plan.md](docs/cpp-v1-plan.md) 执行，当前处于 **W1（内核切片）**：W1.0 骨架、W1.1 可选 ONNX OCR 已完成。
+C++ 正式版已经从 walking skeleton 走到 **W3.3**：本地捕获、PP-OCRv4、语料/规则、CTranslate2 NLLB、原生 Win32 悬浮窗、声明式呈现、stdin 命令通道、全局热键和托盘都已落地。**W3.3 的托盘独立 owner 与报告退出路径已修**；W3.4 设置页、W4 发布硬化尚未开始。
 
 ## 必读顺序（约 30 分钟）
 
-1. [docs/cpp-v1-plan.md](docs/cpp-v1-plan.md) — 唯一的执行计划：范围、阶段、人时、验收、风险
-2. [README_zh.md](README_zh.md) — 实际能力与已知限制（英文版 [README.md](README.md)）
-3. [prototype/README.md](prototype/README.md) — 实测数据、设计权衡、失败模式
+1. [docs/cpp-v1-plan.md](docs/cpp-v1-plan.md) — 执行计划；先看 §0 的当前进度，再看原始 WBS
+2. [README_zh.md](README_zh.md) — 实际能力、构建方式与已知限制（英文版 [README.md](README.md)）
+3. [prototype/README.md](prototype/README.md) — Python 参考实现的实测数据与失败模式
 4. [prototype/watashi/events.py](prototype/watashi/events.py) — 事件/命令契约，**冻结对象**
 5. [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md) — 许可边界（代码 MIT，NLLB 权重 CC-BY-NC-4.0）
 
 ## 什么是真的（可复现）
 
-- `prototype\run.cmd --selftest` 通过；21 个自检脚本中 16 个无界面，本轮 15 绿、820 项断言（`selfcheck_web` 需非沙箱环境）
-- 实测：OCR 89 / 104 / 117 ms @640 / 960 / 1280 px；整帧 93 ms；94% 的帧被变化检测跳过；NMT int8 215 ms/句、加载 1.4 s
-- 模型：NLLB 618 MB、Whisper 464 MB（均为 CTranslate2 int8），PP-OCRv4 16 MB 随 pip 包
-- 能力面：M1–M3 + 直播语音 + 桌面窗 + Web 面板 + 声明式呈现 + 插件 v1
+- **C++ 测试**：当前 630af73 的 build-w33 通过 **240 用例 / 1,402,011 断言**。W3.1 的提交 1e8aa1a 单独跑有 3 个红测，原因是测试把临时 spec 写进 %TEMP%，本机 ACL 拒绝；W3.2 把测试临时目录改到 build 树后全绿。
+- **NMT 差分**：tools/compare_nmt.py **120/120** 与 Python 参考逐字段一致（target/backend/protected_terms/lost_placeholders/fallback_reason/used_model）。
+- **NMT 性能**：watashi_nmt_probe 加载 **660.6 ms**；4 句 batch 共 **490.9 ms**（约 123 ms/句），在 350 ms/句的预算内。
+- **OCR**：50 张合成帧 + 10 张受控字幕，逐帧均值/中位数/最小 **1.0000**，框数 0 不一致，最大框差 **2 px**；1200×200 P50 **49–52 ms**。
+- **捕获**：窗口捕获 P50 **2.05 ms**；屏幕捕获 P50 **264.6 ms**，是 GameViewer 虚拟显示的环境限制（独立 mss 同样 264–268 ms，DXGI E_ACCESSDENIED）。
+- **原生 UI**：watashi_ui 点击穿透、置顶、不抢焦点；144 DPI 下 20 帧、click_through=pass、焦点前后不变、内存 **8.4 MiB**；目标文字换行完整。
+- **流校验**：fake / corpus / 捕获流仍通过 tools/validate_stream.py 与 events.schema.json（42 事件 + 负例）。
 
 ## 什么是过期的（别照着做）
 
 | 位置 | 写着 | 实情 |
 | --- | --- | --- |
-| [Project Watashi.md](Project%20Watashi.md) | “8 个自检脚本、298 项断言” | 0.0.2 时代的数字；现在是 21 个脚本、1119 项（含界面） |
+| [docs/cpp-v1-plan.md](docs/cpp-v1-plan.md) | W1/W3 的旧工作包编号、20 h/周 | 实际交付顺序与编号不同；以 §0 进度和实际提交为准 |
+| [Project Watashi.md](Project%20Watashi.md) | “8 个自检脚本、298 项断言” | 0.0.2 时代数字；原型现在是 21 个脚本、1119 项（含界面） |
 | [docs/screen_ocr_design.md](docs/screen_ocr_design.md) | 建议“降采样后再 OCR” | 实测是陷阱：640 px 会把词粘在一起，导致语料命中失败 |
 | [CMakeLists.txt](CMakeLists.txt) | PaddleOCR / llama.cpp 选项 | 验证过的栈是 ONNX Runtime（OCR）+ CTranslate2（NLLB/Whisper） |
-| [src/](src/) 与 [include/](include/) | 任何“实现” | 全是占位，且从未编译；不要续写，按计划重开 |
+| config/app.yaml | C++ 主配置 | 目前 C++ 不读它；CLI 用显式参数，设置页尚未实现 |
 
 ## 硬约束（违反即返工）
 
-1. 事件 JSON 与 [events.py](prototype/watashi/events.py) 逐字段一致（`v`/`seq`/`ts` 信封），不许自创形状。
-2. 设置项键名与默认值来自 [settings_schema.py](prototype/watashi/settings_schema.py)，不许加未登记键。
+1. 事件 JSON 与 [events.py](prototype/watashi/events.py) 逐字段一致（v/seq/ts 信封），不许自创形状。
+2. 设置项键名与默认值来自 [settings_schema.py](prototype/watashi/settings_schema.py)，不许加未登记键；W3.4 设置页必须从 schema 生成。
 3. 语料命中即权威，模型不得改写术语；未命中落到模型时必须报告**兜底原因**。
-4. 推理后端必须实现现有 `Translator` 协议；v1.0 只允许本地后端，外部/局域网后端默认关闭且需先有 ADR。
+4. 推理后端必须实现现有 Translator 协议；v1.0 只允许本地后端，外部/局域网后端默认关闭且需先有 ADR。
 5. 模型权重不进 git、不进安装包（见 [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md)）。
+6. UI 不得复制引擎逻辑：watashi_ui 只消费 watashi_cli --json-lines，命令只走 stdin 的 JSON 命令通道。
 
-## 当前状态（2026-10-29）
+## 当前状态（2026-10-31）
 
 | 项 | 状态 |
 | --- | --- |
-| HEAD | `df66a24`（文档：外部后端可选）；tag `v0.0.8a` 在 `e571cd7` |
-| 工作区 | 干净：W1.1（`b59d4b9`）与文档提交（`df66a24`）均已推送 |
-| 工具链 | VC 工作负载已装；`cl` 需 Developer PowerShell / vcvars |
-| CI | `.github/workflows/cpp.yml`：Windows 构建 + ctest + 双校验 |
-| 契约 | `schema/` 三份；events payload 已开放，ReadyInfo 必填 3 字段 |
-| 黄金样本 | 200 条 + `golden/verify_cases.py` |
+| HEAD | 630af73（W3.3：独立 tray owner + 正常退出报告） |
+| 远端 | d261fad（本地领先 3 个提交；本次文档更新尚未提交） |
+| 工作区 | 代码 clean；本文档更新中；build-* 已 gitignore |
+| 当前构建 | build-w33（W3.3）；build-w32 保留 W3.2；build-w2 用于 NMT |
+| 契约 | schema/ 三份；events payload 开放，ReadyInfo 必填 3 字段 |
+| 黄金样本 | 200 条 + golden/verify_cases.py；NMT 另有 golden/nmt 120 条 |
+| 当前阻塞 | 交互桌面的托盘菜单尚未手工复验（本 shell 无通知区，tray.added=false） |
+| 下一步 | 交互桌面复验托盘/报告；然后 W3.4 设置页 |
 
-## 第一批任务（W0，已完成）
+## W0 交付记录（2026-10-28）
 
-| # | 任务 | 验收 |
-| --- | --- | --- |
-| W0.1 | 提交工作区并打 `v0.0.8a` | `git status` 干净；tag 指向含直播语音的提交 |
-| W0.2 | 装 VS“C++ 桌面开发”；vcpkg；CI 加 Windows 构建 | CI 上第一次 `cl.exe` 编译成功 |
-| W0.3 | 三份契约导出 JSON Schema | `schema/*.json` 带版本号，Python 侧校验通过 |
-| W0.4 | 黄金样本 200 条 | 同一输入两次运行结果一致 |
-| W0.5 | 模型哈希清单 | 每个权重有 SHA-256、来源、许可 |
-| W0.6 | 推理栈 spike | ORT 跑通一帧、CT2 跑通一句，记录 P50/P95 |
+1. bff1add W0.3 三份 JSON Schema
+2. 189ae88 W0.4 200 条黄金样本
+3. e002380 W0.5 models.lock.json + fetch_model --check
+4. 3e664ad W0.3 补丁：settings 里允许值为 null 的字段
 
-### W0 交付记录（2026-10-28）
+3e664ad 在 W0.5 之后补，检查 W0.3 以它或之后为准；历史不重写。
 
-实际提交顺序是：
-
-1. `bff1add` W0.3 三份 JSON Schema
-2. `189ae88` W0.4 200 条黄金样本
-3. `e002380` W0.5 models.lock.json + `fetch_model --check`
-4. `3e664ad` W0.3 补丁：settings 里允许值为 `null` 的字段
-
-`3e664ad` 是在 W0.5 之后才补的，不是 W0.3 原始提交的一部分。检查 W0.3 时应以
-`3e664ad` 或之后为准；`189ae88` 上的 settings schema 仍然会把
-`det_limit_side_len: null` 和 `profile: null` 判为非法。历史不重写，以此记录为准。
-
-**W0 全部完成前，不要写 W1 的业务代码。** 这不是流程洁癖：契约还在变，先写的会白写。
-
-## W1 交付记录（2026-10-29）
+## W1 交付记录（2026-10-28 → 10-30）
 
 | 提交 | 内容 |
 | --- | --- |
-| `f7f2138` → `3af4f23` | W1.0 骨架（`watashi_core` / `watashi_cli` / ctest），随后修 ready/stats 与 schema 门 |
-| `b59d4b9` | W1.1 可选 ONNX Runtime OCR；CLI 默认 fake，CI 不依赖模型 |
+| f7f2138 → 3af4f23 | W1.0 骨架、ready/stats、schema 门 |
+| b59d4b9 | W1.1 可选 ONNX Runtime OCR；默认 fake |
+| 83d2523 | W1.2 语料/规则引擎；120/120 corpus-only 差分；86 用例 |
+| 50a33b3 | W1.3 Win32 捕获（screen/window/synthetic）；107 用例 |
+| 7c88dfe | W1.4 Python 悬浮窗消费 C++ JSONL；16 适配器用例 |
 
-验收在**当前 HEAD 的 clean-room 克隆**里重跑（不复用旧 `build/`、`build-w11/`）：
+W1.1 验收：50 合成 + 10 受控字幕一致率 1.0000；1200×200 P50 49–52 ms；框差 ≤2 px。屏幕捕获在本机被虚拟显示拖到 265 ms，窗口捕获 2.05 ms，记录在 bench/w13.json，没有冒充通过。
 
-- `ctest` 41/41；fake 流 42 事件通过 `tools/validate_stream.py` 与 `tests/validate_events_schema.py`（含「删 `data.region` 必须失败」反例）
-- 一致性口径：**逐帧一致率的均值**（同时报中位数与最小值），difflib `autojunk=False`；屏幕门槛要求均值与中位数都 ≥0.90
-- 50 张渲染帧：均值 **1.0000**（中位数/最小 1.0000），框数 0 不一致，最大框差 **2 px**
-- 10 张**受控字幕**：固定 mp4 在无边框窗口按 1:1 播放、mss 抓字幕条，抓取帧与显示帧逐像素核对后才记录；均值/中位数 **1.0000**，框数 0 不一致，最大框差 **2 px**
-- 1200×200 ×20：P50 **49.6–52.4 ms**（≤120 ms，且 ≤ baseline×1.2 = 90.70 ms）
-- 旧「桌面/任务栏」截图已废弃并删除：它测的是桌面布局，不是字幕 OCR
+## W2 交付记录（2026-10-31）
 
-复跑用一条命令（重新渲染 50 帧、重新播放并抓取字幕条、跑完全部对照；像素与参考只写输出目录）：
+- 3f4e584：CTranslate2 4.8.4 + oneDNN，NLLB int8；术语保护、占位符重试、批量、兜底原因。
+- golden/nmt 120 条，tools/compare_nmt.py **120/120** 一致。
+- C++ 测试 131 用例全过；模型加载 660.6 ms；4 句 490.9 ms。
+- 裸模型质量差是预期；顺序始终是语料 → 规则 → 模型，语料命中不改写。
 
-```powershell
-.venv\Scripts\python.exe tools\check_ocr.py `
-    --det .venv\Lib\site-packages\rapidocr_onnxruntime\models\ch_PP-OCRv4_det_infer.onnx `
-    --rec .venv\Lib\site-packages\rapidocr_onnxruntime\models\ch_PP-OCRv4_rec_infer.onnx `
-    --chars spike\chars.txt --out build-w11
-```
+## W3 交付记录（2026-10-31）
 
-`--out` 未指定时自动选 `build/`、`build-w11/` 中第一个可写目录（本机的 Python 写 `build/` 会 PermissionError）。
+| 提交 | 内容 |
+| --- | --- |
+| 461f161 | W3.0 原生 Win32 分层悬浮窗；点击穿透/置顶/不抢焦点 |
+| d261fad | 修复 target 裁剪（测量与绘制统一字重）与默认 CLI 路径（同目录） |
+| 1e8aa1a | W3.1 声明式呈现规格 + 400 ms 热重载 + 44 测试 |
+| 62d6495 | W3.2 stdin 命令通道 + Ctrl+Alt+P/H/T + 托盘 + 234 用例 |
+| 630af73 | W3.3 独立 tray owner 窗口 + finish() 写报告 + 240 用例 |
 
-**待补**：W0.6b（CT2/NLLB 的 C++ spike）仍为空，W2 之前必须补；W1.2（语料/规则 v0）尚未开始。
+**W3.3 修复**：托盘图标与菜单现在属于独立的 1x1 WS_EX_TOOLWINDOW owner（屏幕外），
+SetForegroundWindow 不再打在 WS_EX_NOACTIVATE 悬浮窗上；悬浮窗五个扩展样式不变。
+run_overlay 统一用 finish() 处理托盘 Exit、WM_CLOSE、流结束和异常，报告包含
+exit_reason、tray.added、hotkeys 实测值；Ctrl+C/关控制台会 post WM_CLOSE 并等最多 4 s，
+强杀无法写报告，代码不假装。本 shell 无通知区（Shell_NotifyIcon error 5），托盘菜单仍需交互桌面复验。
 
 ## 环境坑（本机实测）
 
-- Windows 的 `python` 可能是应用执行别名 → 一律用 `prototype\run.cmd`
-- VS Build Tools 2022 已装但**没有 C++ 工作负载**（只有 MSBuild / Common7）
-- `selfcheck_web` 在受限沙箱里会 `WinError 5`（CreatePipe），是环境限制，不是代码缺陷
-- `cmake` 在 Git Bash 下会段错误，改用 PowerShell
-- `models/` 1.1 GB 已被 gitignore；不要提交
-- 目录里可能出现 `.dsh-ops-update-*.lock`：代理工具的临时锁，已加入 `.git/info/exclude`，不要提交
+- **屏幕捕获 265 ms**：GameViewer 虚拟显示适配器；同尺寸窗口捕获 2.05 ms；DXGI 打不开。不要把 265 ms 当实现性能。
+- **%TEMP% ACL**：Python 与测试进程写 %TEMP% 可能 Permission denied；W3.2 已把测试临时文件放 build 树。check_ocr.py 用 --out build-w11 或自动回退。
+- **.git ACL**：shell 的 git add/commit 会 index.lock: Permission denied；TRAE agent 可以写。不要在 .git 里手动乱改；必须绕过时用临时 index/object + commit-tree，并核对 git show。
+- **Clash**：系统代理可能关闭；Git 仓库本地配置 http.https://github.com.proxy=socks5h://127.0.0.1:7891。推送用 $env:TMP='E:\ProjectWatashi\.tmpgit' 避开 GCM 写 %TEMP% 的 ACL 问题。
+- **Qt**：本机没有 Qt6，vcpkg 构建超出 timebox；ADR-0009 选 Win32 分层窗。
+- **build/ 对 Python 不可写**；用 build-w11/build-w32 等。build-* 已 gitignore。
+- **模型**：models/ 1.1 GB 已 gitignore；不要提交。
 
 ## 交接检查单
 
-- [ ] 工作区已提交并打 tag
-- [ ] CI 能编译 C++
-- [ ] 契约 schema 已导出
-- [ ] 黄金样本 ≥200
-- [ ] 模型哈希清单
-- [ ] 接手方能独立跑通 `prototype\run.cmd --selftest`
-- [ ] 接手方能说出“哪些文档是过期的”
+- [x] 工作区代码已提交；文档更新待提交
+- [x] CI 能编译 C++（schema/stream 双校验）
+- [x] 契约 schema 已导出
+- [x] 黄金样本 ≥200；NMT 120 条
+- [x] 模型哈希清单
+- [x] 接手方能独立跑 prototype\run.cmd --selftest
+- [x] 接手方能说出“哪些文档是过期的”
+- [x] W3.3 托盘/报告修复（本 shell 正常 duration 报告通过；交互托盘待复验）
+- [ ] W3.4 设置页
+- [ ] W4 安装包/签名/8h soak

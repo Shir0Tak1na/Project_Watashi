@@ -49,26 +49,26 @@ Project Watashi（渡）是一款桌面工具：持续识别用户在屏幕上�
 
 ## 项目状态
 
-**`prototype/` 下的 Python 原型已实现 M1–M3 并可实际运行**：屏幕区域捕获、本地 OCR、文件驱动的语料库与规则引擎、带术语保护的本地 NMT 模型，以及可点击穿透的字幕覆盖层。实测延迟数据与已知限制见 [`prototype/README.md`](prototype/README.md)。
+Python 原型仍在 `prototype/`，是行为参考与当前可运行的完整实现。
 
-**`src/` 下的 C++ 主干仍是骨架**，尚未承接上述成果，各层均为占位实现。
+C++ 主干已经从 walking skeleton 走到 **W1.1–W3.3**：本地捕获、PP-OCRv4、分层语料/规则、CTranslate2 NLLB、原生 Win32 悬浮窗、声明式呈现、stdin 命令通道、全局热键和托盘。**W3.3 的托盘独立 owner 与退出报告已修**；设置页（W3.4）和发布硬化（W4）尚未开始。
 
-| 模块 | C++ 主干（`src/`） | Python 原型（`prototype/`） |
+| 模块 | C++ 主干（src/） | Python 原型（prototype/） |
 | --- | --- | --- |
-| 屏幕捕获 / 选区 | 桩实现 —— 返回空白图像 | 可用（`mss`，支持拖拽选区） |
-| 直播语音输入 | 未实现 | 可用（系统声音 / 麦克风 / WAV + faster-whisper，离线） |
-| OCR | 桩实现 —— 返回硬编码文本 | 可用（RapidOCR ONNX，离线） |
-| 语料库加载 | 未实现 —— `src/` 里没有任何语料库相关代码 | 可用，分层 + 热加载 |
-| 规则引擎 | 未实现 | 可用（词缀 / 词素 / 模板 / 音译） |
-| 本地翻译模型 | 未实现（`src/llm/` 为空） | 可用（NLLB-200 int8，CTranslate2） |
-| 术语保护（语料库权威翻译） | 未实现 | 可用，并报告兜底原因 |
-| 存储 / 缓存 | 未实现 | 仅内存缓存 |
-| UI、悬浮窗 | 未实现 | 可用（字幕条 + 对照面板） |
-| 桌面控制窗口 | 未实现 | 可用（`--desktop`：字幕 / 采集 / 插件 三个页签，与悬浮窗共用同一 Tk root） |
-| 插件 | 未实现；`include/plugins/plugin_api.h` 仍是草案 | 扩展点 v1，具备失败隔离，附带 2 个示例插件 |
-| 界面架构 | 未实现 | 可用：引擎/界面事件契约边界，CLI、悬浮窗、桌面窗口与进程内 Web 面板共用同一 schema |
-| 客制化（外观 / 版式 / 配置档） | 未实现 | 可用：声明式呈现规格、7 个预设、实时切换、内存档位 |
-| 测试 | 仅有目录 | `--selftest` 加 21 个自检脚本（16 个无需界面、CI 可跑，5 个需要显示器）；具体断言数记录在 `prototype/README.md` |
+| 屏幕捕获 | 可用：GDI（screen / window / synthetic）；screen 在本机虚拟显示上 265 ms，window 2.05 ms | 可用（mss，支持拖拽选区） |
+| 直播语音输入 | 未实现（v1.1） | 可用（系统声音 / 麦克风 / WAV + faster-whisper） |
+| OCR | 可用：ONNX Runtime 1.30.0 + PP-OCRv4（可选加载） | 可用（RapidOCR ONNX） |
+| 语料库加载 | 可用：分层、scene、when_*、冲突、热重载 | 可用 |
+| 规则引擎 | 可用：词缀 / 词素 / 模板 / 音译 | 可用 |
+| 本地翻译模型 | 可用：CTranslate2 4.8.4 + NLLB-200 int8 | 可用（NLLB-200 int8） |
+| 术语保护 | 可用：语料优先、占位符重试、兜底原因 | 可用 |
+| 存储 / 缓存 | 仅内存；SQLite 未实现 | 仅内存 |
+| UI、悬浮窗 | 可用：原生 Win32 分层窗，点击穿透/置顶/不抢焦点；托盘独立 owner 已实现 | 可用（Tk 字幕条 + 对照面板） |
+| 桌面控制窗口 | 未实现（W3.4） | 可用（--desktop） |
+| 插件 | 未实现（v1.1） | 扩展点 v1 + 2 个示例插件 |
+| 界面架构 | 可用：CLI JSONL + stdin 命令；watashi_ui 不链接引擎 | 可用：CLI / 悬浮窗 / 桌面窗共享 schema |
+| 客制化 | 可用：声明式呈现 + 400 ms 热重载；设置页待做（W3.4） | 可用：7 个预设、实时切换 |
+| 测试 | 240 C++ 用例；NMT 120/120 差分；OCR 1.0000 | --selftest + 21 个自检脚本 |
 
 ## 运行环境要求
 
@@ -79,11 +79,12 @@ Python 原型（现在即可运行）：
 - 可选：由 `prototype/fetch_model.py` 一次性获取的本地 NLLB 模型（约 617 MiB）。没有它时原型仅靠语料库与规则运行。
 - 直播翻译：`soundcard`（读系统声音 / 麦克风）与 `faster-whisper`（本地语音识别）；语音权重由 `prototype\run.cmd fetch_model --asr small` 一次性获取（small 约 460 MiB）。不装这两个包时屏幕翻译照常可用。
 
-原生构建（尚不可用）：
+原生构建（Windows，可用）：
 
-- CMake >= 3.16 与支持 C++17 的编译器
-- SQLite3、OpenCV（`CMakeLists.txt` 中为必需依赖）
-- 可选：Qt 6（UI）、ONNX Runtime、llama.cpp、PaddleOCR
+- Windows 10/11 x64；CMake >= 3.21；MSVC 2022（C++17）
+- 首次配置需要联网一次：nlohmann-json / Catch2 / ONNX Runtime / CTranslate2 / SentencePiece 由 FetchContent 拉取，或使用 vcpkg manifest
+- 不依赖 SQLite、OpenCV 或 Qt；UI 是 Win32 分层窗
+- 可选模型：PP-OCRv4（OCR）与 NLLB-200 CT2 int8（NMT）；不装模型时用 fake / corpus 路径
 
 ## 构建
 
@@ -109,20 +110,21 @@ prototype\run.cmd --selftest
 > **设置 → 应用 → 高级应用设置 → 应用执行别名** 中关闭
 > `python.exe` 与 `python3.exe`。
 
-原生目标目前尚不能构建：
+原生构建：
 
-```bash
-cmake -S . -B build
-cmake --build build
-```
+~~~powershell
+cmake -S . -B build-w33 -G "Visual Studio 17 2022" -A x64
+cmake --build build-w33 --config Release
+ctest --test-dir build-w33 -C Release --output-on-failure
+~~~
 
-> `CMakeLists.txt` 默认 `BUILD_TESTS=ON` 并调用 `add_subdirectory(tests)`，但 `tests/` 目录下目前还没有 `CMakeLists.txt`。在该文件补齐之前，请加上 `-DBUILD_TESTS=OFF` 进行配置。
+快速看一眼原生悬浮窗（假引擎，不需要模型）：
 
-依赖开关：
+~~~powershell
+build-w33\Release\watashi_ui.exe --capture synthetic --duration 30 --ocr fake --translator fake --report build-w33\ui.json
+~~~
 
-```bash
-cmake -S . -B build -DUSE_QT=OFF -DUSE_ONNX=OFF -DUSE_PADDLEOCR=OFF -DBUILD_TESTS=OFF
-```
+真实 OCR / NMT 需要显式传模型路径；屏幕捕获在 GameViewer 虚拟显示上约 265 ms，窗口捕获约 2 ms。
 
 ## 运行
 
@@ -187,7 +189,7 @@ prototype\run.cmd --promote-corrections --dry-run      # 实时纠正 -> 语料�
 
 可运行的原型读的是 `prototype/config.yaml`，文件里的路径都相对该文件解析，所以从任何目录启动都可以。在界面里改的设置**不会**写回这个文件：它们写进 `prototype/config.user.yaml`，一个在加载时合并上来的覆盖层。这样安排是有意的——`config.yaml` 里的注释本身就是这些配置项的说明，用 YAML 库往返写一遍会把它们全删掉；而且「还原」因此就是删掉一个文件。`--config PATH` 可以让原型去读另一个文件。
 
-坏消息是布局：`config/app.yaml` 还留在仓库里，它是给 C++ 主干预留的占位文件，**目前没有任何代码读它**。真正的配置项清单在 `prototype/watashi/settings_schema.py`——一份声明同时给出键名、标签与说明，桌面设置表单和 Web 面板渲染的就是它；出厂默认值在 `prototype/watashi/config.py` 的 `DEFAULTS` 里。配置文件里写了引擎不认识的键会**被静默忽略**，所以一个拼错的键看起来和「这个设置不生效」完全一样；要看真实存在哪些设置，以设置面板为准。
+坏消息是布局：`config/app.yaml` 还留在仓库里，C++ 主干目前不读它。真正的配置项清单在 `prototype/watashi/settings_schema.py`——一份声明同时给出键名、标签与说明，桌面设置表单和 Web 面板渲染的就是它；出厂默认值在 `prototype/watashi/config.py` 的 `DEFAULTS` 里。配置文件里写了引擎不认识的键会**被静默忽略**，所以一个拼错的键看起来和「这个设置不生效」完全一样；要看真实存在哪些设置，以设置面板为准。
 
 一份最小的配置，形状与加载器一致（下面每个键和取值都是真的）：
 
@@ -377,45 +379,44 @@ Python 侧当前状态：`postprocess`、`export` 与 `corpus_loader` 三个扩�
 
 ## 仓库结构
 
-```
+~~~text
 ProjectWatashi/
 ├── CMakeLists.txt
-├── .gitignore       # 排除 .venv/ 与 models/（617 MiB 权重）
-├── config/          # app.yaml —— C++ 主干的占位文件，目前没有代码读它
-├── docs/            # 架构、OCR 设计、插件 API、呈现规格
-├── include/         # 公共头文件（app、core、db、llm、ocr、plugins）
+├── config/          # presentation.json；app.yaml 是旧占位，C++ 目前不读
+├── docs/            # 计划、架构、ADR、呈现规格
+├── include/watashi/ # 公共头：capture/corpus/rules/nmt/ocr/ui/events/commands
 ├── src/
-│   ├── app/         # 程序入口与装配
-│   ├── core/        # 翻译路由（fiction_engine、network_slang 规划中）
-│   ├── ocr/         # 捕获、预处理、OCR 调度
-│   ├── db/          # 本地 SQLite 词库与缓存（规划中）
-│   ├── llm/         # 本地 LLM 后端（规划中）
-│   ├── rules/       # 规则引擎（规划中）
-│   ├── ui/          # 悬浮窗与主控制台（规划中）
-│   ├── plugins/     # 插件加载与隔离（规划中）
-│   └── utils/       # 日志、字符串处理、加解密（规划中）
-├── models/          # 本地模型（ocr、llm、embedding）—— 已 gitignore
-├── plugins/         # 内置与用户插件
-├── prototype/       # 可运行的 Python 原型：M1–M3 加插件 API v1
-├── rules/           # 可编辑语料库（slang、fiction、dictionaries）
-└── tests/           # C++ 测试；目前仅有 CMakeLists.txt，无测试源文件
-```
+│   ├── capture/     # GDI screen/window/synthetic + 变化检测
+│   ├── cli/         # watashi_cli 入口
+│   ├── core/        # session、pipeline、事件、命令
+│   ├── corpus/      # 语料库、规则、UTF-8
+│   ├── fake/        # fake OCR / translator
+│   ├── io/          # JSONL
+│   ├── nmt/         # CTranslate2 + NLLB 语义
+│   ├── ocr/         # ONNX Runtime PP-OCRv4
+│   └── ui/          # Win32 悬浮窗、呈现、托盘、子进程流
+├── tests/           # Catch2（240 用例）
+├── tools/           # 参考生成、差分、流校验
+├── golden/          # cases / corpus / nmt
+├── schema/          # events / settings / presentation
+├── prototype/       # Python 参考实现
+├── models/          # 本地模型，gitignore
+└── build-*/         # 各阶段构建目录，gitignore
+~~~
 
-原始脚手架里空的 `ui/` 与 `scripts/` 目录已删除：空目录无法提交，且没有任何构建引用它们；
-它们对应的职责现由 C++ 树的 `src/ui/` 和当前可用的 `prototype/watashi/` 承担。
-`src/bridge/`（旧的 Python 桥接层）与其加载的 `plugins/fiction_plugin.py`、
-`plugins/slang_plugin.py` 也已删除——它们实现的是早期接口，与现行插件注册表不兼容且无任何引用。
+脚手架遗留的空目录（src/app、src/common、src/db、src/llm、src/plugins、src/rules、
+src/utils 及 include/ 下同名目录）不在构建里、没有源文件；当前仍留在磁盘上（ACL 拒绝删除），不参与构建，可安全忽略。
 
 ## 路线图
 
 | 阶段 | 目标 |
 | --- | --- |
-| M1 | 最小闭环：热键选区 -> 截图 -> OCR -> 语料库匹配 -> 双语悬浮窗（Windows）—— **已在 `prototype/` 完成** |
-| M2 | 语料库与规则引擎落地，支持用户自定义与热加载 —— **已在 `prototype/` 完成** |
-| M3 | 本地模型兜底翻译，含流式输出与缓存 —— **已在 `prototype/` 完成**（本地 NMT，绘制前批量完成整句翻译；异步精修作为可选项保留） |
-| M4 | 达成延迟预算：增量识别、缓存、线程模型优化 —— **已部分实测** |
-| M5 | 跨平台：Linux 与 macOS 的捕获层与 UI 适配 |
-| M6 | 插件 API 稳定化；Android 目标实验性验证 —— **插件 API v1 已在 `prototype/` 完成**，Android 未开始 |
+| M1 | 最小闭环：捕获 -> OCR -> 语料 -> 双语悬浮窗 —— **C++ W1.1–W1.4 与 Python 原型均已完成** |
+| M2 | 语料库与规则引擎、热加载 —— **C++ W1.2 完成，120/120 差分** |
+| M3 | 本地 NMT 兜底、术语保护、批量 —— **C++ W2 完成，120/120，术语 100%** |
+| M4 | 延迟预算与 UI：悬浮窗/热键/托盘/设置 —— **W3.0–W3.3 已落地；W3.4 设置页待做** |
+| M5 | 发布硬化：安装包、签名、soak、SBOM —— **W4，未开始** |
+| M6 | 跨平台与插件沙箱 —— **v1.1 以后，不在 v1.0 范围** |
 
 ## 可移植性目标
 
