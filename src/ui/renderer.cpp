@@ -183,12 +183,12 @@ HFONT GdiText::select_font(HDC dc, int px, bool bold) {
     return font;
 }
 
-TextExtent GdiText::measure(const std::string& utf8, int px) {
+TextExtent GdiText::measure(const std::string& utf8, int px, bool bold) {
     if (dc_ == nullptr) {
         return TextExtent{};
     }
     const std::wstring wide = to_wide(utf8);
-    HFONT font = select_font(dc_, px, false);
+    HFONT font = select_font(dc_, px, bold);
     TextExtent extent;
     if (font == nullptr) {
         extent.height = px;
@@ -206,7 +206,9 @@ TextExtent GdiText::measure(const std::string& utf8, int px) {
 }
 
 TextMeasure GdiText::as_measure() {
-    return [this](const std::string& text, int px) { return measure(text, px); };
+    return [this](const std::string& text, int px, bool bold) {
+        return measure(text, px, bold);
+    };
 }
 
 OverlayImage compose_overlay(

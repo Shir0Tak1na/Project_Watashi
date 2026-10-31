@@ -22,8 +22,11 @@ struct TextExtent {
 };
 
 /// UTF-8 text at ``px`` physical pixels -> physical extent. Injected so layout
-/// stays free of GDI.
-using TextMeasure = std::function<TextExtent(const std::string& utf8, int px)>;
+/// stays free of GDI. ``bold`` must be the same weight the renderer will paint
+/// with: measuring regular and painting semibold yields a box narrower than the
+/// glyphs, which clips the right edge of a target line.
+using TextMeasure =
+    std::function<TextExtent(const std::string& utf8, int px, bool bold)>;
 
 struct Style {
     /// Logical (96 dpi) metrics. Every value is scaled once by the target dpi.
@@ -99,11 +102,12 @@ struct LayoutRequest {
 
 /// Greedy word wrap at ``max_width`` physical pixels, honouring explicit
 /// newlines. A word longer than the line is hard-split at the width instead of
-/// overflowing the plate.
+/// overflowing the plate. ``bold`` selects the weight used for measurement.
 [[nodiscard]] std::vector<std::string> wrap_text(
     const std::string& text,
     int max_width,
     int font_px,
+    bool bold,
     const TextMeasure& measure);
 
 /// Lay out source, target and status; apply the anchor. Empty text with no

@@ -86,3 +86,8 @@ DPI 换算、贪心换行、底边居中锚点都能在无显示器的机器上�
   ADR 重新评估 UI 工具包（Qt 仍在候选内），而不是把本决策外推。
 - 悬浮窗是只读视图：它不持有 OCR、语料或 NMT 代码，数据只经过
   [model.cpp](../../src/ui/model.cpp) 的事件解码。
+- `watashi_ui` 默认在**自身目录**找 `watashi_cli.exe`（两者总被同一个构建目标输出到
+  同一目录），不写死任何 build 目录；干净检出里不存在旧引擎时由 `--cli` 显式指定。
+- 文字必须"按什么字重测量、就按什么字重绘制"：target 用 semibold，布局就用 semibold
+  度量（[layout.hpp](../../include/watashi/ui/layout.hpp)）。用 regular 测量再按
+  semibold 合成会让行宽小于字形，右边缘被裁掉。

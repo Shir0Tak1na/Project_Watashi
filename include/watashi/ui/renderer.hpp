@@ -68,7 +68,7 @@ public:
     GdiText(const GdiText&) = delete;
     GdiText& operator=(const GdiText&) = delete;
 
-    [[nodiscard]] TextExtent measure(const std::string& utf8, int px);
+    [[nodiscard]] TextExtent measure(const std::string& utf8, int px, bool bold);
 
     /// Selects (and caches) a font into ``dc``. ``bold`` is used for the target
     /// line, which is the text the user actually reads.

@@ -41,10 +41,13 @@ namespace {
 using namespace watashi;
 
 ui::TextMeasure fake_measure(double width_per_px = 0.6) {
-    return [width_per_px](const std::string& text, int px) {
+    return [width_per_px](const std::string& text, int px, bool bold) {
         ui::TextExtent extent;
-        extent.width = static_cast<int>(
-            std::lround(static_cast<double>(text.size()) * px * width_per_px));
+        // Semibold is wider than regular; the layout must measure with the
+        // same weight the renderer paints, or the right edge is clipped.
+        const double weight = bold ? 1.15 : 1.0;
+        extent.width = static_cast<int>(std::lround(
+            static_cast<double>(text.size()) * px * width_per_px * weight));
         extent.height = px;
         return extent;
     };
@@ -179,7 +182,7 @@ TEST_CASE("wrap_text breaks greedily at spaces", "[ui][layout]") {
     const ui::TextMeasure measure = fake_measure();
     // 10 px font, 6 px per character: each 10-char word is exactly 60 px.
     const auto lines = ui::wrap_text(
-        "aaaaaaaaaa bbbbbbbbbb cccccccccc", 100, 10, measure);
+        "aaaaaaaaaa bbbbbbbbbb cccccccccc", 100, 10, false, measure);
     REQUIRE(lines.size() == 3);
     REQUIRE(lines[0] == "aaaaaaaaaa");
     REQUIRE(lines[1] == "bbbbbbbbbb");
@@ -188,7 +191,7 @@ TEST_CASE("wrap_text breaks greedily at spaces", "[ui][layout]") {
 
 TEST_CASE("wrap_text keeps explicit newlines", "[ui][layout]") {
     const ui::TextMeasure measure = fake_measure();
-    const auto lines = ui::wrap_text("first line\nsecond line", 1000, 10, measure);
+    const auto lines = ui::wrap_text("first line\nsecond line", 1000, 10, false, measure);
     REQUIRE(lines.size() == 2);
     REQUIRE(lines[0] == "first line");
     REQUIRE(lines[1] == "second line");
@@ -197,10 +200,69 @@ TEST_CASE("wrap_text keeps explicit newlines", "[ui][layout]") {
 TEST_CASE("wrap_text hard-splits a token wider than the line", "[ui][layout]") {
     const ui::TextMeasure measure = fake_measure();
     // 30 chars at 6 px each: 180 px against a 60 px line.
-    const auto lines = ui::wrap_text(std::string(30, 'x'), 60, 10, measure);
+    const auto lines = ui::wrap_text(std::string(30, 'x'), 60, 10, false, measure);
     REQUIRE(lines.size() == 3);
     for (const auto& line : lines) {
         REQUIRE(line.size() == 10);
+    }
+}
+
+TEST_CASE("wrap_text measures the target with its painted semibold weight", "[ui][layout][clip]") {
+    const ui::TextMeasure measure = fake_measure();
+    // 40 chars are 576 px in regular but 662 px in the 1.15x bold metric.
+    const std::string word(40, 'x');
+    REQUIRE(ui::wrap_text(word, 600, 24, false, measure).size() == 1);
+    const auto bold = ui::wrap_text(word, 600, 24, true, measure);
+    REQUIRE(bold.size() == 2);
+    for (const auto& line : bold) {
+        REQUIRE(measure(line, 24, true).width <= 600);
+    }
+}
+
+TEST_CASE("target runs fit inside the plate at the weight they are painted", "[ui][layout][clip]") {
+    const ui::TextMeasure measure = fake_measure();
+    const CaptureRect work{0, 0, 1920, 1080};
+    const std::string target =
+        "this sect's sword intent is only a legend and good game, well played, beginner";
+    const ui::Layout layout =
+        ui::compute_layout(request_with("", target, "", work, 96), measure);
+    const int padding = ui::logical_px(ui::Style{}.padding_x, 96);
+
+    REQUIRE_FALSE(layout.empty);
+    REQUIRE_FALSE(layout.runs.empty());
+    for (const auto& run : layout.runs) {
+        REQUIRE(run.kind == ui::RunKind::kTarget);
+        // The width carried into the compositing box must be the bold width;
+        // a regular measurement here was the right-edge clipping bug.
+        REQUIRE(run.width == measure(run.text, run.px, true).width);
+        REQUIRE(run.x + run.width <= layout.width - padding);
+    }
+}
+
+TEST_CASE("renderer measures semibold text at the weight it paints", "[ui][render][clip]") {
+    ui::GdiText text;
+    const auto measure = text.as_measure();
+    const std::string line = "this sect's sword intent is only a legend";
+    const ui::TextExtent regular = measure(line, 36, false);
+    const ui::TextExtent bold = measure(line, 36, true);
+    REQUIRE(bold.width >= regular.width);
+}
+
+TEST_CASE("a long target sentence fits the plate with real 150% metrics", "[ui][render][clip]") {
+    ui::GdiText text;
+    const auto measure = text.as_measure();
+    ui::LayoutRequest request;
+    request.target = "this sect's sword intent is only a legend";
+    request.work_area = CaptureRect{0, 0, 2560, 1600};
+    request.dpi = 144;
+    const ui::Layout layout = ui::compute_layout(request, measure);
+    const int padding = ui::logical_px(ui::Style{}.padding_x, 144);
+
+    REQUIRE_FALSE(layout.empty);
+    for (const auto& run : layout.runs) {
+        REQUIRE(run.kind == ui::RunKind::kTarget);
+        REQUIRE(run.width == measure(run.text, run.px, true).width);
+        REQUIRE(run.x + run.width <= layout.width - padding);
     }
 }
 

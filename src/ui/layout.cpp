@@ -34,6 +34,7 @@ void append_wrapped(
     const std::string& paragraph,
     int max_width,
     int font_px,
+    bool bold,
     const TextMeasure& measure,
     std::vector<std::string>& out) {
     if (paragraph.empty()) {
@@ -50,7 +51,7 @@ void append_wrapped(
         index = space == std::string::npos ? paragraph.size() : space + 1;
 
         const std::string candidate = line.empty() ? word : line + " " + word;
-        if (measure(candidate, font_px).width <= max_width || line.empty()) {
+        if (measure(candidate, font_px, bold).width <= max_width || line.empty()) {
             // An empty line always takes the first word, which is then split
             // below if the word alone is wider than the line.
             line = candidate;
@@ -61,11 +62,12 @@ void append_wrapped(
 
         // A single unbreakable token wider than the line is split by
         // characters so the plate keeps its promised width.
-        if (!line.empty() && measure(line, font_px).width > max_width) {
+        if (!line.empty() && measure(line, font_px, bold).width > max_width) {
             std::string head;
             for (char character : line) {
                 const std::string next = head + character;
-                if (!head.empty() && measure(next, font_px).width > max_width) {
+                if (!head.empty() &&
+                    measure(next, font_px, bold).width > max_width) {
                     out.push_back(head);
                     head = std::string(1, character);
                 } else {
@@ -129,13 +131,14 @@ std::vector<std::string> wrap_text(
     const std::string& text,
     int max_width,
     int font_px,
+    bool bold,
     const TextMeasure& measure) {
     std::vector<std::string> lines;
     if (max_width < 1) {
         max_width = 1;
     }
     for (const auto& paragraph : split_paragraphs(text)) {
-        append_wrapped(paragraph, max_width, font_px, measure, lines);
+        append_wrapped(paragraph, max_width, font_px, bold, measure, lines);
     }
     return lines;
 }
@@ -161,13 +164,16 @@ Layout compute_layout(
     std::vector<std::string> target_lines;
     std::vector<std::string> status_lines;
     if (!request.source.empty()) {
-        source_lines = wrap_text(request.source, max_content, source_px, measure);
+        source_lines =
+            wrap_text(request.source, max_content, source_px, false, measure);
     }
     if (!request.target.empty()) {
-        target_lines = wrap_text(request.target, max_content, target_px, measure);
+        target_lines =
+            wrap_text(request.target, max_content, target_px, true, measure);
     }
     if (!request.status.empty()) {
-        status_lines = wrap_text(request.status, max_content, status_px, measure);
+        status_lines =
+            wrap_text(request.status, max_content, status_px, false, measure);
     }
 
     Layout layout;
@@ -176,19 +182,23 @@ Layout compute_layout(
         return layout;
     }
 
-    auto line_extent = [&measure](const std::string& line, int px) {
-        return measure(line, px);
+    auto line_extent = [&measure](
+                           const std::string& line, int px, bool bold) {
+        return measure(line, px, bold);
     };
 
     int content_width = min_content;
     for (const auto& line : source_lines) {
-        content_width = std::max(content_width, line_extent(line, source_px).width);
+        content_width =
+            std::max(content_width, line_extent(line, source_px, false).width);
     }
     for (const auto& line : target_lines) {
-        content_width = std::max(content_width, line_extent(line, target_px).width);
+        content_width =
+            std::max(content_width, line_extent(line, target_px, true).width);
     }
     for (const auto& line : status_lines) {
-        content_width = std::max(content_width, line_extent(line, status_px).width);
+        content_width =
+            std::max(content_width, line_extent(line, status_px, false).width);
     }
     content_width = std::min(content_width, max_content);
 
@@ -197,9 +207,10 @@ Layout compute_layout(
     int y = padding_y;
     auto add_block = [&](const std::vector<std::string>& lines,
                          RunKind kind,
-                         int px) {
+                         int px,
+                         bool bold) {
         for (std::size_t index = 0; index < lines.size(); ++index) {
-            TextExtent extent = line_extent(lines[index], px);
+            TextExtent extent = line_extent(lines[index], px, bold);
             TextRun run;
             run.text = lines[index];
             run.kind = kind;
@@ -226,15 +237,15 @@ Layout compute_layout(
 
     if (!source_lines.empty()) {
         gap();
-        add_block(source_lines, RunKind::kSource, source_px);
+        add_block(source_lines, RunKind::kSource, source_px, false);
     }
     if (!target_lines.empty()) {
         gap();
-        add_block(target_lines, RunKind::kTarget, target_px);
+        add_block(target_lines, RunKind::kTarget, target_px, true);
     }
     if (!status_lines.empty()) {
         gap();
-        add_block(status_lines, RunKind::kStatus, status_px);
+        add_block(status_lines, RunKind::kStatus, status_px, false);
     }
 
     layout.height = y + padding_y;

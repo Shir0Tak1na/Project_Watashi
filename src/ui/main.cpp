@@ -55,7 +55,9 @@ constexpr double kStaleAfterSeconds = 3.0;
 constexpr double kMemorySampleSeconds = 5.0;
 
 struct Args {
-    std::string cli = "build-w13\\Release\\watashi_cli.exe";
+    /// Empty means "watashi_cli.exe next to watashi_ui.exe". A hard-coded build
+    /// directory would point at a stale engine on a clean checkout.
+    std::string cli;
 
     std::string capture = "window";
     std::string ocr = "onnx";
@@ -86,7 +88,8 @@ void usage(std::ostream& out) {
     out << "usage: watashi_ui [viewer options] --capture MODE [engine options]\n"
            "\n"
            "viewer:\n"
-           "  --cli PATH             engine binary, default build-w13\\Release\\watashi_cli.exe\n"
+           "  --cli PATH             engine binary, default watashi_cli.exe beside\n"
+           "                         watashi_ui.exe (no build directory is assumed)\n"
            "  --linger SECONDS       keep the last frame after the stream ends, default 8\n"
            "  --report PATH          write a JSON report of this run\n"
            "  --final-image PATH     write the last composed frame as a BMP\n"
@@ -232,6 +235,19 @@ std::vector<std::string> engine_arguments(const Args& args) {
         add("--chars", args.chars);
     }
     return arguments;
+}
+
+/// Full path of another executable shipped beside this binary. The engine is
+/// always built next to the UI, so this works in any build tree without the UI
+/// knowing the tree's name.
+std::string sibling_executable(const std::string& name) {
+    wchar_t module[32768]{};
+    if (GetModuleFileNameW(nullptr, module, 32768) == 0) {
+        return name;
+    }
+    std::filesystem::path path(module);
+    path.replace_filename(std::wstring(name.begin(), name.end()));
+    return path.u8string();
 }
 
 CaptureRect primary_work_area() {
@@ -509,6 +525,7 @@ void sample_memory(Run& run, double now) {
 
 void write_report(
     const Args& args,
+    const std::string& cli,
     const std::vector<std::string>& engine_args,
     const Run& run,
     const UiSnapshot& snapshot,
@@ -518,7 +535,7 @@ void write_report(
     }
     nlohmann::json payload;
     payload["kind"] = "watashi-ui-run";
-    payload["cli"] = args.cli;
+    payload["cli"] = cli;
     payload["arguments"] = engine_args;
     payload["dpi"] = run.dpi;
     payload["work_area"] = rect_json(run.work_area);
@@ -574,6 +591,14 @@ void write_report(
 }
 
 int run_overlay(const Args& args) {
+    const std::string cli =
+        args.cli.empty() ? sibling_executable("watashi_cli.exe") : args.cli;
+    if (!std::filesystem::exists(cli)) {
+        std::cerr << "watashi_ui: engine binary not found: " << cli
+                  << " (build it or pass --cli PATH)\n";
+        return 2;
+    }
+
     Run run;
     run.capture_mode = args.capture;
     run.linger = args.linger;
@@ -590,8 +615,9 @@ int run_overlay(const Args& args) {
     run.dpi = window_dpi(run.window.hwnd());
 
     const std::vector<std::string> engine_args = engine_arguments(args);
-    ChildStream stream({args.cli, engine_args, {}, 6});
+    ChildStream stream({cli, engine_args, {}, 6});
     run.stream = &stream;
+    std::cerr << "engine: " << cli << "\n";
 
     const bool started = stream.start(
         [&run](const std::string& line) { run.model.ingest(line); },
@@ -601,7 +627,7 @@ int run_overlay(const Args& args) {
     if (!started) {
         run.launch_error = stream.error();
         run.model.set_launch_failure(run.launch_error);
-        std::cerr << "watashi_ui: cannot start " << args.cli << ": "
+        std::cerr << "watashi_ui: cannot start " << cli << ": "
                   << run.launch_error << "\n";
     }
 
@@ -664,7 +690,7 @@ int run_overlay(const Args& args) {
         }
     }
 
-    write_report(args, engine_args, run, snapshot, exit_code);
+    write_report(args, cli, engine_args, run, snapshot, exit_code);
 
     std::cerr << "ui: frames=" << snapshot.subtitles
               << " malformed=" << snapshot.malformed
