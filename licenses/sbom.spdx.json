@@ -1,0 +1,159 @@
+{
+  "spdxVersion": "SPDX-2.3",
+  "dataLicense": "CC0-1.0",
+  "SPDXID": "SPDXRef-DOCUMENT",
+  "name": "ProjectWatashi-0.1.0",
+  "documentNamespace": "https://github.com/Shir0Tak1na/ProjectWatashi/spdx/0.1.0",
+  "creationInfo": {
+    "created": "2026-11-01T00:00:00Z",
+    "creators": [
+      "Tool: tools/make_sbom.py"
+    ],
+    "licenseListVersion": "3.24"
+  },
+  "packages": [
+    {
+      "SPDXID": "SPDXRef-Project-Watashi",
+      "name": "Project Watashi",
+      "versionInfo": "0.1.0",
+      "supplier": "NOASSERTION",
+      "downloadLocation": "https://github.com/Shir0Tak1na/ProjectWatashi",
+      "filesAnalyzed": false,
+      "primaryPackagePurpose": "APPLICATION",
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "MIT",
+      "copyrightText": "NOASSERTION",
+      "comment": "type=application; payload=yes; location=watashi_ui.exe, watashi_cli.exe, watashi_fetch.exe"
+    },
+    {
+      "SPDXID": "SPDXRef-ONNX-Runtime",
+      "name": "ONNX Runtime",
+      "versionInfo": "1.30.0",
+      "supplier": "NOASSERTION",
+      "downloadLocation": "https://github.com/microsoft/onnxruntime",
+      "filesAnalyzed": false,
+      "primaryPackagePurpose": "LIBRARY",
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "MIT",
+      "copyrightText": "NOASSERTION",
+      "comment": "type=runtime; payload=yes; location=onnxruntime.dll"
+    },
+    {
+      "SPDXID": "SPDXRef-CTranslate2",
+      "name": "CTranslate2",
+      "versionInfo": "4.8.4",
+      "supplier": "NOASSERTION",
+      "downloadLocation": "https://github.com/OpenNMT/CTranslate2",
+      "filesAnalyzed": false,
+      "primaryPackagePurpose": "LIBRARY",
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "MIT",
+      "copyrightText": "NOASSERTION",
+      "comment": "type=runtime; payload=yes; location=ctranslate2.dll"
+    },
+    {
+      "SPDXID": "SPDXRef-oneDNN",
+      "name": "oneDNN",
+      "versionInfo": "2023.2.0.49513",
+      "supplier": "NOASSERTION",
+      "downloadLocation": "https://github.com/oneapi-src/oneDNN",
+      "filesAnalyzed": false,
+      "primaryPackagePurpose": "LIBRARY",
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "Apache-2.0",
+      "copyrightText": "NOASSERTION",
+      "comment": "type=runtime; payload=yes; location=dnnl.dll"
+    },
+    {
+      "SPDXID": "SPDXRef-SentencePiece",
+      "name": "SentencePiece",
+      "versionInfo": "0.2.1",
+      "supplier": "NOASSERTION",
+      "downloadLocation": "https://github.com/google/sentencepiece",
+      "filesAnalyzed": false,
+      "primaryPackagePurpose": "LIBRARY",
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "Apache-2.0",
+      "copyrightText": "NOASSERTION",
+      "comment": "type=build; payload=no; location=link-time static library; not shipped"
+    },
+    {
+      "SPDXID": "SPDXRef-nlohmann-json",
+      "name": "nlohmann-json",
+      "versionInfo": "3.11.3",
+      "supplier": "NOASSERTION",
+      "downloadLocation": "https://github.com/nlohmann/json",
+      "filesAnalyzed": false,
+      "primaryPackagePurpose": "LIBRARY",
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "MIT",
+      "copyrightText": "NOASSERTION",
+      "comment": "type=build; payload=no; location=header-only; compiled in"
+    },
+    {
+      "SPDXID": "SPDXRef-Catch2",
+      "name": "Catch2",
+      "versionInfo": "3.5.2",
+      "supplier": "NOASSERTION",
+      "downloadLocation": "https://github.com/catchorg/Catch2",
+      "filesAnalyzed": false,
+      "primaryPackagePurpose": "OTHER",
+      "licenseConcluded": "BSL-1.0",
+      "licenseDeclared": "BSL-1.0",
+      "copyrightText": "NOASSERTION",
+      "comment": "type=test; payload=no; location=test binary only; not shipped"
+    },
+    {
+      "SPDXID": "SPDXRef-MSVC-UCRT",
+      "name": "MSVC/UCRT",
+      "versionInfo": "14.44.35207",
+      "supplier": "NOASSERTION",
+      "downloadLocation": "https://visualstudio.microsoft.com/license-terms/",
+      "filesAnalyzed": false,
+      "primaryPackagePurpose": "LIBRARY",
+      "licenseConcluded": "LicenseRef-Microsoft-Visual-Cpp-Redistributable",
+      "licenseDeclared": "LicenseRef-Microsoft-Visual-Cpp-Redistributable",
+      "copyrightText": "NOASSERTION",
+      "comment": "type=runtime; payload=yes; location=msvcp140*.dll, vcruntime140*.dll, concrt140.dll; note=Microsoft Visual C++ redistributable licence terms apply"
+    },
+    {
+      "SPDXID": "SPDXRef-PP-OCRv4",
+      "name": "PP-OCRv4",
+      "versionInfo": "rapidocr-onnxruntime 1.4.4",
+      "supplier": "NOASSERTION",
+      "downloadLocation": "https://github.com/RapidAI/RapidOCR",
+      "filesAnalyzed": false,
+      "primaryPackagePurpose": "OTHER",
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "Apache-2.0",
+      "copyrightText": "NOASSERTION",
+      "comment": "type=model; payload=no; location=fetched into the user models directory, never bundled; weights=models.lock.json#pp-ocrv4-onnx"
+    },
+    {
+      "SPDXID": "SPDXRef-NLLB-200-distilled-600M-CTranslate2-int8",
+      "name": "NLLB-200-distilled-600M (CTranslate2 int8)",
+      "versionInfo": "JustFrederik/nllb-200-distilled-600M-ct2-int8",
+      "supplier": "NOASSERTION",
+      "downloadLocation": "https://huggingface.co/JustFrederik/nllb-200-distilled-600M-ct2-int8",
+      "filesAnalyzed": false,
+      "primaryPackagePurpose": "OTHER",
+      "licenseConcluded": "CC-BY-NC-4.0",
+      "licenseDeclared": "CC-BY-NC-4.0",
+      "copyrightText": "NOASSERTION",
+      "comment": "type=model; payload=no; location=fetched into the user models directory, never bundled; weights=models.lock.json#nllb-200-distilled-600M-ct2-int8; note=non-commercial: this project and its derivatives may not be used commercially"
+    },
+    {
+      "SPDXID": "SPDXRef-Whisper-small-CTranslate2-int8",
+      "name": "Whisper small (CTranslate2 int8)",
+      "versionInfo": "Systran/faster-whisper-small",
+      "supplier": "NOASSERTION",
+      "downloadLocation": "https://huggingface.co/Systran/faster-whisper-small",
+      "filesAnalyzed": false,
+      "primaryPackagePurpose": "OTHER",
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "MIT",
+      "copyrightText": "NOASSERTION",
+      "comment": "type=model; payload=no; location=fetched into the user models directory, never bundled; weights=models.lock.json#whisper-small-ct2-int8"
+    }
+  ]
+}

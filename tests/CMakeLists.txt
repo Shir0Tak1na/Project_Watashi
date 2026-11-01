@@ -101,6 +101,32 @@ if(Python3_Interpreter_FOUND)
         set_tests_properties(installer_self_test PROPERTIES
             WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
             SKIP_RETURN_CODE 77)
+
+        # W4.4 compliance: manifest/SBOM/licence copies and the packaged payload.
+        foreach(case_name IN ITEMS manifest sbom sbom_models copies no_weights model_refs)
+            add_test(
+                NAME license_${case_name}
+                COMMAND ${Python3_EXECUTABLE}
+                        ${CMAKE_SOURCE_DIR}/tests/license_test.py
+                        --case ${case_name})
+            set_tests_properties(license_${case_name} PROPERTIES
+                WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+        endforeach()
+
+        # W4.4 soak harness: argument validation, short synthetic runs and the
+        # missing-executable failure report. The 10-minute smoke and 8-hour run
+        # are manual (docs/RELEASE.md) and are not automated here.
+        foreach(case_name IN ITEMS bad_args short_ui short_cli missing_exe)
+            add_test(
+                NAME soak_${case_name}
+                COMMAND ${Python3_EXECUTABLE}
+                        ${CMAKE_SOURCE_DIR}/tests/soak_test.py
+                        --case ${case_name}
+                        --build ${CMAKE_BINARY_DIR}
+                        --config $<CONFIG>)
+            set_tests_properties(soak_${case_name} PROPERTIES
+                WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+        endforeach()
     endif()
 else()
     message(WARNING "Python3 not found: settings and installer checks are disabled")

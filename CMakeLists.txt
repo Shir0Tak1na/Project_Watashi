@@ -492,6 +492,14 @@ if(WIN32)
         DESTINATION config COMPONENT watashi)
     install(FILES config/install_manifest.json
         DESTINATION . COMPONENT watashi RENAME install_manifest.json)
+    # Compliance payload: the project licence, third-party notices, model
+    # licence notes and the generated SPDX SBOM. Model weights are never here.
+    install(FILES
+        licenses/LICENSE
+        licenses/THIRD_PARTY_LICENSES.md
+        licenses/MODEL_LICENSES.md
+        licenses/sbom.spdx.json
+        DESTINATION licenses COMPONENT watashi)
     install(FILES installer/install.ps1 installer/uninstall.ps1
         DESTINATION . COMPONENT watashi)
     if(CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS)

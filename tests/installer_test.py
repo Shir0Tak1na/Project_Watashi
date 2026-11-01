@@ -226,6 +226,8 @@ def case_manifest(stage_dir: Path) -> None:
         "ctranslate2.dll", "dnnl.dll", "LICENSE",
         "THIRD_PARTY_LICENSES.md", "config/presentation.json",
         "config/settings_ui.json",
+        "licenses/LICENSE", "licenses/THIRD_PARTY_LICENSES.md",
+        "licenses/MODEL_LICENSES.md", "licenses/sbom.spdx.json",
     ]
     for name in required:
         if name not in payload:
@@ -238,8 +240,10 @@ def case_manifest(stage_dir: Path) -> None:
     if not (stage_dir / "install.ps1").exists() or not (stage_dir / "uninstall.ps1").exists():
         raise SystemExit("installer scripts are not staged")
     # Weights must never ship. models.lock.json is a manifest, not a model.
-    for path in stage_dir.rglob("*.bin"):
-        raise SystemExit(f"model weight in the package: {path}")
+    weight_suffixes = (".bin", ".onnx", ".pt", ".pth", ".safetensors")
+    for path in stage_dir.rglob("*"):
+        if path.is_file() and path.suffix.lower() in weight_suffixes:
+            raise SystemExit(f"model weight in the package: {path}")
     models = stage_dir / "models"
     if models.exists():
         raise SystemExit("a models directory was staged")

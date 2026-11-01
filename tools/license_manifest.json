@@ -1,0 +1,114 @@
+{
+  "manifest_version": 1,
+  "sbom": {
+    "name": "ProjectWatashi-0.1.0",
+    "namespace": "https://github.com/Shir0Tak1na/ProjectWatashi/spdx/0.1.0",
+    "created": "2026-11-01T00:00:00Z"
+  },
+  "components": [
+    {
+      "name": "Project Watashi",
+      "version": "0.1.0",
+      "license": "MIT",
+      "source": "https://github.com/Shir0Tak1na/ProjectWatashi",
+      "type": "application",
+      "payload": true,
+      "location": "watashi_ui.exe, watashi_cli.exe, watashi_fetch.exe"
+    },
+    {
+      "name": "ONNX Runtime",
+      "version": "1.30.0",
+      "license": "MIT",
+      "source": "https://github.com/microsoft/onnxruntime",
+      "type": "runtime",
+      "payload": true,
+      "location": "onnxruntime.dll"
+    },
+    {
+      "name": "CTranslate2",
+      "version": "4.8.4",
+      "license": "MIT",
+      "source": "https://github.com/OpenNMT/CTranslate2",
+      "type": "runtime",
+      "payload": true,
+      "location": "ctranslate2.dll"
+    },
+    {
+      "name": "oneDNN",
+      "version": "2023.2.0.49513",
+      "license": "Apache-2.0",
+      "source": "https://github.com/oneapi-src/oneDNN",
+      "type": "runtime",
+      "payload": true,
+      "location": "dnnl.dll"
+    },
+    {
+      "name": "SentencePiece",
+      "version": "0.2.1",
+      "license": "Apache-2.0",
+      "source": "https://github.com/google/sentencepiece",
+      "type": "build",
+      "payload": false,
+      "location": "link-time static library; not shipped"
+    },
+    {
+      "name": "nlohmann-json",
+      "version": "3.11.3",
+      "license": "MIT",
+      "source": "https://github.com/nlohmann/json",
+      "type": "build",
+      "payload": false,
+      "location": "header-only; compiled in"
+    },
+    {
+      "name": "Catch2",
+      "version": "3.5.2",
+      "license": "BSL-1.0",
+      "source": "https://github.com/catchorg/Catch2",
+      "type": "test",
+      "payload": false,
+      "location": "test binary only; not shipped"
+    },
+    {
+      "name": "MSVC/UCRT",
+      "version": "14.44.35207",
+      "license": "LicenseRef-Microsoft-Visual-Cpp-Redistributable",
+      "license_note": "Microsoft Visual C++ redistributable licence terms apply",
+      "source": "https://visualstudio.microsoft.com/license-terms/",
+      "type": "runtime",
+      "payload": true,
+      "location": "msvcp140*.dll, vcruntime140*.dll, concrt140.dll"
+    },
+    {
+      "name": "PP-OCRv4",
+      "version": "rapidocr-onnxruntime 1.4.4",
+      "license": "Apache-2.0",
+      "source": "https://github.com/RapidAI/RapidOCR",
+      "type": "model",
+      "payload": false,
+      "weights": "models.lock.json#pp-ocrv4-onnx",
+      "location": "fetched into the user models directory, never bundled"
+    },
+    {
+      "name": "NLLB-200-distilled-600M (CTranslate2 int8)",
+      "version": "JustFrederik/nllb-200-distilled-600M-ct2-int8",
+      "license": "CC-BY-NC-4.0",
+      "license_note": "non-commercial: this project and its derivatives may not be used commercially",
+      "source": "https://huggingface.co/JustFrederik/nllb-200-distilled-600M-ct2-int8",
+      "type": "model",
+      "payload": false,
+      "weights": "models.lock.json#nllb-200-distilled-600M-ct2-int8",
+      "location": "fetched into the user models directory, never bundled"
+    },
+    {
+      "name": "Whisper small (CTranslate2 int8)",
+      "version": "Systran/faster-whisper-small",
+      "license": "MIT",
+      "source": "https://huggingface.co/Systran/faster-whisper-small",
+      "type": "model",
+      "payload": false,
+      "weights": "models.lock.json#whisper-small-ct2-int8",
+      "location": "fetched into the user models directory, never bundled"
+    }
+  ]
+}

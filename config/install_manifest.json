@@ -11,6 +11,10 @@
     "models.lock.json",
     "LICENSE",
     "THIRD_PARTY_LICENSES.md",
+    "licenses/LICENSE",
+    "licenses/THIRD_PARTY_LICENSES.md",
+    "licenses/MODEL_LICENSES.md",
+    "licenses/sbom.spdx.json",
     "config/presentation.json",
     "config/settings_ui.json"
   ]

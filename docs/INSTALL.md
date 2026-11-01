@@ -18,9 +18,17 @@ Program Files，不请求管理员，也不触发 UAC。
 | `config/presentation.json` | 呈现规格 |
 | `config/settings_ui.json` | 由 `prototype/watashi/settings_schema.py` 生成的设置描述 |
 | `LICENSE` / `THIRD_PARTY_LICENSES.md` | 许可 |
+| `licenses/LICENSE` / `licenses/THIRD_PARTY_LICENSES.md` | 同内容的安装包内副本 |
+| `licenses/MODEL_LICENSES.md` | 模型许可说明（权重不随包分发） |
+| `licenses/sbom.spdx.json` | SPDX 2.3 软件物料清单（依赖版本/许可/来源） |
 
 **不包含任何模型权重**。`models/` 由 W4.2 的获取器写入用户目录；安装包内没有
-`.bin`/`.onnx`/Whisper/NLLB 权重。
+`.bin`/`.onnx`/`.pt`，也没有 `models/` 目录。SBOM 只引用
+`models.lock.json#<id>` 的哈希清单，不把权重列为 payload。
+
+许可边界：**代码 MIT**；NLLB-200-distilled-600M 为 **CC-BY-NC-4.0（非商业）**；
+Whisper small 为 **MIT**；PP-OCRv4 为 **Apache-2.0**。见
+[licenses/MODEL_LICENSES.md](../licenses/MODEL_LICENSES.md)。
 
 用户数据在 `%LOCALAPPDATA%\ProjectWatashi\user`：`user.json`、语料、下载的模型。
 卸载默认**保留**这个目录；只有显式 `-RemoveUserData` 才删除。
@@ -181,5 +189,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File C:\Temp\watashi-app\uninstal
   按设计静默停用（不阻塞主流程）。
 - W3.3 托盘：某次运行打印 `tray: icon added`（该环境通知区可用）；`tray-exit`
   需要真实点击托盘菜单，未执行，标记为**交互未验**。
+- 合规文件：`licenses/sbom.spdx.json` 由 `tools/make_sbom.py` 从
+  `tools/license_manifest.json` 生成；漂移检查 `python tools/make_sbom.py --check`。
+- 发布前清单（干净 Win11 VM、10 分钟/8 小时 soak、手工安装待办）见
+  [docs/RELEASE.md](RELEASE.md)。
 - **未在干净 Win11 VM 上验证**：当前环境没有可用的干净 VM。
 - 签名脚本在无证书环境下运行，产物明确标记为 unsigned（未冒充已签名）。

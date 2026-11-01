@@ -98,6 +98,14 @@ try {
         Remove-Item -LiteralPath $configDir -Force
     }
 
+    # licenses/ is a payload directory like config/: remove it when every file
+    # in it has been deleted, so -RemoveUserData can remove the whole prefix.
+    $licensesDir = Join-Path $fullPrefix "licenses"
+    if ((Test-Path -LiteralPath $licensesDir) -and
+        -not (Get-ChildItem -LiteralPath $licensesDir -Force | Select-Object -First 1)) {
+        Remove-Item -LiteralPath $licensesDir -Force
+    }
+
     if (Test-Path -LiteralPath $fullPrefix) {
         $remaining = @(Get-ChildItem -LiteralPath $fullPrefix -Force)
         if (-not $RemoveUserData -and (Test-Path -LiteralPath $userDir)) {
