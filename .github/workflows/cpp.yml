@@ -51,6 +51,7 @@ jobs:
             -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" `
             -DVCPKG_TARGET_TRIPLET=x64-windows 2>&1 | Tee-Object -FilePath $log
           if ($LASTEXITCODE -ne 0) {
+            Select-String -Path $log -Pattern "CMake Error|error:|fatal error|FAILED|Could not" | Select-Object -First 40 | ForEach-Object { "::error::$($_.Line)" }
             Get-Content $log -Tail 40 | ForEach-Object { "::error::$_" }
             exit 1
           }
