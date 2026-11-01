@@ -17,6 +17,10 @@ name: checks
 # was not (fastapi and uvicorn were missing while the local venv had them), so the
 # first run of this workflow would have failed on both platforms.
 
+env:
+  PYTHONUTF8: "1"
+  PYTHONIOENCODING: "utf-8"
+
 on:
   push:
     branches: ["**"]
