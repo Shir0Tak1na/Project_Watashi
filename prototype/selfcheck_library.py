@@ -526,10 +526,10 @@ def main() -> int:
         return code, buffer.getvalue()
 
     cli_config = AppConfig.load(config_file)
-    written = lib.library_path(cli_config)
+    written = Path(lib.library_path(cli_config)).resolve()
     check.check(
         "the CLI's corpus file is inside this run's scratch tree, not a shared path",
-        str(written).startswith(str(cli_dir.parent)),
+        written.is_relative_to(Path(cli_dir.parent).resolve()),
         f"{written} (would otherwise read another run's leftovers)",
     )
 
@@ -618,7 +618,8 @@ def main() -> int:
 
     check.check(
         "the editor's path is the user layer the engine reads",
-        lib.library_path(config) == project / "user" / lib.LIBRARY_FILE,
+        Path(lib.library_path(config)).resolve()
+        == (project / "user" / lib.LIBRARY_FILE).resolve(),
         str(lib.library_path(config)),
     )
 
