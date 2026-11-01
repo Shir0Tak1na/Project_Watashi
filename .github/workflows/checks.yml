@@ -73,11 +73,17 @@ jobs:
             name="$(echo "$line" | sed 's/#.*//' | tr -d '[:space:]')"
             [ -z "$name" ] && continue
             echo "::group::$name"
-            if python "prototype/${name}.py" --summary; then
+            log="$RUNNER_TEMP/${name}.log"
+            if python "prototype/${name}.py" --summary >"$log" 2>&1; then
+              cat "$log"
               echo "::endgroup::"
             else
               code=$?
+              cat "$log"
               echo "::error title=${name} failed::exit ${code}"
+              tail -20 "$log" | while IFS= read -r line; do
+                echo "::error::${line}"
+              done
               echo "::endgroup::"
               status=1
             fi
