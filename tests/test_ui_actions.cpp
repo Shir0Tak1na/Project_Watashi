@@ -421,48 +421,62 @@ TEST_CASE("the tray menu follows every pause and visibility state", "[ui][action
     }
 }
 
-TEST_CASE("the tray owner is a different, activatable window", "[ui][tray]") {
+TEST_CASE("the icon owner is the overlay and the menu owner is separate",
+          "[ui][tray]") {
     ui::LayeredWindow overlay;
     if (!overlay.create()) {
         SKIP("no desktop session");
     }
     ui::TrayIcon tray;
-    REQUIRE(tray.hwnd() == nullptr);
-    tray.add();
-    REQUIRE(tray.hwnd() != nullptr);
-    REQUIRE(tray.hwnd() != overlay.hwnd());
+    REQUIRE(tray.icon_hwnd() == nullptr);
+    REQUIRE(tray.menu_hwnd() == nullptr);
+    tray.add(overlay.hwnd());
 
-    // The menu's owner must be able to become foreground; the overlay must
-    // keep its NOACTIVATE promise.
-    const DWORD tray_style =
-        static_cast<DWORD>(GetWindowLongPtrW(tray.hwnd(), GWL_EXSTYLE));
+    // The icon belongs to the overlay; the menu has its own activatable owner.
+    REQUIRE(tray.icon_hwnd() == overlay.hwnd());
+    REQUIRE(tray.menu_hwnd() != nullptr);
+    REQUIRE(tray.menu_hwnd() != overlay.hwnd());
+
+    const DWORD menu_style =
+        static_cast<DWORD>(GetWindowLongPtrW(tray.menu_hwnd(), GWL_EXSTYLE));
     const DWORD overlay_style =
         static_cast<DWORD>(GetWindowLongPtrW(overlay.hwnd(), GWL_EXSTYLE));
-    REQUIRE((tray_style & WS_EX_TOOLWINDOW) != 0);
-    REQUIRE((tray_style & WS_EX_NOACTIVATE) == 0);
-    REQUIRE((tray_style & WS_EX_TRANSPARENT) == 0);
+    REQUIRE((menu_style & WS_EX_TOOLWINDOW) != 0);
+    REQUIRE((menu_style & WS_EX_NOACTIVATE) == 0);
+    REQUIRE((menu_style & WS_EX_TRANSPARENT) == 0);
     REQUIRE((overlay_style & WS_EX_NOACTIVATE) != 0);
     REQUIRE((overlay_style & WS_EX_TRANSPARENT) != 0);
 
     wchar_t class_name[128]{};
-    GetClassNameW(tray.hwnd(), class_name, 128);
+    GetClassNameW(tray.menu_hwnd(), class_name, 128);
     REQUIRE(std::wstring(class_name) == std::wstring(ui::kTrayWindowClass));
-    REQUIRE(IsWindowVisible(tray.hwnd()));
+    REQUIRE(IsWindowVisible(tray.menu_hwnd()));
 
     tray.remove();
-    REQUIRE(tray.hwnd() == nullptr);
+    REQUIRE(tray.icon_hwnd() == nullptr);
+    REQUIRE(tray.menu_hwnd() == nullptr);
+    // The overlay is borrowed, not owned: removing the tray must not destroy it.
+    REQUIRE(IsWindow(overlay.hwnd()));
 }
 
 TEST_CASE("tray.add reports what the shell accepted", "[ui][tray]") {
+    HWND owner = CreateWindowExW(
+        0, L"STATIC", L"tray icon owner", WS_POPUP,
+        0, 0, 1, 1, nullptr, nullptr, nullptr, nullptr);
+    REQUIRE(owner != nullptr);
     ui::TrayIcon tray;
-    const bool added = tray.add();
-    REQUIRE(tray.hwnd() != nullptr);
-    // The owner exists whether or not a notification area accepted the icon,
+    const bool added = tray.add(owner);
+    REQUIRE(tray.icon_hwnd() == owner);
+    REQUIRE(tray.menu_hwnd() != nullptr);
+    REQUIRE(tray.menu_hwnd() != owner);
+    // The owners exist whether or not a notification area accepted the icon,
     // so the report's tray.added is the shell's own answer.
     REQUIRE(tray.present() == added);
     tray.remove();
     REQUIRE_FALSE(tray.present());
-    REQUIRE(tray.hwnd() == nullptr);
+    REQUIRE(tray.icon_hwnd() == nullptr);
+    REQUIRE(tray.menu_hwnd() == nullptr);
+    DestroyWindow(owner);
 }
 
 TEST_CASE("a duration run writes its report", "[ui][report]") {

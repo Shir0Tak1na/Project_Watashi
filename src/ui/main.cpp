@@ -900,7 +900,9 @@ int run_overlay(const Args& args) {
     // Hotkeys are global: RegisterHotKey works while another window has focus,
     // and the callback only posts a command, it never activates this window.
     register_hotkeys(run);
-    run.tray_added = run.tray.add();
+    // The icon's callback window is the overlay itself; the menu owner is a
+    // separate activatable window inside TrayIcon.
+    run.tray_added = run.tray.add(run.window.hwnd());
     if (run.tray_added) {
         std::cerr << "tray: icon added\n";
     } else {
@@ -997,9 +999,12 @@ int run_overlay(const Args& args) {
                 } else if (message.message == WM_HOTKEY) {
                     handle_hotkey(run, static_cast<int>(message.wParam));
                     handled = true;
-                } else if (message.hwnd == run.tray.hwnd() &&
+                } else if (message.hwnd == run.window.hwnd() &&
                            message.message == kTrayCallbackMessage) {
-                    const UINT event = static_cast<UINT>(message.lParam);
+                    // NOTIFYICON_VERSION_4 carries the event in LOWORD(lParam);
+                    // the older convention carries it as the whole lParam. LOWORD
+                    // is correct for both.
+                    const UINT event = LOWORD(message.lParam);
                     if (event == WM_RBUTTONUP || event == WM_CONTEXTMENU) {
                         const int chosen =
                             run.tray.show_menu(run.paused, !run.hidden_by_user);
