@@ -81,6 +81,9 @@ jobs:
               code=$?
               cat "$log"
               echo "::error title=${name} failed::exit ${code}"
+              grep -E "\[FAIL\]|Traceback|AssertionError|Error:|assert" "$log" | head -30 | while IFS= read -r line; do
+                echo "::error::${line}"
+              done
               tail -20 "$log" | while IFS= read -r line; do
                 echo "::error::${line}"
               done
