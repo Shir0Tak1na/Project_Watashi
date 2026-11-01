@@ -94,6 +94,7 @@ int main() {
         return 3;
     }
     const HWND hwnd = window.hwnd();
+    const HWND foreground_after_create = GetForegroundWindow();
 
     const DWORD required = WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOPMOST |
                            WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW;
@@ -120,6 +121,10 @@ int main() {
         watashi::ui::compose_overlay(layout, text);
 
     window.present(image, layout.x, layout.y);
+    // Sample focus immediately after the overlay appears, before the 600 ms
+    // pump: an unrelated application taking focus during the pump must not be
+    // blamed on this window.
+    const HWND foreground_after_present = GetForegroundWindow();
     pump(600);
 
     RECT rect{};
@@ -140,13 +145,15 @@ int main() {
                 static_cast<unsigned long long>(reinterpret_cast<std::uintptr_t>(hwnd)));
     check(under != hwnd, "WindowFromPoint at the centre lands on another window");
 
-    const HWND foreground_after = GetForegroundWindow();
-    std::printf("foreground_before=0x%llx foreground_after=0x%llx\n",
+    std::printf("foreground_before=0x%llx after_create=0x%llx after_present=0x%llx\n",
                 static_cast<unsigned long long>(
                     reinterpret_cast<std::uintptr_t>(foreground_before)),
                 static_cast<unsigned long long>(
-                    reinterpret_cast<std::uintptr_t>(foreground_after)));
-    check(foreground_after == foreground_before,
+                    reinterpret_cast<std::uintptr_t>(foreground_after_create)),
+                static_cast<unsigned long long>(
+                    reinterpret_cast<std::uintptr_t>(foreground_after_present)));
+    check(foreground_after_create == foreground_before &&
+              foreground_after_present == foreground_before,
           "showing the overlay does not change the foreground window");
 
     // A DPI-sized overlay must stay inside the monitor it anchors to.

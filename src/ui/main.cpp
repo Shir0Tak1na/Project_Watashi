@@ -33,6 +33,7 @@
 #include <fstream>
 #include <iostream>
 #include <memory>
+#include <sstream>
 #include <string>
 #include <utility>
 #include <vector>
@@ -46,6 +47,8 @@
 #include "watashi/ui/layout.hpp"
 #include "watashi/ui/model.hpp"
 #include "watashi/ui/renderer.hpp"
+#include "watashi/ui/settings.hpp"
+#include "watashi/ui/settings_window.hpp"
 #include "watashi/ui/tray.hpp"
 
 namespace {
@@ -89,6 +92,11 @@ struct Args {
     /// bar preset.
     std::string presentation;
     double linger = 8.0;
+
+    /// Open the generated settings window alongside the overlay.
+    bool settings = false;
+    /// User settings file; empty means config/user.json.
+    std::string config_path;
 };
 
 void usage(std::ostream& out) {
@@ -103,6 +111,9 @@ void usage(std::ostream& out) {
            "  --presentation PATH    presentation spec; default config/presentation.json\n"
            "                         when it exists, else the built-in bar preset\n"
            "  --preview DIR          render 96/120/144 dpi proofs and exit (no window)\n"
+           "  --settings             open the settings window generated from\n"
+           "                         config/settings_ui.json\n"
+           "  --config PATH          user settings file, default config/user.json\n"
            "\n"
            "engine (passed through):\n"
            "  --capture screen|window|synthetic\n"
@@ -182,6 +193,10 @@ bool parse_args(int argc, char** argv, Args& args) {
                 std::cerr << "--linger must be >= 0\n";
                 return false;
             }
+        } else if (argument == "--settings") {
+            args.settings = true;
+        } else if (argument == "--config") {
+            if (!take_value(index, argc, argv, args.config_path)) return false;
         } else if (argument == "--help" || argument == "-h") {
             usage(std::cout);
             std::exit(0);
@@ -536,12 +551,22 @@ struct Run {
     MemorySample memory;
 };
 
-void schedule_quit_if_done(Run& run, const UiSnapshot& snapshot, double now) {
+void schedule_quit_if_done(
+    Run& run,
+    const UiSnapshot& snapshot,
+    double now,
+    bool settings_open) {
     if (!snapshot.stream_ended) {
         return;
     }
     if (run.ended_at < 0.0) {
         run.ended_at = now;
+    }
+    // The settings window is an explicit surface: keep it open after the stream
+    // ends so values can still be edited and saved. Closing it resumes the
+    // normal exit, already due if the linger elapsed.
+    if (settings_open) {
+        return;
     }
     // Always paint the final status at least once before closing.
     if (run.presented && now - run.ended_at >= run.linger) {
@@ -843,6 +868,42 @@ int run_overlay(const Args& args) {
         return 2;
     }
 
+    // The generated settings document and the user's overrides. The window
+    // builds its controls from this; nothing here lists a field by name.
+    const std::string settings_document = "config/settings_ui.json";
+    std::string schema_error;
+    SettingsSchema schema = SettingsSchema::load(settings_document, &schema_error);
+    if (schema.empty()) {
+        if (args.settings) {
+            std::cerr << "watashi_ui: cannot load " << settings_document << ": "
+                      << schema_error << "\n";
+            return 2;
+        }
+        std::cerr << "settings: " << settings_document << " unavailable ("
+                  << schema_error << "); running with defaults\n";
+    }
+    SettingsStore store(
+        std::move(schema),
+        args.config_path.empty() ? "config/user.json" : args.config_path);
+    std::vector<std::string> settings_warnings;
+    std::string settings_error;
+    if (!store.load(&settings_warnings, &settings_error)) {
+        std::cerr << "settings: " << settings_error << "\n";
+    }
+    for (const auto& warning : settings_warnings) {
+        std::cerr << "settings: " << warning << "\n";
+    }
+    const auto setting_string = [&store](const char* key, const char* fallback) {
+        const nlohmann::json* value = store.find_value(key);
+        return value != nullptr && value->is_string() ? value->get<std::string>()
+                                                      : std::string(fallback);
+    };
+    const auto format_number = [](const nlohmann::json& value) {
+        std::ostringstream stream;
+        stream << value.get<double>();
+        return stream.str();
+    };
+
     Run run;
     run.capture_mode = args.capture;
     run.linger = args.linger;
@@ -878,9 +939,35 @@ int run_overlay(const Args& args) {
 
     run.work_area = primary_work_area();
     run.dpi = window_dpi(run.window.hwnd());
-    run.target_lang = args.target_lang.empty() ? "zh-CN" : args.target_lang;
 
-    const std::vector<std::string> engine_args = engine_arguments(args);
+    // Explicit flags win over config/user.json, which wins over the schema
+    // defaults. Only the four engine-facing values are applied at startup;
+    // every other field is restart-only and is honestly labelled that way.
+    Args effective = args;
+    if (effective.target_lang.empty()) {
+        effective.target_lang = setting_string("translation.target", "zh-CN");
+    }
+    if (effective.scene.empty()) {
+        effective.scene = setting_string("translation.scene", "");
+    }
+    if (effective.fps.empty()) {
+        const nlohmann::json* value = store.find_value("capture.fps");
+        if (value != nullptr && value->is_number()) {
+            effective.fps = format_number(*value);
+        }
+    }
+    if (effective.diff_threshold.empty()) {
+        const nlohmann::json* value = store.find_value("capture.diff_threshold");
+        if (value != nullptr && value->is_number()) {
+            // The schema's 2.0 means 2 %; the engine's detector takes 0-1.
+            const double fraction =
+                std::max(0.0, std::min(1.0, value->get<double>() / 100.0));
+            effective.diff_threshold = format_number(nlohmann::json(fraction));
+        }
+    }
+    run.target_lang = effective.target_lang.empty() ? "zh-CN" : effective.target_lang;
+
+    const std::vector<std::string> engine_args = engine_arguments(effective);
     ChildStream stream({cli, engine_args, {}, 6});
     run.stream = &stream;
     std::cerr << "engine: " << cli << "\n";
@@ -912,6 +999,34 @@ int run_overlay(const Args& args) {
     std::cerr << "commands: Ctrl+Alt+P pause/resume, Ctrl+Alt+H hide/show, "
                  "Ctrl+Alt+T target language (" << run.target_lang << ")\n";
 
+    // A separate top-level window. Closing it never closes the overlay; it is
+    // destroyed only when the whole UI finishes. Its Save handler persists
+    // config/user.json and sends the live commands the engine implements.
+    std::unique_ptr<SettingsWindow> settings_window;
+    if (args.settings) {
+        SettingsWindowCallbacks callbacks;
+        callbacks.send_command = [&run](const nlohmann::json& command) {
+            return send_command(run, command);
+        };
+        callbacks.target_language_changed = [&run](const std::string& language) {
+            run.target_lang = language;
+        };
+        callbacks.reload_corpus = [&run]() {
+            return send_command(run, reload_corpus_command());
+        };
+        settings_window =
+            std::make_unique<SettingsWindow>(store, std::move(callbacks));
+        if (!settings_window->create()) {
+            std::cerr << "settings: cannot create the settings window\n";
+            settings_window.reset();
+        } else {
+            // Opening the settings window is an explicit focus change; the
+            // overlay's click-through/focus evidence starts from here so it
+            // still measures the overlay (which never activates) correctly.
+            run.foreground_before = GetForegroundWindow();
+        }
+    }
+
     // Every normal exit -- tray Exit, WM_CLOSE, the stream ending on its own --
     // converges here. The report is written exactly once, after the child and
     // the tray are stopped, so ``tray.added`` and the stream counters are the
@@ -922,6 +1037,9 @@ int run_overlay(const Args& args) {
             return exit_code;
         }
         finished = true;
+        if (settings_window) {
+            settings_window->destroy();
+        }
         unregister_hotkeys(run);
         run.tray.remove();
         stream.stop();
@@ -988,10 +1106,12 @@ int run_overlay(const Args& args) {
                     break;
                 }
                 bool handled = false;
-                if (message.message == WM_CLOSE) {
-                    // Ctrl+C/close console posts this; the same handler also
-                    // covers a direct WM_CLOSE. Cleanup and the report happen
-                    // in finish, not in DefWindowProc.
+                if (message.message == WM_CLOSE &&
+                    message.hwnd == run.window.hwnd()) {
+                    // The console handler posts WM_CLOSE to the overlay; a
+                    // direct close of the overlay takes the same path. Only the
+                    // overlay is intercepted: closing the settings window must
+                    // not close the application.
                     run.finish_reason =
                         g_console_requested.load() ? "console" : "wm-close";
                     run.quit_requested = true;
@@ -1045,7 +1165,9 @@ int run_overlay(const Args& args) {
             const UiSnapshot snapshot = run.model.snapshot();
             render_if_dirty(run, snapshot, now);
             sample_memory(run, now);
-            schedule_quit_if_done(run, snapshot, now);
+            schedule_quit_if_done(
+                run, snapshot, now,
+                settings_window != nullptr && settings_window->open());
 
             MsgWaitForMultipleObjects(0, nullptr, FALSE, kTimerIntervalMs, QS_ALLINPUT);
         }

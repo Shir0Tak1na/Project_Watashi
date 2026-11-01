@@ -8,6 +8,7 @@ add_executable(watashi_tests
     test_presentation.cpp
     test_rules.cpp
     test_session.cpp
+    test_settings.cpp
     test_ui.cpp
     test_ui_actions.cpp
 )
@@ -38,4 +39,19 @@ if(WIN32)
     add_executable(watashi_ui_window_tests ui_window_test.cpp)
     target_link_libraries(watashi_ui_window_tests PRIVATE watashi_ui_core)
     add_test(NAME overlay_window COMMAND watashi_ui_window_tests)
+endif()
+
+# config/settings_ui.json is generated from the Python schema. This fails when
+# the committed document and the schema drift apart, which is what makes "the
+# UI renders whatever the schema declares" true over time.
+find_package(Python3 COMPONENTS Interpreter QUIET)
+if(Python3_Interpreter_FOUND)
+    add_test(
+        NAME settings_ui_schema
+        COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_SOURCE_DIR}/tools/export_settings_ui.py --check)
+    set_tests_properties(settings_ui_schema PROPERTIES
+        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+else()
+    message(WARNING "Python3 not found: settings_ui_schema check is disabled")
 endif()

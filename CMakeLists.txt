@@ -379,6 +379,8 @@ if(WIN32)
         src/ui/actions.cpp
         src/ui/model.cpp
         src/ui/presentation.cpp
+        src/ui/settings.cpp
+        src/ui/settings_window.cpp
         src/ui/layout.cpp
         src/ui/renderer.cpp
         src/ui/layered_window.cpp
