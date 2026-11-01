@@ -17,7 +17,7 @@ C++ 正式版已经从 walking skeleton 走到 **W3.3**：本地捕获、PP-OCRv
 
 ## 什么是真的（可复现）
 
-- **C++ 测试**：当前 630af73 的 build-w33 通过 **240 用例 / 1,402,011 断言**。W3.1 的提交 1e8aa1a 单独跑有 3 个红测，原因是测试把临时 spec 写进 %TEMP%，本机 ACL 拒绝；W3.2 把测试临时目录改到 build 树后全绿。
+- **C++ 测试**：当前 524a79a 的 build-w33 通过 **242 CTest / 240 Catch 用例**。W3.1 的提交 1e8aa1a 单独跑有 3 个红测，原因是测试把临时 spec 写进 %TEMP%，本机 ACL 拒绝；W3.2 把测试临时目录改到 build 树后全绿。
 - **NMT 差分**：tools/compare_nmt.py **120/120** 与 Python 参考逐字段一致（target/backend/protected_terms/lost_placeholders/fallback_reason/used_model）。
 - **NMT 性能**：watashi_nmt_probe 加载 **660.6 ms**；4 句 batch 共 **490.9 ms**（约 123 ms/句），在 350 ms/句的预算内。
 - **OCR**：50 张合成帧 + 10 张受控字幕，逐帧均值/中位数/最小 **1.0000**，框数 0 不一致，最大框差 **2 px**；1200×200 P50 **49–52 ms**。
@@ -48,14 +48,14 @@ C++ 正式版已经从 walking skeleton 走到 **W3.3**：本地捕获、PP-OCRv
 
 | 项 | 状态 |
 | --- | --- |
-| HEAD | 630af73（W3.3：独立 tray owner + 正常退出报告） |
-| 远端 | d261fad（本地领先 3 个提交；本次文档更新尚未提交） |
-| 工作区 | 代码 clean；本文档更新中；build-* 已 gitignore |
+| HEAD | 524a79a（W3.3：icon owner / menu owner 分离） |
+| 远端 | d261fad（本地领先 5 个提交；本文档更新尚未提交） |
+| 工作区 | 代码 clean；build-* 已 gitignore |
 | 当前构建 | build-w33（W3.3）；build-w32 保留 W3.2；build-w2 用于 NMT |
 | 契约 | schema/ 三份；events payload 开放，ReadyInfo 必填 3 字段 |
 | 黄金样本 | 200 条 + golden/verify_cases.py；NMT 另有 golden/nmt 120 条 |
-| 当前阻塞 | 交互桌面的托盘菜单尚未手工复验（本 shell 无通知区，tray.added=false） |
-| 下一步 | 交互桌面复验托盘/报告；然后 W3.4 设置页 |
+| 当前阻塞 | W3.3 托盘交互未验证：当前会话 raw Shell_NotifyIcon(NIM_ADD) error 5，C# 直调同样失败；代码/242 CTest 通过，需干净通知区桌面复验 |
+| 下一步 | W3.4 设置页；托盘留作 clean-machine 验收项 |
 
 ## W0 交付记录（2026-10-28）
 
@@ -94,12 +94,13 @@ W1.1 验收：50 合成 + 10 受控字幕一致率 1.0000；1200×200 P50 49–5
 | 1e8aa1a | W3.1 声明式呈现规格 + 400 ms 热重载 + 44 测试 |
 | 62d6495 | W3.2 stdin 命令通道 + Ctrl+Alt+P/H/T + 托盘 + 234 用例 |
 | 630af73 | W3.3 独立 tray owner 窗口 + finish() 写报告 + 240 用例 |
+| 524a79a | W3.3 icon owner=overlay、menu owner 独立 + 242 CTest；托盘交互待干净桌面 |
 
-**W3.3 修复**：托盘图标与菜单现在属于独立的 1x1 WS_EX_TOOLWINDOW owner（屏幕外），
-SetForegroundWindow 不再打在 WS_EX_NOACTIVATE 悬浮窗上；悬浮窗五个扩展样式不变。
+**W3.3 修复**：icon owner 用悬浮窗 hwnd，menu owner 用独立的 1x1 可激活窗口；
+`SetForegroundWindow`/`TrackPopupMenu` 只打 menu owner，悬浮窗的 NOACTIVATE 不变。
 run_overlay 统一用 finish() 处理托盘 Exit、WM_CLOSE、流结束和异常，报告包含
-exit_reason、tray.added、hotkeys 实测值；Ctrl+C/关控制台会 post WM_CLOSE 并等最多 4 s，
-强杀无法写报告，代码不假装。本 shell 无通知区（Shell_NotifyIcon error 5），托盘菜单仍需交互桌面复验。
+exit_reason、tray.added、hotkeys 实测值。当前会话 raw `Shell_NotifyIcon(NIM_ADD)`
+与 C# 直调都返回 error 5，说明该会话通知宿主不接受 NIM_ADD；托盘菜单需在干净通知区桌面复验，不能据此判代码失败。
 
 ## 环境坑（本机实测）
 
