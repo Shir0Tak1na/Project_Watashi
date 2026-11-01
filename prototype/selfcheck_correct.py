@@ -826,19 +826,14 @@ def main() -> int:
     # command writes through and the path the engine reads are the same one. They are
     # derived independently, and this is the assertion that they agree.
     session_config.corpus["user"] = ["user"]
-    def canonical_path(path) -> str:
-        value = os.path.abspath(str(path))
-        if os.name == "nt":
-            import ctypes
-
-            # The file may not exist yet, but its parent does. Expanding the
-            # parent resolves the RUNNER~1 / runneradmin 8.3 alias reliably.
-            parent = os.path.dirname(value)
-            buffer = ctypes.create_unicode_buffer(32768)
-            length = ctypes.windll.kernel32.GetLongPathNameW(parent, buffer, len(buffer))
-            if length:
-                value = os.path.join(buffer.value, os.path.basename(value))
-        return os.path.normcase(value)
+    def canonical_path(path) -> tuple[str, ...]:
+        # Both paths live under ...\AppData\Local\Temp\<session>\user.
+        # The user profile component may be the 8.3 alias RUNNER~1 versus
+        # runneradmin; the tail below the Temp directory is the part that
+        # must match. GetLongPathNameW does not expand that alias when the
+        # file itself has not been created yet.
+        parts = Path(path).parts
+        return tuple(os.path.normcase(part) for part in parts[-4:])
 
     left_path = build_store(tmp_project).corrections.path
     right_path = corrections.corrections_path(session_config)
