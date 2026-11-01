@@ -831,10 +831,13 @@ def main() -> int:
         if os.name == "nt":
             import ctypes
 
+            # The file may not exist yet, but its parent does. Expanding the
+            # parent resolves the RUNNER~1 / runneradmin 8.3 alias reliably.
+            parent = os.path.dirname(value)
             buffer = ctypes.create_unicode_buffer(32768)
-            length = ctypes.windll.kernel32.GetLongPathNameW(value, buffer, len(buffer))
+            length = ctypes.windll.kernel32.GetLongPathNameW(parent, buffer, len(buffer))
             if length:
-                value = buffer.value
+                value = os.path.join(buffer.value, os.path.basename(value))
         return os.path.normcase(value)
 
     left_path = build_store(tmp_project).corrections.path
