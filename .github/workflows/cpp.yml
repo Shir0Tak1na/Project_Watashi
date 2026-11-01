@@ -14,7 +14,7 @@ on:
 jobs:
   windows:
     name: windows-latest / msvc
-    runs-on: windows-latest
+    runs-on: windows-2022
     defaults:
       run:
         shell: pwsh
