@@ -91,6 +91,16 @@ if(Python3_Interpreter_FOUND)
                 # 77, and ctest shows it as skipped rather than green.
                 SKIP_RETURN_CODE 77)
         endforeach()
+
+        # Pure integrity classifier tests (Low/Medium/Unknown). No build tree,
+        # no registry and no install.ps1 are touched.
+        add_test(
+            NAME installer_self_test
+            COMMAND ${Python3_EXECUTABLE}
+                    ${CMAKE_SOURCE_DIR}/tests/installer_test.py --self-test)
+        set_tests_properties(installer_self_test PROPERTIES
+            WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+            SKIP_RETURN_CODE 77)
     endif()
 else()
     message(WARNING "Python3 not found: settings and installer checks are disabled")

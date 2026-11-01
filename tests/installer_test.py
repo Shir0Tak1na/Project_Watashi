@@ -92,15 +92,55 @@ def identity_and_groups() -> str:
     return "\n".join(text)
 
 
+def integrity_level(groups_text: str) -> str:
+    """Classify the token's mandatory label from `whoami /groups`.
+
+    Low IL (S-1-16-4096) is a test-host property: such a token cannot create
+    keys under its own HKCU, so the installer is not at fault. This is a pure
+    function so --self-test can cover it without touching a registry.
+    """
+    text = groups_text.lower()
+    if "s-1-16-4096" in text or "low mandatory level" in text:
+        return "low"
+    if "s-1-16-8192" in text or "medium mandatory level" in text:
+        return "medium"
+    if "s-1-16-12288" in text or "high mandatory level" in text:
+        return "high"
+    return "unknown"
+
+
+def is_low_integrity(groups_text: str) -> bool:
+    return integrity_level(groups_text) == "low"
+
+
+def require_testable_integrity() -> str:
+    """Refuse to blame the installer on a host where HKCU is unwritable.
+
+    Runs before staging or install.ps1. A Low IL token (S-1-16-4096) is a
+    host/session property, so the case is skipped with 77 and never reported
+    as a pass.
+    """
+    identity = identity_and_groups()
+    level = integrity_level(identity)
+    if level == "low":
+        log(identity)
+        print("low-integrity host: HKCU is not writable for this test, "
+              "skipping (77)", flush=True)
+        raise SystemExit(77)
+    return level
+
+
 def require_hkcu_write() -> None:
     """Probe HKCU before the installer runs.
 
-    A restricted token cannot open its own subkeys. In that host the installer
-    is not wrong; the test must be skipped with 77 and say why, never reported
-    as a pass. Anything else is a real installer bug.
+    The probe is kept even after the integrity check: it catches a real
+    installer regression on Medium/High. A Low IL failure is a skip, a
+    Medium/High failure is an installer bug, and an unclassifiable token is
+    skipped rather than accused.
     """
     path = f"Software\\ProjectWatashi\\Probe_{uuid.uuid4().hex}"
     identity = identity_and_groups()
+    level = integrity_level(identity)
     try:
         with winreg.CreateKeyEx(winreg.HKEY_CURRENT_USER, path, 0,
                                 winreg.KEY_ALL_ACCESS) as handle:
@@ -108,16 +148,44 @@ def require_hkcu_write() -> None:
     except OSError as error:
         log(identity)
         print(f"HKCU probe failed: {error}", flush=True)
-        if "S-1-5-12" in identity or "NT AUTHORITY\\RESTRICTED" in identity:
-            print("restricted token detected: the host denies writes to HKCU; "
-                  "skipping the installer test (77)", flush=True)
+        if level == "low" or "S-1-5-12" in identity or "NT AUTHORITY\\RESTRICTED" in identity:
+            print("low-integrity or restricted host: HKCU is not writable for "
+                  "this test, skipping (77)", flush=True)
             raise SystemExit(77)
-        print("the token is not restricted, so this is an installer bug; "
+        if level == "unknown":
+            print("integrity level unknown; not blaming the installer, "
+                  "skipping (77)", flush=True)
+            raise SystemExit(77)
+        print(f"the token is {level} integrity, so this is an installer bug; "
               "install.ps1 must fix its HKCU path", flush=True)
         raise SystemExit(1)
     finally:
         remove_key(path)
         remove_key("Software\\ProjectWatashi")
+
+
+def self_test() -> int:
+    """Pure checks for Low/Medium/Unknown, so the skip logic is itself tested."""
+    low = ("Mandatory Label\\Low Mandatory Level  Label  S-1-16-4096")
+    medium = ("Mandatory Label\\Medium Mandatory Level  Label  S-1-16-8192")
+    unknown = "User\\ryutaki\nBUILTIN\\Users"
+    failures = []
+    if not is_low_integrity(low):
+        failures.append("Low Mandatory Level was not recognised as low")
+    if is_low_integrity(medium):
+        failures.append("Medium Mandatory Level was misread as low")
+    if is_low_integrity(unknown):
+        failures.append("an unlabelled token was misread as low")
+    if integrity_level(medium) != "medium":
+        failures.append("Medium Mandatory Level was not classified as medium")
+    if integrity_level(unknown) != "unknown":
+        failures.append("an unlabelled token was not classified as unknown")
+    if failures:
+        for failure in failures:
+            print(f"SELFTEST FAIL: {failure}", flush=True)
+        return 1
+    print("SELFTEST OK: low, medium and unknown integrity classifications", flush=True)
+    return 0
 
 
 def install(stage_dir: Path, prefix: Path, key: str, shortcut: Path, extra: list[str] | None = None) -> None:
@@ -293,18 +361,31 @@ def case_unsigned(root: Path) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--case", required=True,
+    parser.add_argument("--case",
                         choices=["manifest", "install", "remove_user_data", "unsigned"])
-    parser.add_argument("--build", type=Path, required=True)
+    parser.add_argument("--build", type=Path, default=None)
     parser.add_argument("--config", default="")
-    parser.add_argument("--source", type=Path, required=True)
+    parser.add_argument("--source", type=Path, default=None)
+    parser.add_argument("--self-test", action="store_true",
+                        help="pure integrity-classification checks; needs no build")
     arguments = parser.parse_args()
+
+    if arguments.self_test:
+        return self_test()
+    if not arguments.case:
+        parser.error("--case is required unless --self-test is given")
+    if arguments.build is None:
+        parser.error("--build is required unless --self-test is given")
 
     root = Path(tempfile.mkdtemp(prefix="watashi-installer-test-"))
     try:
         if arguments.case == "unsigned":
             case_unsigned(root)
         else:
+            # Low IL hosts get 77 before staging: install.ps1 must not see a
+            # token whose HKCU is unwritable.
+            if arguments.case in ("install", "remove_user_data"):
+                require_testable_integrity()
             stage_dir = stage(arguments.build, arguments.config, root)
             if arguments.case == "manifest":
                 case_manifest(stage_dir)

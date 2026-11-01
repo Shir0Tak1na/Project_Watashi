@@ -131,41 +131,55 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\sign.ps1 -Path .\watashi_u
 `UNSIGNED` 警告并以 0 退出（CI 跳过签名）；`-RequireSignature` 会以 2 退出。
 它**不会**把未签名文件报告成已签名。
 
-## 6. 验收环境说明 / What was and was not verified here
+## 6. 验收状态 / Verification status
 
-2026-11-01 在本机 `build-w4` 上实际执行并记录：
+### 安装测试依赖宿主完整性 / Installer tests depend on host integrity
 
-- ZIP（`ProjectWatashi-0.1.0-win64.zip`，16.4 MB，无权重）解压到临时目录，
-  `install.ps1` 安装到临时前缀（普通用户，无 UAC）→ `watashi_ui.exe --settings`
-  打开设置窗并跑完 3 秒 synthetic 流（退出码 0，`reason=duration`，
-  `click_through=pass`）→ `uninstall.ps1` 卸载；payload、快捷方式、
-  HKCU 卸载项均被移除，`user\user.json` 保留。全程无管理员。
-- 验收中发现并修复了一个真实安装 bug：`install.ps1` 在 `-File` 调用下
-  `$PSScriptRoot` 未在参数默认值阶段绑定，导致 `SourceDir` 为空；现在在脚本体内
-  解析，ZIP 内直接运行即可，不需要额外传参。
-- `ctest --test-dir build-w4 -C Release --parallel 4`：**302/302 通过**（含
-  20 个 W4.1/W4.2 用例、9 个 W4.3 单元用例、`ui_version`/`cli_version`/
-  `fetch_version`）。其中
-  “hash mismatch deletes the partial file”在个别会话中会因宿主的文件过滤
-  （`DeleteFileW` 返回成功但文件仍在）以 **77 SKIP**；本次全量运行通过。
+安装会在 HKCU 写卸载项，因此这两个用例对测试宿主的强制完整性标签（mandatory
+label）敏感。`tests/installer_test.py` 在 staging 和 `install.ps1` 之前先解析
+`whoami /groups`：
+
+| 宿主 | 结果 |
+| --- | --- |
+| **Low IL**（`S-1-16-4096` / `Low Mandatory Level`） | 退出 **77**，CTest 显示 **skipped**；不执行 `install.ps1` |
+| Medium / High，HKCU 探针成功 | 用例真实执行安装与卸载 |
+| Medium / High，HKCU 探针失败 | 判为 installer bug，测试 **failed** |
+| 无法判定完整性 | 退出 **77**，不指责产品 |
+
+**77 是 skip 约定**（0 = pass，非 0 = fail）。CTest 的 `SKIP_RETURN_CODE 77`
+把这两个用例显示为 `skipped`；**skipped 不是 passed，不计入通过**。在低完整性
+宿主上，这两个用例只证明“宿主不能写 HKCU”，不证明安装器可用。
+分类函数本身由 `installer_self_test`（`python tests/installer_test.py --self-test`）
+覆盖 Low / Medium / Unknown 三种输入。
+
+### 普通用户桌面需手工验收 / Manual acceptance is still required
+
+自动化测试不足以给出“安装已验收”的结论。请在**普通（Medium）用户桌面**、
+不要“以管理员身份运行”，手工执行并逐项检查：
+
+```powershell
+# 1) 从构建树 staging（只含 watashi 组件，不含模型权重）
+cmake --install build-w4 --config Release --component watashi --prefix C:\Temp\watashi-stage
+
+# 2) 安装到临时前缀，使用测试卸载键与临时开始菜单，避免污染真实安装
+C:\Temp\watashi-stage\install.ps1 -Prefix C:\Temp\watashi-app `
+  -UninstallKey HKCU:\Software\ProjectWatashi\ManualTest -ShortcutDir C:\Temp\watashi-menu
+
+# 3) 检查：HKCU 卸载项、开始菜单 .lnk、watashi_ui.exe 能启动（--settings）
+# 4) 卸载并确认 payload/快捷方式/注册表项被清理，user\ 保留
+powershell -NoProfile -ExecutionPolicy Bypass -File C:\Temp\watashi-app\uninstall.ps1 `
+  -Prefix C:\Temp\watashi-app -UninstallKey HKCU:\Software\ProjectWatashi\ManualTest `
+  -ShortcutDir C:\Temp\watashi-menu
+```
+
+### 其余已记录的事实 / Other recorded facts
+
 - `watashi_fetch --check`（缺模型）返回 1；`--fetch --offline` 拒绝全部 http
   下载并返回 1，未发起网络请求。
 - W4.3：日志环形轮转（5×2 MiB）、minidump 文件写入、`--version` 字段均有
-  单元测试；本机的宿主过滤禁止原生进程创建 `%LOCALAPPDATA%\ProjectWatashi`，
-  因此验收时先建好 `logs` 目录再运行，日志正常写入（含版本与退出码）。
-  在普通桌面没有这个限制。
-- W3.3 托盘：本次运行打印 `tray: version 4 enabled` 与 `tray: icon added`，
-  **通知区正常**；`tray-exit` 需要真实点击托盘菜单，未自动化执行，标记为
-  **交互未验**（未宣称通过）。
-- 受限令牌宿主（`NT AUTHORITY\RESTRICTED`，SID `S-1-5-12`）会拒绝 HKCU 写入；
-  这时 `installer_install` / `installer_remove_user_data` 以 **77** 退出并被
-  CTest 标记为 **SKIP**，不会显示为 pass。普通桌面上可直接运行：
-
-```powershell
-# 解压后，普通用户、不要“以管理员身份运行”
-powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1
-powershell -NoProfile -ExecutionPolicy Bypass -File "$env:LOCALAPPDATA\ProjectWatashi\uninstall.ps1"
-```
-
+  单元测试；宿主若禁止原生进程创建 `%LOCALAPPDATA%\ProjectWatashi`，日志会
+  按设计静默停用（不阻塞主流程）。
+- W3.3 托盘：某次运行打印 `tray: icon added`（该环境通知区可用）；`tray-exit`
+  需要真实点击托盘菜单，未执行，标记为**交互未验**。
 - **未在干净 Win11 VM 上验证**：当前环境没有可用的干净 VM。
 - 签名脚本在无证书环境下运行，产物明确标记为 unsigned（未冒充已签名）。
