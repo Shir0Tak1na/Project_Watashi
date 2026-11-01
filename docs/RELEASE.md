@@ -1,16 +1,16 @@
-# 发布验收清单 / Release checklist
+﻿# 发布验收清单 / Release checklist
 
 适用对象：**干净 Win11 VM 上的普通用户桌面**（per-user 安装，不需要管理员，
 不触发 UAC）。与 [docs/INSTALL.md](INSTALL.md) 互补：本文是发布前逐项检查表，
 INSTALL.md 是使用者安装说明。
 
-状态日期：2026-11-01（W4.4）。
+状态日期：2026-11-01（**v1.0.0-rc1**）。
 
 ## 0. 当前验证状态 / Status
 
 | 项目 | 状态 |
 | --- | --- |
-| 10 分钟 UI soak（synthetic/fake） | **PASS**（2026-11-01，`build-w4/soak-ui-10m.json`：602.6s，handles 169→169，内存 15→15.1 MiB，peak 16.4 MiB，exit 0，log_errors 0） |
+| 10 分钟 UI soak（synthetic/fake） | **PASS**（2026-11-01 RC1，`build-rc/soak-ui-10m.json`：602.4s，handles 172→172，内存 15.2→15.2 MiB，peak 16.6 MiB，exit 0，log_errors 0） |
 | 8 小时 soak（`--duration 28800`） | **未跑**：本文不声称通过 |
 | 干净 Win11 VM | **未验证**：当前没有可用 VM |
 | 普通（Medium）桌面手工安装（W4.1） | **待办**：自动化在 Low IL 宿主会 skip，必须人工验收 |
@@ -21,11 +21,20 @@ INSTALL.md 是使用者安装说明。
 > `installer_remove_user_data` 在 Low IL（`S-1-16-4096`）宿主会以 77 退出并被
 > 标记为 skipped；这只说明宿主不能写 HKCU，不是安装通过。
 
+### RC1 产物 / RC1 artefacts
+
+- `dist/ProjectWatashi-1.0.0-rc1-win64.zip`（约 16.4 MB）；
+  `dist/SHA256SUMS.txt` 记录归档的 SHA-256；具体字节数与哈希在打包输出中记录。
+- 解压审计（`build-rc/unzip-check`）：`install_manifest.json` 的 15 项 payload
+  全部存在；`.bin`/`.onnx`/`.pt`/`.pth`/`.safetensors` 为 **0**；没有 `models/`；
+  `.pdb` 为 **0**；ZIP 哈希与 `SHA256SUMS.txt` 一致。
+- ZIP 不进仓库（`dist/` 已在 `.gitignore`）。
+
 ## 1. 安装 / Install
 
 在干净 VM 上，用**普通用户**、不要“以管理员身份运行”：
 
-- [ ] 解压 `ProjectWatashi-0.1.0-win64.zip`，确认里面**没有** `.bin` / `.onnx` /
+- [ ] 解压 `dist/ProjectWatashi-1.0.0-rc1-win64.zip`，确认里面**没有** `.bin` / `.onnx` /
       `.pt`，没有 `models/` 目录；
 - [ ] 确认 `licenses/` 含 `LICENSE`、`THIRD_PARTY_LICENSES.md`、
       `MODEL_LICENSES.md`、`sbom.spdx.json`；
@@ -77,11 +86,11 @@ INSTALL.md 是使用者安装说明。
 ```powershell
 # 10 分钟 smoke（发布前必须）
 powershell -NoProfile -ExecutionPolicy Bypass -File tools\soak.ps1 `
-  --duration 600 --mode ui --report build-w4\soak-ui-10m.json
+  --duration 600 --mode ui --report build-rc\soak-ui-10m.json
 
 # 8 小时（当前未跑；跑完才可把状态改成 pass）
 powershell -NoProfile -ExecutionPolicy Bypass -File tools\soak.ps1 `
-  --duration 28800 --mode ui --report build-w4\soak-ui-8h.json
+  --duration 28800 --mode ui --report build-rc\soak-ui-8h.json
 ```
 
 报告 JSON 至少包含：`requested_duration_seconds`、`elapsed_seconds`、
@@ -97,3 +106,4 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tools\soak.ps1 `
 - [ ] 有证书时设置 `WATASHI_SIGN_CERT`（密码可选 `WATASHI_SIGN_PASSWORD`），
       运行 `installer\sign.ps1`，确认 `SIGNED` 与 signtool 校验通过；
       仓库内不得出现证书/密码。
+

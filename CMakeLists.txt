@@ -15,7 +15,11 @@ if(NOT DEFINED CMAKE_TOOLCHAIN_FILE)
     endforeach()
 endif()
 
-project(ProjectWatashi VERSION 0.1.0 LANGUAGES CXX)
+project(ProjectWatashi VERSION 1.0.0 LANGUAGES CXX)
+
+# project() only accepts numeric components, so the release label lives here and
+# flows into --version, the CPack archive name and the SBOM.
+set(WATASHI_VERSION "1.0.0-rc1")
 
 # The version stamp is compiled into the binaries and printed by --version, so
 # a report reader can tell which build produced it. A missing git (source
@@ -382,7 +386,7 @@ add_library(watashi_obs STATIC src/obs/obs.cpp)
 target_include_directories(watashi_obs PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_compile_features(watashi_obs PUBLIC cxx_std_17)
 target_compile_definitions(watashi_obs PUBLIC
-    WATASHI_PRODUCT_VERSION="${PROJECT_VERSION}"
+    WATASHI_PRODUCT_VERSION="${WATASHI_VERSION}"
     WATASHI_GIT_COMMIT="${WATASHI_GIT_COMMIT}"
     WATASHI_BUILD_TYPE="$<CONFIG>")
 if(WIN32)
@@ -509,8 +513,8 @@ if(WIN32)
 
     set(CPACK_PACKAGE_NAME "ProjectWatashi")
     set(CPACK_PACKAGE_VENDOR "Shir0Tak1na")
-    set(CPACK_PACKAGE_VERSION "${PROJECT_VERSION}")
-    set(CPACK_PACKAGE_FILE_NAME "ProjectWatashi-${PROJECT_VERSION}-win64")
+    set(CPACK_PACKAGE_VERSION "${WATASHI_VERSION}")
+    set(CPACK_PACKAGE_FILE_NAME "ProjectWatashi-${WATASHI_VERSION}-win64")
     set(CPACK_GENERATOR "ZIP")
     set(CPACK_INCLUDE_TOPLEVEL_DIRECTORY ON)
     set(CPACK_COMPONENTS_ALL watashi)
@@ -519,7 +523,7 @@ if(WIN32)
     # (the FetchContent install rules are left out).
     set(CPACK_ARCHIVE_COMPONENT_INSTALL ON)
     set(CPACK_ARCHIVE_WATASHI_FILE_NAME
-        "ProjectWatashi-${PROJECT_VERSION}-win64")
+        "ProjectWatashi-${WATASHI_VERSION}-win64")
     set(CPACK_COMPONENT_WATASHI_DISPLAY_NAME "Project Watashi")
     set(CPACK_COMPONENT_WATASHI_DESCRIPTION
         "Per-user subtitle overlay, engine, model fetcher, config and licences")

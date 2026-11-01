@@ -2,11 +2,43 @@
 
 All notable changes to this project are recorded here.
 
-This project is **pre-release software**. The version numbers stay in `0.0.x` on
-purpose: what exists today is the Python validation prototype, not the C++ product
-described in `Project Watashi.md`. It is usable for testing and it is honest about
-what it does not do yet -- see "Known limitations" below, which is part of the
-release rather than a footnote.
+Earlier prototype phases used `0.0.x` on purpose: they were the Python validation
+prototype, not the C++ product described in `Project Watashi.md`. The C++ product
+now ships as **1.0.0-rc1** (below). Older entries stay as written and describe what
+they did or did not do at the time; "Known limitations" is part of the release
+rather than a footnote.
+
+## [1.0.0-rc1] -- 2026-11-01 -- release candidate
+
+首个 C++ 产品发布候选（RC），代码 MIT；模型权重不随包分发。
+
+### Added
+
+- **per-user 安装包**：`%LOCALAPPDATA%\ProjectWatashi`，无管理员、无 UAC；
+  `install.ps1` / `uninstall.ps1` 写 HKCU 卸载项与开始菜单快捷方式，默认保留
+  `user\`。分发形式为 ZIP；未做 MSI/EXE 安装器。
+- **模型获取器**：`watashi_fetch` 读 `models.lock.json`；`--check` 只校验、
+  `--fetch` 才联网、`--resume` 续传、`--offline` 拒绝 http；下载先写 `.part`，
+  校验 SHA-256 与字节数后原子改名。包内没有权重。
+- **可观测**：5×2 MiB 环形日志、可选本地 minidump、`--version` 输出产品版本 /
+  git commit / build type；`--report` 含 `product`。默认不联网、不记字幕原文。
+- **合规**：`tools/license_manifest.json` + SPDX-2.3 SBOM
+  （`licenses/sbom.spdx.json`，`make_sbom.py --check` 防漂移）；`licenses/`
+  随包分发 `LICENSE`、`THIRD_PARTY_LICENSES.md`、`MODEL_LICENSES.md`。
+- **长稳工具**：`tools/soak.ps1`（ui/cli、synthetic/fake、JSON 报告）。
+  10 分钟 UI smoke PASS；8 小时未跑。
+
+### Known limitations
+
+- **未在干净 Win11 VM 验证**；普通（Medium）桌面手工安装仍待办。
+- **8 小时 soak 未跑**；托盘 `tray-exit` 未验证。
+- 当前发布**未签名**（unsigned）；证书不进入仓库。
+- 低完整性（Low IL）测试宿主上 installer 用例以 77 退出并标记为 skipped，
+  不计为 passed。
+- 许可：NLLB-200-distilled-600M 为 **CC-BY-NC-4.0（非商业）**，Whisper small
+  为 MIT，PP-OCRv4 为 Apache-2.0。
+
+本版本未改变引擎 OCR / 捕获 / 语料 / NMT 行为，未改动事件与设置 schema。
 
 ## [Unreleased]
 

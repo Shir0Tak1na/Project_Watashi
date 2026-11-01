@@ -1,4 +1,4 @@
-# 安装、卸载与模型获取 / Install, uninstall and model fetching
+﻿# 安装、卸载与模型获取 / Install, uninstall and model fetching
 
 ## 1. 分发包是什么 / What ships
 
@@ -167,7 +167,7 @@ label）敏感。`tests/installer_test.py` 在 staging 和 `install.ps1` 之前�
 
 ```powershell
 # 1) 从构建树 staging（只含 watashi 组件，不含模型权重）
-cmake --install build-w4 --config Release --component watashi --prefix C:\Temp\watashi-stage
+cmake --install build-rc --config Release --component watashi --prefix C:\Temp\watashi-stage
 
 # 2) 安装到临时前缀，使用测试卸载键与临时开始菜单，避免污染真实安装
 C:\Temp\watashi-stage\install.ps1 -Prefix C:\Temp\watashi-app `
@@ -195,3 +195,4 @@ powershell -NoProfile -ExecutionPolicy Bypass -File C:\Temp\watashi-app\uninstal
   [docs/RELEASE.md](RELEASE.md)。
 - **未在干净 Win11 VM 上验证**：当前环境没有可用的干净 VM。
 - 签名脚本在无证书环境下运行，产物明确标记为 unsigned（未冒充已签名）。
+

@@ -2,8 +2,8 @@
   "spdxVersion": "SPDX-2.3",
   "dataLicense": "CC0-1.0",
   "SPDXID": "SPDXRef-DOCUMENT",
-  "name": "ProjectWatashi-0.1.0",
-  "documentNamespace": "https://github.com/Shir0Tak1na/ProjectWatashi/spdx/0.1.0",
+  "name": "ProjectWatashi-1.0.0-rc1",
+  "documentNamespace": "https://github.com/Shir0Tak1na/ProjectWatashi/spdx/1.0.0-rc1",
   "creationInfo": {
     "created": "2026-11-01T00:00:00Z",
     "creators": [
@@ -15,7 +15,7 @@
     {
       "SPDXID": "SPDXRef-Project-Watashi",
       "name": "Project Watashi",
-      "versionInfo": "0.1.0",
+      "versionInfo": "1.0.0-rc1",
       "supplier": "NOASSERTION",
       "downloadLocation": "https://github.com/Shir0Tak1na/ProjectWatashi",
       "filesAnalyzed": false,
