@@ -826,10 +826,23 @@ def main() -> int:
     # command writes through and the path the engine reads are the same one. They are
     # derived independently, and this is the assertion that they agree.
     session_config.corpus["user"] = ["user"]
+    def canonical_path(path) -> str:
+        value = os.path.abspath(str(path))
+        if os.name == "nt":
+            import ctypes
+
+            buffer = ctypes.create_unicode_buffer(32768)
+            length = ctypes.windll.kernel32.GetLongPathNameW(value, buffer, len(buffer))
+            if length:
+                value = buffer.value
+        return os.path.normcase(value)
+
+    left_path = build_store(tmp_project).corrections.path
+    right_path = corrections.corrections_path(session_config)
     check.check(
         "the session's correction path and the engine's are the same file",
-        build_store(tmp_project).corrections.path == corrections.corrections_path(session_config),
-        f"{build_store(tmp_project).corrections.path} vs {corrections.corrections_path(session_config)}",
+        canonical_path(left_path) == canonical_path(right_path),
+        f"{left_path} vs {right_path}",
     )
 
     session_corpus = build_store(tmp_project)

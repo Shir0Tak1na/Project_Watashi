@@ -272,6 +272,7 @@ def main() -> int:
             break
     zh_session.stop()
 
+    print(f"      payload={payload!r}", flush=True)
     check.check("a Chinese frame reached the overlay", payload is not None)
     if payload:
         lines = payload.get("lines") or [{}]
