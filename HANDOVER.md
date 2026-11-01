@@ -5,7 +5,7 @@
 
 ## 一句话状态
 
-C++ 正式版已经从 walking skeleton 走到 **W3.3**：本地捕获、PP-OCRv4、语料/规则、CTranslate2 NLLB、原生 Win32 悬浮窗、声明式呈现、stdin 命令通道、全局热键和托盘都已落地。**W3.3 的托盘独立 owner 与报告退出路径已修**；W3.4 设置页、W4 发布硬化尚未开始。
+C++ 正式版已经从 walking skeleton 走到 **W3.4**：本地捕获、PP-OCRv4、语料/规则、CTranslate2 NLLB、原生 Win32 悬浮窗、声明式呈现、stdin 命令通道、全局热键、托盘和设置页都已落地。**W3.3 托盘交互仍需干净通知区桌面复验；W4 发布硬化尚未开始。**
 
 ## 必读顺序（约 30 分钟）
 
@@ -17,7 +17,7 @@ C++ 正式版已经从 walking skeleton 走到 **W3.3**：本地捕获、PP-OCRv
 
 ## 什么是真的（可复现）
 
-- **C++ 测试**：当前 524a79a 的 build-w33 通过 **242 CTest / 240 Catch 用例**。W3.1 的提交 1e8aa1a 单独跑有 3 个红测，原因是测试把临时 spec 写进 %TEMP%，本机 ACL 拒绝；W3.2 把测试临时目录改到 build 树后全绿。
+- **C++ 测试**：当前 06855cd 的 build-w34 通过 **270 CTest / 267 Catch 用例**。W3.1 的提交 1e8aa1a 单独跑有 3 个红测，原因是测试把临时 spec 写进 %TEMP%，本机 ACL 拒绝；W3.2 把测试临时目录改到 build 树后全绿。
 - **NMT 差分**：tools/compare_nmt.py **120/120** 与 Python 参考逐字段一致（target/backend/protected_terms/lost_placeholders/fallback_reason/used_model）。
 - **NMT 性能**：watashi_nmt_probe 加载 **660.6 ms**；4 句 batch 共 **490.9 ms**（约 123 ms/句），在 350 ms/句的预算内。
 - **OCR**：50 张合成帧 + 10 张受控字幕，逐帧均值/中位数/最小 **1.0000**，框数 0 不一致，最大框差 **2 px**；1200×200 P50 **49–52 ms**。
@@ -48,14 +48,14 @@ C++ 正式版已经从 walking skeleton 走到 **W3.3**：本地捕获、PP-OCRv
 
 | 项 | 状态 |
 | --- | --- |
-| HEAD | 524a79a（W3.3：icon owner / menu owner 分离） |
-| 远端 | d261fad（本地领先 5 个提交；本文档更新尚未提交） |
+| HEAD | 06855cd（W3.4：79 字段 schema 驱动设置页 + user.json） |
+| 远端 | d261fad（本地领先 8 个提交；本文档更新尚未提交） |
 | 工作区 | 代码 clean；build-* 已 gitignore |
-| 当前构建 | build-w33（W3.3）；build-w32 保留 W3.2；build-w2 用于 NMT |
+| 当前构建 | build-w34（W3.4）；build-w33 保留 W3.3；build-w2 用于 NMT |
 | 契约 | schema/ 三份；events payload 开放，ReadyInfo 必填 3 字段 |
 | 黄金样本 | 200 条 + golden/verify_cases.py；NMT 另有 golden/nmt 120 条 |
 | 当前阻塞 | W3.3 托盘交互未验证：当前会话 raw Shell_NotifyIcon(NIM_ADD) error 5，C# 直调同样失败；代码/242 CTest 通过，需干净通知区桌面复验 |
-| 下一步 | W3.4 设置页；托盘留作 clean-machine 验收项 |
+| 下一步 | W4.1/W4.2 安装包、签名、模型下载校验；托盘留作 clean-machine 验收项 |
 
 ## W0 交付记录（2026-10-28）
 
@@ -95,6 +95,7 @@ W1.1 验收：50 合成 + 10 受控字幕一致率 1.0000；1200×200 P50 49–5
 | 62d6495 | W3.2 stdin 命令通道 + Ctrl+Alt+P/H/T + 托盘 + 234 用例 |
 | 630af73 | W3.3 独立 tray owner 窗口 + finish() 写报告 + 240 用例 |
 | 524a79a | W3.3 icon owner=overlay、menu owner 独立 + 242 CTest；托盘交互待干净桌面 |
+| 06855cd | W3.4 schema 驱动设置窗 + user.json 持久化 + 270 CTest |
 
 **W3.3 修复**：icon owner 用悬浮窗 hwnd，menu owner 用独立的 1x1 可激活窗口；
 `SetForegroundWindow`/`TrackPopupMenu` 只打 menu owner，悬浮窗的 NOACTIVATE 不变。
@@ -122,5 +123,5 @@ exit_reason、tray.added、hotkeys 实测值。当前会话 raw `Shell_NotifyIco
 - [x] 接手方能独立跑 prototype\run.cmd --selftest
 - [x] 接手方能说出“哪些文档是过期的”
 - [x] W3.3 托盘/报告修复（本 shell 正常 duration 报告通过；交互托盘待复验）
-- [ ] W3.4 设置页
+- [x] W3.4 设置页（270 CTest；手工改值/保存未验）
 - [ ] W4 安装包/签名/8h soak
