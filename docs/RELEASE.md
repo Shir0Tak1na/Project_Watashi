@@ -10,8 +10,8 @@ INSTALL.md 是使用者安装说明。
 
 | 项目 | 状态 |
 | --- | --- |
-| 10 分钟 UI soak（synthetic/fake） | **PASS**（2026-11-01 RC1，`build-rc/soak-ui-10m.json`：602.4s，handles 172→172，内存 15.2→15.2 MiB，peak 16.6 MiB，exit 0，log_errors 0） |
-| 8 小时 soak（`--duration 28800`） | **未跑**：本文不声称通过 |
+| 10 分钟 UI soak（synthetic/fake） | **PASS**（2026-11-01 clean-room，`build-rc/soak-10m.json`：602.5s，handles 169→244（退出前最后采样），内存 14.9 MiB，峰值 21.1 MiB，exit 0，log_errors 0） |
+| 8 小时 soak（`--duration 28800`） | **进行中**：2026-11-01 20:43 启动，PID 5224，报告 `build-rc/soak-8h.json` 尚未生成；完成前不得写成通过 |
 | 干净 Win11 VM | **未验证**：当前没有可用 VM |
 | 普通（Medium）桌面手工安装（W4.1） | **待办**：自动化在 Low IL 宿主会 skip，必须人工验收 |
 | W3.3 托盘 `tray-exit` | **未验证**：需要真实点击托盘菜单 |
@@ -29,6 +29,24 @@ INSTALL.md 是使用者安装说明。
   全部存在；`.bin`/`.onnx`/`.pt`/`.pth`/`.safetensors` 为 **0**；没有 `models/`；
   `.pdb` 为 **0**；ZIP 哈希与 `SHA256SUMS.txt` 一致。
 - ZIP 不进仓库（`dist/` 已在 `.gitignore`）。
+
+### clean-room 复验 / Clean-room rebuild (2026-11-01)
+
+- `git archive HEAD` → `build-rc/clean-src`，在 `build-rc/clean-build` 重新
+  configure/build；`ctest --parallel 4` → **313/313 通过**。
+- `cmake --install` 到 `build-rc/clean-stage` 与
+  `dist/ProjectWatashi-1.0.0-rc1-win64.zip` 逐文件对比：
+  - 文件列表 **26/26 一致**，无缺失/多余；
+  - **9 个文本文件**（`install.ps1`、`uninstall.ps1`、`install_manifest.json`、
+    两份 `LICENSE`、两份 `THIRD_PARTY_LICENSES.md`、`MODEL_LICENSES.md`、
+    `config/settings_ui.json`）字节不同：工作区检出为 CRLF，`git archive` 为 LF；
+    **归一化行尾后内容完全一致**；
+  - **4 个二进制**（`watashi_ui.exe`、`watashi_cli.exe`、`watashi_fetch.exe`、
+    `ctranslate2.dll`）尺寸相同但 SHA-256 不同（构建非确定性元数据；未嵌入源码
+    路径）。其余二进制（ORT/oneDNN/VC runtime）与 SBOM 等逐字节一致；
+  - **结论：文件集合与尺寸一致，但不是逐字节可重现**；按任务要求如实记录，
+    不写成“ZIP 完全一致”。
+- 权重扫描：`clean-stage` 与 ZIP 均为 **0**，无 `models/`、无 `.pdb`。
 
 ## 1. 安装 / Install
 

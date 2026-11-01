@@ -26,12 +26,21 @@ rather than a footnote.
   （`licenses/sbom.spdx.json`，`make_sbom.py --check` 防漂移）；`licenses/`
   随包分发 `LICENSE`、`THIRD_PARTY_LICENSES.md`、`MODEL_LICENSES.md`。
 - **长稳工具**：`tools/soak.ps1`（ui/cli、synthetic/fake、JSON 报告）。
-  10 分钟 UI smoke PASS；8 小时未跑。
+  10 分钟 UI smoke PASS；8 小时状态见下方 Validation。
+
+### Validation (2026-11-01)
+
+- Clean-room：`git archive HEAD` 重建后 313/313 CTest 通过；与 `dist` ZIP 的文件
+  列表/尺寸一致，但**不是逐字节可重现**（9 个文本文件仅 CRLF↔LF，4 个二进制同
+  尺寸不同 SHA-256），已如实记录在 `docs/RELEASE.md`。
+- 10 分钟 UI soak：**PASS**（602.5 s，exit 0，log_errors 0）。
+- 8 小时 UI soak：**进行中**（2026-11-01 20:43 启动，PID 5224，
+  `build-rc/soak-8h.json` 尚未生成）；完成前不得写成通过。
 
 ### Known limitations
 
 - **未在干净 Win11 VM 验证**；普通（Medium）桌面手工安装仍待办。
-- **8 小时 soak 未跑**；托盘 `tray-exit` 未验证。
+- **8 小时 soak 进行中，尚未完成**（不得写成通过）；托盘 `tray-exit` 未验证。
 - 当前发布**未签名**（unsigned）；证书不进入仓库。
 - 低完整性（Low IL）测试宿主上 installer 用例以 77 退出并标记为 skipped，
   不计为 passed。

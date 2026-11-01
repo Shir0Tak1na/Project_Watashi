@@ -1,11 +1,15 @@
 # 交接说明 / Handover
 
 > 给接手的人或编码代理：**先读这一页，再读别的。**
-> 最后更新：2026-10-31 14:40（Asia/Shanghai）
+> 最后更新：2026-11-01（v1.0.0-rc1）
 
 ## 一句话状态
 
-C++ 正式版已经从 walking skeleton 走到 **W3.4**：本地捕获、PP-OCRv4、语料/规则、CTranslate2 NLLB、原生 Win32 悬浮窗、声明式呈现、stdin 命令通道、全局热键、托盘和设置页都已落地。**W3.3 托盘交互仍需干净通知区桌面复验；W4 发布硬化尚未开始。**
+C++ 正式版已冻结 **v1.0.0-rc1**（HEAD 为 RC commit）：本地捕获、PP-OCRv4、
+语料/规则、CTranslate2 NLLB、原生 Win32 悬浮窗、声明式呈现、stdin 命令通道、
+全局热键、托盘、设置页、per-user 安装包、模型获取器、SBOM 与 soak 工具均已落地。
+**代码侧 RC 完成；干净 Win11 VM、Medium 桌面手工安装、托盘 `tray-exit` 与 8 小时
+soak 仍待人工验收。**
 
 ## 必读顺序（约 30 分钟）
 
@@ -17,7 +21,7 @@ C++ 正式版已经从 walking skeleton 走到 **W3.4**：本地捕获、PP-OCRv
 
 ## 什么是真的（可复现）
 
-- **C++ 测试**：当前 06855cd 的 build-w34 通过 **270 CTest / 267 Catch 用例**。W3.1 的提交 1e8aa1a 单独跑有 3 个红测，原因是测试把临时 spec 写进 %TEMP%，本机 ACL 拒绝；W3.2 把测试临时目录改到 build 树后全绿。
+- **C++ 测试**：v1.0.0-rc1 的 `build-rc` 通过 **313/313 CTest**（低完整性宿主上 installer 两例以 77 skip，不计为 pass）；干净源码 `git archive` 重建亦通过。
 - **NMT 差分**：tools/compare_nmt.py **120/120** 与 Python 参考逐字段一致（target/backend/protected_terms/lost_placeholders/fallback_reason/used_model）。
 - **NMT 性能**：watashi_nmt_probe 加载 **660.6 ms**；4 句 batch 共 **490.9 ms**（约 123 ms/句），在 350 ms/句的预算内。
 - **OCR**：50 张合成帧 + 10 张受控字幕，逐帧均值/中位数/最小 **1.0000**，框数 0 不一致，最大框差 **2 px**；1200×200 P50 **49–52 ms**。
@@ -44,18 +48,20 @@ C++ 正式版已经从 walking skeleton 走到 **W3.4**：本地捕获、PP-OCRv
 5. 模型权重不进 git、不进安装包（见 [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md)）。
 6. UI 不得复制引擎逻辑：watashi_ui 只消费 watashi_cli --json-lines，命令只走 stdin 的 JSON 命令通道。
 
-## 当前状态（2026-10-31）
+## 当前状态（v1.0.0-rc1，2026-11-01）
 
 | 项 | 状态 |
 | --- | --- |
-| HEAD | 06855cd（W3.4：79 字段 schema 驱动设置页 + user.json） |
-| 远端 | d261fad（本地领先 8 个提交；本文档更新尚未提交） |
-| 工作区 | 代码 clean；build-* 已 gitignore |
-| 当前构建 | build-w34（W3.4）；build-w33 保留 W3.3；build-w2 用于 NMT |
+| HEAD | v1.0.0-rc1 的 RC commit（版本冻结提交） |
+| 远端 | 未 push；不创建远端 tag |
+| 工作区 | 代码 clean；build-*/dist/ 已 gitignore |
+| 当前构建 | `build-rc`（RC1）；`build-rc/clean-build` 为 `git archive` 干净复验 |
 | 契约 | schema/ 三份；events payload 开放，ReadyInfo 必填 3 字段 |
 | 黄金样本 | 200 条 + golden/verify_cases.py；NMT 另有 golden/nmt 120 条 |
-| 当前阻塞 | W3.3 托盘交互未验证：当前会话 raw Shell_NotifyIcon(NIM_ADD) error 5，C# 直调同样失败；代码/242 CTest 通过，需干净通知区桌面复验 |
-| 下一步 | W4.1/W4.2 安装包、签名、模型下载校验；托盘留作 clean-machine 验收项 |
+| 测试 | 313/313 CTest；新增 license/SBOM/soak 检查 |
+| 安装包 | `dist/ProjectWatashi-1.0.0-rc1-win64.zip` + `SHA256SUMS.txt`（dist 不提交） |
+| 当前阻塞 | 干净 Win11 VM、Medium 桌面手工安装、托盘 `tray-exit`、8 小时 soak 均未验证；发布为 unsigned |
+| 下一步 | 按 [docs/ACCEPTANCE.md](docs/ACCEPTANCE.md) 人工验收；完成 8h soak 后才能改状态 |
 
 ## W0 交付记录（2026-10-28）
 
