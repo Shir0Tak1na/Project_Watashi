@@ -1,0 +1,17 @@
+{
+  "version": "0.1.0",
+  "user_dir": "user",
+  "payload": [
+    "watashi_ui.exe",
+    "watashi_cli.exe",
+    "watashi_fetch.exe",
+    "onnxruntime.dll",
+    "ctranslate2.dll",
+    "dnnl.dll",
+    "models.lock.json",
+    "LICENSE",
+    "THIRD_PARTY_LICENSES.md",
+    "config/presentation.json",
+    "config/settings_ui.json"
+  ]
+}

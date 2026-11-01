@@ -15,7 +15,21 @@ if(NOT DEFINED CMAKE_TOOLCHAIN_FILE)
     endforeach()
 endif()
 
-project(ProjectWatashi LANGUAGES CXX)
+project(ProjectWatashi VERSION 0.1.0 LANGUAGES CXX)
+
+# The version stamp is compiled into the binaries and printed by --version, so
+# a report reader can tell which build produced it. A missing git (source
+# archive, CI checkout option) degrades to "unknown" instead of failing.
+execute_process(
+    COMMAND git rev-parse --short=12 HEAD
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    OUTPUT_VARIABLE WATASHI_GIT_COMMIT
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    RESULT_VARIABLE WATASHI_GIT_RESULT
+    ERROR_QUIET)
+if(NOT WATASHI_GIT_RESULT EQUAL 0 OR WATASHI_GIT_COMMIT STREQUAL "")
+    set(WATASHI_GIT_COMMIT "unknown")
+endif()
 
 # CMake 4 refuses projects that declare cmake_minimum_required below 3.5.
 # cpu_features (pulled in by CTranslate2) and ruy still declare older floors;
@@ -361,8 +375,22 @@ if(WIN32)
     target_link_libraries(watashi_core PRIVATE psapi user32 gdi32 dwmapi winmm)
 endif()
 
+# W4.3 observability: the log ring, the optional local minidump writer and the
+# version stamp. Owner of the code that links it decides what to record; the
+# library itself makes no network calls and records no subtitle text.
+add_library(watashi_obs STATIC src/obs/obs.cpp)
+target_include_directories(watashi_obs PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_compile_features(watashi_obs PUBLIC cxx_std_17)
+target_compile_definitions(watashi_obs PUBLIC
+    WATASHI_PRODUCT_VERSION="${PROJECT_VERSION}"
+    WATASHI_GIT_COMMIT="${WATASHI_GIT_COMMIT}"
+    WATASHI_BUILD_TYPE="$<CONFIG>")
+if(WIN32)
+    target_link_libraries(watashi_obs PUBLIC dbghelp)
+endif()
+
 add_executable(watashi_cli src/cli/main.cpp)
-target_link_libraries(watashi_cli PRIVATE watashi_core)
+target_link_libraries(watashi_cli PRIVATE watashi_core watashi_obs)
 watashi_copy_onnxruntime(watashi_cli)
 watashi_copy_ctranslate2(watashi_cli)
 
@@ -398,7 +426,7 @@ if(WIN32)
     target_compile_features(watashi_ui_core PUBLIC cxx_std_17)
 
     add_executable(watashi_ui src/ui/main.cpp)
-    target_link_libraries(watashi_ui PRIVATE watashi_ui_core)
+    target_link_libraries(watashi_ui PRIVATE watashi_ui_core watashi_obs)
 endif()
 
 # Phase 0 verification: load the CTranslate2 model from C++ and translate the
@@ -409,7 +437,83 @@ target_link_libraries(watashi_nmt_probe PRIVATE ctranslate2 sentencepiece)
 target_include_directories(watashi_nmt_probe PRIVATE ${sentencepiece_SOURCE_DIR}/src)
 watashi_copy_ctranslate2(watashi_nmt_probe)
 
+# --------------------------------------------------------------------------- #
+# model fetching (W4.2)
+# --------------------------------------------------------------------------- #
+#
+# The core is a static library so the tests can exercise resume, offline
+# refusal and hash-mismatch deletion without a network. The executable is what
+# ships; it only downloads when --fetch is explicit.
+if(WIN32)
+    add_library(watashi_fetch_core STATIC tools/fetch_core.cpp)
+    target_include_directories(watashi_fetch_core
+        PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tools)
+    target_link_libraries(watashi_fetch_core
+        PUBLIC nlohmann_json::nlohmann_json winhttp bcrypt)
+    target_compile_features(watashi_fetch_core PUBLIC cxx_std_17)
+
+    add_executable(watashi_fetch tools/fetch_models.cpp)
+    target_link_libraries(watashi_fetch PRIVATE watashi_fetch_core watashi_obs)
+endif()
+
 include(CTest)
 if(BUILD_TESTING)
     add_subdirectory(tests)
+endif()
+
+# --------------------------------------------------------------------------- #
+# install layout and ZIP (W4.1)
+# --------------------------------------------------------------------------- #
+#
+# The payload is per-user and self-contained: the two executables, the model
+# fetcher and its lock, the runtime DLLs, the two config documents and the
+# licences. No model weights are installed; models/ is filled by watashi_fetch
+# into the user directory.
+if(WIN32)
+    # Collect the MSVC/UCRT redistributables but add their install rule below,
+    # so they land beside the executables instead of in a separate bin/.
+    set(CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS_SKIP TRUE)
+    include(InstallRequiredSystemLibraries)
+
+    # Only the watashi component belongs in the package. The FetchContent
+    # dependencies add their own install rules (sentencepiece headers); without
+    # a component, `cmake --install` and CPack would drag those in too.
+    install(TARGETS watashi_ui watashi_cli watashi_fetch
+        RUNTIME DESTINATION . COMPONENT watashi)
+    install(FILES
+        "${WATASHI_ORT_DLL}"
+        "${WATASHI_DNNL_DLL}"
+        "$<TARGET_FILE:ctranslate2>"
+        LICENSE
+        THIRD_PARTY_LICENSES.md
+        models.lock.json
+        DESTINATION . COMPONENT watashi)
+    install(FILES config/presentation.json config/settings_ui.json
+        DESTINATION config COMPONENT watashi)
+    install(FILES config/install_manifest.json
+        DESTINATION . COMPONENT watashi RENAME install_manifest.json)
+    install(FILES installer/install.ps1 installer/uninstall.ps1
+        DESTINATION . COMPONENT watashi)
+    if(CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS)
+        install(FILES ${CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS}
+            DESTINATION . COMPONENT watashi)
+    endif()
+
+    set(CPACK_PACKAGE_NAME "ProjectWatashi")
+    set(CPACK_PACKAGE_VENDOR "Shir0Tak1na")
+    set(CPACK_PACKAGE_VERSION "${PROJECT_VERSION}")
+    set(CPACK_PACKAGE_FILE_NAME "ProjectWatashi-${PROJECT_VERSION}-win64")
+    set(CPACK_GENERATOR "ZIP")
+    set(CPACK_INCLUDE_TOPLEVEL_DIRECTORY ON)
+    set(CPACK_COMPONENTS_ALL watashi)
+    # Component archives would append "-watashi" to the file name; this keeps
+    # the documented name while still packaging only the watashi component
+    # (the FetchContent install rules are left out).
+    set(CPACK_ARCHIVE_COMPONENT_INSTALL ON)
+    set(CPACK_ARCHIVE_WATASHI_FILE_NAME
+        "ProjectWatashi-${PROJECT_VERSION}-win64")
+    set(CPACK_COMPONENT_WATASHI_DISPLAY_NAME "Project Watashi")
+    set(CPACK_COMPONENT_WATASHI_DESCRIPTION
+        "Per-user subtitle overlay, engine, model fetcher, config and licences")
+    include(CPack)
 endif()

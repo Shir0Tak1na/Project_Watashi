@@ -40,6 +40,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include "obs/obs.hpp"
 #include "watashi/capture.hpp"
 #include "watashi/ui/actions.hpp"
 #include "watashi/ui/child_stream.hpp"
@@ -95,6 +96,8 @@ struct Args {
 
     /// Open the generated settings window alongside the overlay.
     bool settings = false;
+    /// Print the version stamp and exit; no window, no engine.
+    bool version = false;
     /// User settings file; empty means config/user.json.
     std::string config_path;
 };
@@ -113,6 +116,7 @@ void usage(std::ostream& out) {
            "  --preview DIR          render 96/120/144 dpi proofs and exit (no window)\n"
            "  --settings             open the settings window generated from\n"
            "                         config/settings_ui.json\n"
+           "  --version              print product version, git commit and build type\n"
            "  --config PATH          user settings file, default config/user.json\n"
            "\n"
            "engine (passed through):\n"
@@ -195,6 +199,8 @@ bool parse_args(int argc, char** argv, Args& args) {
             }
         } else if (argument == "--settings") {
             args.settings = true;
+        } else if (argument == "--version") {
+            args.version = true;
         } else if (argument == "--config") {
             if (!take_value(index, argc, argv, args.config_path)) return false;
         } else if (argument == "--help" || argument == "-h") {
@@ -756,6 +762,13 @@ void write_report(
     }
     nlohmann::json payload;
     payload["kind"] = "watashi-ui-run";
+    const watashi::obs::VersionInfo build = watashi::obs::version();
+    payload["product"] = nlohmann::json{
+        {"name", build.product},
+        {"version", build.version},
+        {"commit", build.commit},
+        {"build_type", build.build_type},
+    };
     payload["cli"] = cli;
     payload["arguments"] = engine_args;
     payload["dpi"] = run.dpi;
@@ -1205,27 +1218,51 @@ int run_overlay(const Args& args) {
 }  // namespace
 
 int main(int argc, char** argv) {
-    // Must run before any window exists: Windows locks DPI awareness in at
-    // the first HWND or HDC.
-    (void)watashi::enable_per_monitor_dpi();
-
     Args args;
     if (!parse_args(argc, argv, args)) {
         return 2;
     }
+    // --version must not touch DPI, the engine or the log: it is a build stamp
+    // report and has to stay usable on a machine without a compositor.
+    if (args.version) {
+        std::cout << watashi::obs::version_text() << std::flush;
+        return 0;
+    }
 
+    // Observability is best-effort by construction: a log directory that cannot
+    // be created disables the logger and changes nothing else. Only metadata is
+    // recorded; subtitle text never reaches this file.
+    watashi::obs::RingLog run_log(watashi::obs::LogOptions{watashi::obs::log_directory()});
+    (void)run_log.open();
+    const watashi::obs::VersionInfo build = watashi::obs::version();
+    (void)run_log.write("info", "watashi_ui start version=" + build.version +
+                                    " commit=" + build.commit +
+                                    " build=" + build.build_type +
+                                    " capture=" + args.capture);
+    if (watashi::obs::dumps_enabled()) {
+        (void)watashi::obs::install_crash_dump_handler(watashi::obs::dump_directory());
+    }
+
+    // Must run before any window exists: Windows locks DPI awareness in at
+    // the first HWND or HDC.
+    (void)watashi::enable_per_monitor_dpi();
+
+    int exit_code = 1;
     try {
         // Preview is a pure render check: it needs no engine arguments and no
         // window, so it runs before live-capture validation.
         if (!args.preview_dir.empty()) {
-            return run_preview(args);
+            exit_code = run_preview(args);
+        } else if (!validate_args(args)) {
+            exit_code = 2;
+        } else {
+            exit_code = run_overlay(args);
         }
-        if (!validate_args(args)) {
-            return 2;
-        }
-        return run_overlay(args);
     } catch (const std::exception& error) {
         std::cerr << "watashi_ui: " << error.what() << "\n";
-        return 1;
+        (void)run_log.write("error", std::string("exception: ") + error.what());
+        exit_code = 1;
     }
+    (void)run_log.write("info", "watashi_ui exit code=" + std::to_string(exit_code));
+    return exit_code;
 }

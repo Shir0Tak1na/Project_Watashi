@@ -26,6 +26,7 @@
 #include <thread>
 #include <vector>
 
+#include "obs/obs.hpp"
 #include "watashi/capture.hpp"
 #include "watashi/commands.hpp"
 #include "watashi/events.hpp"
@@ -44,6 +45,10 @@ constexpr int kFrameHeight = 200;
 void usage(std::ostream& out) {
     out << "usage: watashi_cli --ocr fake|onnx [options]\n"
            "       watashi_cli --translator corpus [options]\n"
+           "       watashi_cli --version\n"
+           "\n"
+           "version:\n"
+           "  --version              print product version, git commit and build type\n"
            "\n"
            "fake OCR (default):\n"
            "  --synthetic            drive the fake OCR/translator path (required)\n"
@@ -713,6 +718,9 @@ int main(int argc, char** argv) {
                 height = std::stoi(size.substr(separator + 1));
             } else if (argument == "--help" || argument == "-h") {
                 usage(std::cout);
+                return 0;
+            } else if (argument == "--version") {
+                std::cout << watashi::obs::version_text() << std::flush;
                 return 0;
             } else {
                 std::cerr << "unknown argument: " << argument << "\n";
