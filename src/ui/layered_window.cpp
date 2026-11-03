@@ -1,5 +1,7 @@
 #include "watashi/ui/layered_window.hpp"
 
+#include "watashi/ui/tray.hpp"
+
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
@@ -207,6 +209,13 @@ LRESULT LayeredWindow::handle(HWND hwnd, UINT message, WPARAM wparam, LPARAM lpa
             return 0;
         case WM_DESTROY:
             hwnd_ = nullptr;
+            return 0;
+        case kTrayCallbackMessage:
+            // Shell_NotifyIcon delivers this to the window procedure, not
+            // necessarily to the message queue. Re-post it so the overlay's
+            // main loop (PeekMessage) sees it; posting from the proc cannot
+            // recurse because the loop handles the posted copy directly.
+            PostMessageW(hwnd, kTrayCallbackMessage, wparam, lparam);
             return 0;
         default:
             break;
