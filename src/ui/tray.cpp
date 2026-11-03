@@ -59,9 +59,11 @@ NOTIFYICONDATAW make_icon(HWND owner, HICON icon) {
     data.cbSize = sizeof(data);
     data.hWnd = owner;
     data.uID = kIconId;
-    // NIF_SHOWTIP is required for the standard tooltip under version 4; the
-    // text itself is already in szTip.
-    data.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP | NIF_SHOWTIP;
+    // NIF_SHOWTIP is only valid after NIM_SETVERSION(4). Putting it on
+    // NIM_ADD makes the shell reject the add with error 5 on Windows 11, so
+    // the initial add uses the classic flags and the tooltip is enabled with
+    // NIM_MODIFY after the version is set.
+    data.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP;
     data.uCallbackMessage = kTrayCallbackMessage;
     data.hIcon = icon;
     const std::wstring tip = L"watashi overlay";
@@ -170,6 +172,13 @@ bool TrayIcon::add(HWND icon_owner) {
     if (Shell_NotifyIconW(NIM_SETVERSION, &version)) {
         version4_ = true;
         std::cerr << "tray: version " << NOTIFYICON_VERSION_4 << " enabled\n";
+        // Enable the standard tooltip only after version 4 is active.
+        NOTIFYICONDATAW showtip = data;
+        showtip.uFlags = NIF_SHOWTIP;
+        if (!Shell_NotifyIconW(NIM_MODIFY, &showtip)) {
+            std::cerr << "tray: NIF_SHOWTIP enable failed error "
+                      << GetLastError() << "\n";
+        }
     } else {
         // The shell keeps the default (legacy) event convention. The callback
         // mapper handles both WM_* and NIN_* values, so no re-add is needed.
