@@ -20,6 +20,12 @@ constexpr int kOffscreen = -32000;
 bool class_registered = false;
 
 LRESULT CALLBACK tray_window_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam) {
+    auto* self = reinterpret_cast<TrayIcon*>(
+        GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+    if (self != nullptr && message == kTrayCallbackMessage) {
+        self->forward_callback(wparam, lparam);
+        return 0;
+    }
     return DefWindowProcW(hwnd, message, wparam, lparam);
 }
 
@@ -71,7 +77,7 @@ NOTIFYICONDATAW make_icon(HWND owner, HICON icon) {
     return data;
 }
 
-HWND create_menu_owner() {
+HWND create_menu_owner(TrayIcon* self) {
     if (!ensure_class()) {
         return nullptr;
     }
@@ -93,6 +99,7 @@ HWND create_menu_owner() {
         GetModuleHandleW(nullptr),
         nullptr);
     if (owner != nullptr) {
+        SetWindowLongPtrW(owner, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(self));
         ShowWindow(owner, SW_SHOWNOACTIVATE);
     }
     return owner;
@@ -138,8 +145,9 @@ bool TrayIcon::add(HWND icon_owner) {
         return false;
     }
     icon_owner_ = icon_owner;
+    overlay_owner_ = icon_owner;
     if (menu_owner_ == nullptr) {
-        menu_owner_ = create_menu_owner();
+        menu_owner_ = create_menu_owner(this);
     }
     if (menu_owner_ == nullptr) {
         last_error_ = GetLastError();
@@ -152,14 +160,31 @@ bool TrayIcon::add(HWND icon_owner) {
     // The icon belongs to the window that already exists (the overlay). A
     // separate 1x1 owner made the shell refuse NIM_ADD with error 5 on the
     // bisect machine; the overlay owner is the path that was accepted.
-    NOTIFYICONDATAW data = make_icon(icon_owner_, icon_);
-    SetLastError(0);
-    added_ = Shell_NotifyIconW(NIM_ADD, &data) != FALSE;
-    last_error_ = added_ ? 0 : GetLastError();
-    if (!added_) {
-        std::cerr << "tray: NIM_ADD failed owner=" << hex_pointer(icon_owner_)
+    auto try_add = [&](HWND owner) -> bool {
+        NOTIFYICONDATAW data = make_icon(owner, icon_);
+        SetLastError(0);
+        if (Shell_NotifyIconW(NIM_ADD, &data)) {
+            icon_owner_ = owner;
+            added_ = true;
+            last_error_ = 0;
+            return true;
+        }
+        last_error_ = GetLastError();
+        std::cerr << "tray: NIM_ADD failed owner=" << hex_pointer(owner)
                   << " hIcon=" << hex_pointer(icon_) << " error=" << last_error_
                   << "\n";
+        return false;
+    };
+
+    if (!try_add(icon_owner_) && menu_owner_ != nullptr) {
+        // Some shells reject an icon owned by the layered no-activate overlay.
+        // Retry with the normal hidden menu window; its window procedure
+        // forwards the callback to the overlay.
+        std::cerr << "tray: retrying registration with the menu owner\n";
+        if (!try_add(menu_owner_)) {
+            return false;
+        }
+    } else if (!added_) {
         return false;
     }
 
@@ -167,13 +192,13 @@ bool TrayIcon::add(HWND icon_owner) {
     // The message loop reads LOWORD, which is also correct for the older
     // convention where lParam is the event itself.
     SetLastError(0);
-    NOTIFYICONDATAW version = data;
+    NOTIFYICONDATAW version = make_icon(icon_owner_, icon_);
     version.uVersion = NOTIFYICON_VERSION_4;
     if (Shell_NotifyIconW(NIM_SETVERSION, &version)) {
         version4_ = true;
         std::cerr << "tray: version " << NOTIFYICON_VERSION_4 << " enabled\n";
         // Enable the standard tooltip only after version 4 is active.
-        NOTIFYICONDATAW showtip = data;
+        NOTIFYICONDATAW showtip = make_icon(icon_owner_, icon_);
         showtip.uFlags = NIF_SHOWTIP;
         if (!Shell_NotifyIconW(NIM_MODIFY, &showtip)) {
             std::cerr << "tray: NIF_SHOWTIP enable failed error "
@@ -201,6 +226,12 @@ void TrayIcon::remove() {
         menu_owner_ = nullptr;
     }
     icon_owner_ = nullptr;
+}
+
+void TrayIcon::forward_callback(WPARAM wparam, LPARAM lparam) {
+    if (overlay_owner_ != nullptr) {
+        PostMessageW(overlay_owner_, kTrayCallbackMessage, wparam, lparam);
+    }
 }
 
 int TrayIcon::show_menu(bool paused, bool visible) {

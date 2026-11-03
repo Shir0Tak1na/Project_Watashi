@@ -69,9 +69,14 @@ public:
     /// returns the chosen command id, or 0 when dismissed.
     int show_menu(bool paused, bool visible);
 
+    /// Called by the fallback owner's window procedure. It forwards the raw
+    /// tray callback to the overlay so the main loop can handle it.
+    void forward_callback(WPARAM wparam, LPARAM lparam);
+
 private:
     HWND icon_owner_ = nullptr;
     HWND menu_owner_ = nullptr;
+    HWND overlay_owner_ = nullptr;
     HICON icon_ = nullptr;
     bool added_ = false;
     bool version4_ = false;
