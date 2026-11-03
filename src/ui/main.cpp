@@ -1134,16 +1134,36 @@ int run_overlay(const Args& args) {
                     handled = true;
                 } else if (message.hwnd == run.window.hwnd() &&
                            message.message == kTrayCallbackMessage) {
-                    // NOTIFYICON_VERSION_4 carries the event in LOWORD(lParam);
-                    // the older convention carries it as the whole lParam. LOWORD
-                    // is correct for both.
+                    // NOTIFYICON_VERSION_4 carries the event in LOWORD(lParam)
+                    // and the icon id in HIWORD; legacy carries it as the whole
+                    // lParam. LOWORD is correct for both. The trace below is
+                    // what the acceptance run reads to prove the shell delivered
+                    // a callback at all.
                     const UINT event = LOWORD(message.lParam);
-                    if (event == WM_RBUTTONUP || event == WM_CONTEXTMENU) {
-                        const int chosen =
-                            run.tray.show_menu(run.paused, !run.hidden_by_user);
-                        if (chosen != 0) {
-                            handle_tray_command(run, chosen);
+                    std::cerr << "tray: callback hwnd=0x" << std::hex
+                              << reinterpret_cast<std::uintptr_t>(message.hwnd)
+                              << " message=0x" << message.message
+                              << " wparam=" << message.wParam
+                              << " lparam=0x" << message.lParam
+                              << " loword=0x" << event
+                              << " hiword=0x" << HIWORD(message.lParam)
+                              << std::dec << "\n";
+                    // Left click (NIN_SELECT/NIN_KEYSELECT/WM_LBUTTONUP) and
+                    // right click (WM_CONTEXTMENU/WM_RBUTTONUP) both open the
+                    // same tray_menu; left click is deliberately not a silent
+                    // no-op.
+                    switch (tray_event_action(event)) {
+                        case TrayEventAction::kPrimary:
+                        case TrayEventAction::kContext: {
+                            const int chosen =
+                                run.tray.show_menu(run.paused, !run.hidden_by_user);
+                            if (chosen != 0) {
+                                handle_tray_command(run, chosen);
+                            }
+                            break;
                         }
+                        case TrayEventAction::kNone:
+                            break;
                     }
                     handled = true;
                 }

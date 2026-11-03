@@ -8,6 +8,7 @@
 #define WIN32_LEAN_AND_MEAN
 #endif
 #include <windows.h>
+#include <shellapi.h>
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -395,6 +396,23 @@ TEST_CASE("tray menu ids map to the three actions", "[ui][actions]") {
             static_cast<int>(ui::TrayAction::kNone));
     REQUIRE(static_cast<int>(ui::tray_action(-1)) ==
             static_cast<int>(ui::TrayAction::kNone));
+}
+
+TEST_CASE("raw tray events map to primary, context or ignored", "[ui][actions]") {
+    REQUIRE(ui::tray_event_action(WM_CONTEXTMENU) ==
+            ui::TrayEventAction::kContext);
+    REQUIRE(ui::tray_event_action(WM_RBUTTONUP) ==
+            ui::TrayEventAction::kContext);
+    REQUIRE(ui::tray_event_action(NIN_SELECT) ==
+            ui::TrayEventAction::kPrimary);
+    REQUIRE(ui::tray_event_action(NIN_KEYSELECT) ==
+            ui::TrayEventAction::kPrimary);
+    REQUIRE(ui::tray_event_action(WM_LBUTTONUP) ==
+            ui::TrayEventAction::kPrimary);
+    REQUIRE(ui::tray_event_action(WM_MOUSEMOVE) ==
+            ui::TrayEventAction::kNone);
+    REQUIRE(ui::tray_event_action(0) == ui::TrayEventAction::kNone);
+    REQUIRE(ui::tray_event_action(0xFFFF) == ui::TrayEventAction::kNone);
 }
 
 TEST_CASE("the tray menu follows every pause and visibility state", "[ui][actions]") {

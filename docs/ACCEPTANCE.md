@@ -78,12 +78,23 @@
 
 | # | 步骤 | 期望 | 证据 | 状态 |
 | --- | --- | --- | --- | --- |
-| T1 | 启动 `watashi_ui`，观察 stderr / 通知区 | 打印 `tray: icon added`，图标可见 | 截图 + stderr | ☐ 未验 |
-| T2 | 右键托盘图标 → 菜单 | 菜单出现（Pause/Hide/Exit） | 截图 | ☐ 未验 |
-| T3 | 点击 Exit | 进程退出，`--report` 的 `exit_reason=tray-exit` | 报告 JSON | ☐ 未验 |
+| T1 | 启动 `watashi_ui`，悬停图标 | 标准 tooltip 显示 `watashi overlay`；stderr 有 `tray: icon added` 与 `tray: version 4 enabled`（若为 `NIM_SETVERSION` 失败则记录 error 并走 legacy） | 截图 + stderr | ☐ 未验（需用户在 Medium 桌面重测） |
+| T2 | 左键单击图标 | **打开同一托盘菜单**（Pause/Hide/Exit），不是静默无反应 | stderr 的 `tray: callback ... loword=...` + 截图 | ☐ 未验（需用户在 Medium 桌面重测） |
+| T2b | 右键单击图标 | 弹出同一菜单（Pause/Hide/Exit） | stderr 的 `tray: callback ...`、`tray: menu ... chosen=...` + 截图 | ☐ 未验（需用户在 Medium 桌面重测） |
+| T3 | 点击 Exit | 进程退出，`--report` 的 `exit_reason=tray-exit`；无残留 `watashi_ui` 进程 | 报告 JSON + `Get-Process watashi_ui` | ☐ 未验（需用户在 Medium 桌面重测） |
+
+**回调诊断**（W3.3 修复时加入）：每次托盘回调都会在 stderr 打印
+`tray: callback hwnd=0x... message=0x... wparam=... lparam=0x... loword=0x... hiword=0x...`。
+重测时把这一行贴进证据栏：`loword` 应为 `WM_CONTEXTMENU` / `WM_RBUTTONUP` /
+`NIN_SELECT` / `NIN_KEYSELECT`，而不是未知值。菜单路径同时打印
+`tray: menu owner=... foreground=... chosen=... error=...`。
 
 > 已知问题：部分会话/宿主上 `Shell_NotifyIcon(NIM_ADD)` 返回 error 5，图标不可用；
-> 此时 T1–T3 记为 **known issue（未验）**，不影响其他条目。
+> 此时 T1–T3 记为 **known issue（未验）**，不影响其他条目。agent 不代替用户写 PASS。
+>
+> 本次修复会话实测：`tray: NIM_ADD failed ... error=5`，因此 **没有取得真实
+> 回调样本**（无图标可点）。上面的 trace 字段与左右键映射仅由单测覆盖，实际
+> `WM_APP+10` 事件必须由用户在 Medium 桌面重测时取证。
 
 ## 5. 长稳 / Soak
 

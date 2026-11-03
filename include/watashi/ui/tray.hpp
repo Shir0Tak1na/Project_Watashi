@@ -28,6 +28,17 @@ namespace watashi::ui {
 /// Owner-window callback message for mouse events on the icon.
 inline constexpr UINT kTrayCallbackMessage = WM_APP + 10;
 
+/// What a raw tray callback event means. NOTIFYICON_VERSION_4 reports the
+/// event in LOWORD(lParam); legacy reports it as the whole lParam. Keeping the
+/// mapping pure makes the click behaviour testable without a shell.
+enum class TrayEventAction {
+    kNone,
+    kPrimary,  // NIN_SELECT / NIN_KEYSELECT / WM_LBUTTONUP
+    kContext,  // WM_CONTEXTMENU / WM_RBUTTONUP
+};
+
+TrayEventAction tray_event_action(UINT event) noexcept;
+
 /// Class and title of the menu owner. Public so tests can prove it is a
 /// different HWND from the overlay.
 inline constexpr wchar_t kTrayWindowClass[] = L"WatashiTrayOwner";
@@ -63,6 +74,7 @@ private:
     HWND menu_owner_ = nullptr;
     HICON icon_ = nullptr;
     bool added_ = false;
+    bool version4_ = false;
     DWORD last_error_ = 0;
 };
 

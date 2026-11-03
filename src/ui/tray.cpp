@@ -59,7 +59,9 @@ NOTIFYICONDATAW make_icon(HWND owner, HICON icon) {
     data.cbSize = sizeof(data);
     data.hWnd = owner;
     data.uID = kIconId;
-    data.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP;
+    // NIF_SHOWTIP is required for the standard tooltip under version 4; the
+    // text itself is already in szTip.
+    data.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP | NIF_SHOWTIP;
     data.uCallbackMessage = kTrayCallbackMessage;
     data.hIcon = icon;
     const std::wstring tip = L"watashi overlay";
@@ -108,6 +110,20 @@ std::string hex_pointer(const void* pointer) {
 
 }  // namespace
 
+TrayEventAction tray_event_action(UINT event) noexcept {
+    switch (event) {
+        case NIN_SELECT:
+        case NIN_KEYSELECT:
+        case WM_LBUTTONUP:
+            return TrayEventAction::kPrimary;
+        case WM_CONTEXTMENU:
+        case WM_RBUTTONUP:
+            return TrayEventAction::kContext;
+        default:
+            return TrayEventAction::kNone;
+    }
+}
+
 TrayIcon::~TrayIcon() {
     remove();
 }
@@ -152,10 +168,15 @@ bool TrayIcon::add(HWND icon_owner) {
     NOTIFYICONDATAW version = data;
     version.uVersion = NOTIFYICON_VERSION_4;
     if (Shell_NotifyIconW(NIM_SETVERSION, &version)) {
+        version4_ = true;
         std::cerr << "tray: version " << NOTIFYICON_VERSION_4 << " enabled\n";
     } else {
+        // The shell keeps the default (legacy) event convention. The callback
+        // mapper handles both WM_* and NIN_* values, so no re-add is needed.
+        version4_ = false;
         std::cerr << "tray: NIM_SETVERSION(" << NOTIFYICON_VERSION_4
-                  << ") failed error " << GetLastError() << "\n";
+                  << ") failed error " << GetLastError()
+                  << "; falling back to legacy tray events\n";
     }
     return true;
 }
@@ -192,7 +213,9 @@ int TrayIcon::show_menu(bool paused, bool visible) {
     // The popup only dismisses by clicking elsewhere while its owner is
     // foreground. The owner is the menu window on purpose: SetForegroundWindow
     // on the NOACTIVATE overlay always fails.
-    SetForegroundWindow(menu_owner_);
+    SetLastError(0);
+    const BOOL foreground = SetForegroundWindow(menu_owner_);
+    SetLastError(0);
     const int chosen = TrackPopupMenu(
         menu,
         TPM_RETURNCMD | TPM_RIGHTBUTTON,
@@ -201,6 +224,10 @@ int TrayIcon::show_menu(bool paused, bool visible) {
         0,
         menu_owner_,
         nullptr);
+    const DWORD menu_error = GetLastError();
+    std::cerr << "tray: menu owner=" << hex_pointer(menu_owner_)
+              << " foreground=" << (foreground ? 1 : 0)
+              << " chosen=" << chosen << " error=" << menu_error << "\n";
     DestroyMenu(menu);
     PostMessageW(menu_owner_, WM_NULL, 0, 0);
     return chosen;

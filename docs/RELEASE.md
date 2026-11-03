@@ -14,7 +14,7 @@ INSTALL.md 是使用者安装说明。
 | 8 小时 soak（`--duration 28800`） | **PASS**（2026-11-01 20:43 → 2026-11-02 04:43，报告 `build-rc/soak-8h.json`：28801.5s，handles 169→169，内存 15.0→13.8 MiB（peak 16.4），exit 0，crashed=false，timed_out=false，log_errors=0，stderr_errors=0；executable=`build-rc\clean-build\Release\watashi_ui.exe`） |
 | 干净 Win11 VM | **未验证**：当前没有可用 VM |
 | 普通（Medium）桌面手工安装（W4.1） | **待办**：自动化在 Low IL 宿主会 skip，必须人工验收 |
-| W3.3 托盘 `tray-exit` | **未验证**：需要真实点击托盘菜单 |
+| W3.3 托盘 `tray-exit` | **未验证**：已加入回调 trace、`NIF_SHOWTIP` 与左右键统一映射；需用户在 Medium 桌面按 `docs/ACCEPTANCE.md` T1/T2/T2b/T3 重测，不得由 agent 写 PASS |
 | 签名 | **unsigned**：仓库无证书；`sign.ps1` 只会在有证书时签名 |
 
 > **skipped ≠ passed**：CTest 中 `installer_install` /
