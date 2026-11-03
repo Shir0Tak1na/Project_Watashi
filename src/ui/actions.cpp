@@ -7,11 +7,13 @@
 
 namespace watashi::ui {
 
-std::array<HotkeyBinding, 3> hotkey_bindings() {
-    return std::array<HotkeyBinding, 3>{{
+std::array<HotkeyBinding, 5> hotkey_bindings() {
+    return std::array<HotkeyBinding, 5>{{
         {kHotkeyPause, kHotkeyModifiers, 'P'},
         {kHotkeyVisibility, kHotkeyModifiers, 'H'},
         {kHotkeyLanguage, kHotkeyModifiers, 'T'},
+        {kHotkeyQuit, kHotkeyModifiers, 'Q'},
+        {kHotkeyControl, kHotkeyModifiers, 'C'},
     }};
 }
 
@@ -21,19 +23,6 @@ std::vector<TrayMenuEntry> tray_menu(bool paused, bool visible) {
         TrayMenuEntry{kTrayCommandVisibility, visible ? "Hide" : "Show", !visible},
         TrayMenuEntry{kTrayCommandExit, "Exit", false},
     };
-}
-
-TrayAction tray_action(int id) noexcept {
-    switch (id) {
-        case kTrayCommandPause:
-            return TrayAction::kTogglePause;
-        case kTrayCommandVisibility:
-            return TrayAction::kToggleVisibility;
-        case kTrayCommandExit:
-            return TrayAction::kExit;
-        default:
-            return TrayAction::kNone;
-    }
 }
 
 nlohmann::json pause_command(bool should_pause) {

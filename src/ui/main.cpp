@@ -44,6 +44,8 @@
 #include "watashi/capture.hpp"
 #include "watashi/ui/actions.hpp"
 #include "watashi/ui/child_stream.hpp"
+#include "watashi/ui/control.hpp"
+#include "watashi/ui/control_window.hpp"
 #include "watashi/ui/layered_window.hpp"
 #include "watashi/ui/layout.hpp"
 #include "watashi/ui/model.hpp"
@@ -100,6 +102,9 @@ struct Args {
     bool version = false;
     /// User settings file; empty means config/user.json.
     std::string config_path;
+    /// Which control surface to start: auto tries the tray first, window
+    /// forces ControlWindow, none keeps hotkeys only.
+    ControlSurface control_surface = ControlSurface::kAuto;
 };
 
 void usage(std::ostream& out) {
@@ -116,6 +121,8 @@ void usage(std::ostream& out) {
            "  --preview DIR          render 96/120/144 dpi proofs and exit (no window)\n"
            "  --settings             open the settings window generated from\n"
            "                         config/settings_ui.json\n"
+           "  --control MODE         auto|tray|window|none; auto tries the tray,\n"
+           "                         then falls back to the control window\n"
            "  --version              print product version, git commit and build type\n"
            "  --config PATH          user settings file, default config/user.json\n"
            "\n"
@@ -201,6 +208,12 @@ bool parse_args(int argc, char** argv, Args& args) {
             args.settings = true;
         } else if (argument == "--version") {
             args.version = true;
+        } else if (argument == "--control") {
+            if (!take_value(index, argc, argv, value)) return false;
+            if (!parse_control_surface(value, args.control_surface)) {
+                std::cerr << "--control must be auto, tray, window or none\n";
+                return false;
+            }
         } else if (argument == "--config") {
             if (!take_value(index, argc, argv, args.config_path)) return false;
         } else if (argument == "--help" || argument == "-h") {
@@ -542,6 +555,12 @@ struct Run {
     bool visibility_dirty = false;
     std::string target_lang = "zh-CN";
     TrayIcon tray;
+    /// Fallback control surface, created only when the tray is unavailable or
+    /// --control window forces it.
+    ControlWindow control_window;
+    bool control_window_created = false;
+    /// tray|window|hotkeys, measured at startup and kept for the report.
+    std::string control_surface = "hotkeys";
     /// Measured once at startup and kept: the tray is removed before the report
     /// is written, so reading the icon back then would always answer false.
     bool tray_added = false;
@@ -679,37 +698,49 @@ void toggle_language(Run& run) {
     run.visibility_dirty = true;
 }
 
-void handle_hotkey(Run& run, int id) {
-    switch (id) {
-        case kHotkeyPause:
+void apply_control_action(Run& run, ControlAction action,
+                          const char* exit_reason = "control-exit") {
+    switch (action) {
+        case ControlAction::kTogglePause:
             toggle_pause(run);
             break;
-        case kHotkeyVisibility:
+        case ControlAction::kToggleVisibility:
             toggle_visibility(run);
             break;
-        case kHotkeyLanguage:
-            toggle_language(run);
-            break;
-        default:
-            break;
-    }
-}
-
-void handle_tray_command(Run& run, int id) {
-    switch (tray_action(id)) {
-        case TrayAction::kTogglePause:
-            toggle_pause(run);
-            break;
-        case TrayAction::kToggleVisibility:
-            toggle_visibility(run);
-            break;
-        case TrayAction::kExit:
-            run.finish_reason = "tray-exit";
+        case ControlAction::kExit:
+            run.finish_reason = exit_reason == nullptr ? "control-exit" : exit_reason;
             send_command(run, shutdown_command());
             run.quit_requested = true;
             PostQuitMessage(0);
             break;
-        case TrayAction::kNone:
+        case ControlAction::kNone:
+            return;
+    }
+    if (run.control_window_created) {
+        run.control_window.update(run.paused, !run.hidden_by_user);
+    }
+}
+
+void handle_hotkey(Run& run, int id) {
+    switch (id) {
+        case kHotkeyPause:
+            apply_control_action(run, ControlAction::kTogglePause);
+            break;
+        case kHotkeyVisibility:
+            apply_control_action(run, ControlAction::kToggleVisibility);
+            break;
+        case kHotkeyLanguage:
+            toggle_language(run);
+            break;
+        case kHotkeyQuit:
+            apply_control_action(run, ControlAction::kExit, "hotkey-exit");
+            break;
+        case kHotkeyControl:
+            if (run.control_window_created) {
+                run.control_window.toggle();
+            }
+            break;
+        default:
             break;
     }
 }
@@ -815,12 +846,14 @@ void write_report(
         {"revision", run.presentation.revision()},
         {"error", run.presentation.error()},
     };
+    const int hotkey_count = static_cast<int>(hotkey_bindings().size());
     payload["hotkeys"] = nlohmann::json{
-        {"attempted", 3},
+        {"attempted", hotkey_count},
         {"registered", run.hotkey_successes},
         {"failed", run.hotkey_failures},
-        {"all_registered", run.hotkey_successes == 3},
+        {"all_registered", run.hotkey_successes == hotkey_count},
     };
+    payload["control_surface"] = run.control_surface;
     payload["tray"] = nlohmann::json{{"added", run.tray_added}};
     payload["commands"] = nlohmann::json{
         {"paused", run.paused},
@@ -1000,17 +1033,72 @@ int run_overlay(const Args& args) {
     // Hotkeys are global: RegisterHotKey works while another window has focus,
     // and the callback only posts a command, it never activates this window.
     register_hotkeys(run);
-    // The icon's callback window is the overlay itself; the menu owner is a
-    // separate activatable window inside TrayIcon.
-    run.tray_added = run.tray.add(run.window.hwnd());
-    if (run.tray_added) {
-        std::cerr << "tray: icon added\n";
-    } else {
-        std::cerr << "tray: unavailable in this session (Shell_NotifyIcon error "
-                  << run.tray.last_error() << "); hotkeys still work\n";
+
+    auto create_control_window = [&run]() {
+        if (run.control_window_created) {
+            return true;
+        }
+        if (!run.control_window.create(
+                GetModuleHandleW(nullptr),
+                [&run](ControlAction action) {
+                    apply_control_action(run, action, "control-exit");
+                })) {
+            return false;
+        }
+        run.control_window.update(run.paused, !run.hidden_by_user);
+        run.control_window.show();
+        run.control_window_created = true;
+        return true;
+    };
+
+    // Tray first by default, but it is best-effort: a Medium desktop may refuse
+    // NIM_ADD with error 5 and still be perfectly usable through the control
+    // window and hotkeys.
+    switch (args.control_surface) {
+        case ControlSurface::kTray: {
+            run.tray_added = run.tray.add(run.window.hwnd());
+            if (run.tray_added) {
+                std::cerr << "tray: icon added\n";
+            } else {
+                std::cerr << "tray: unavailable; control=hotkeys (Shell_NotifyIcon error "
+                          << run.tray.last_error() << ")\n";
+            }
+            break;
+        }
+        case ControlSurface::kWindow: {
+            if (create_control_window()) {
+                std::cerr << "control: window shown (--control window)\n";
+            } else {
+                std::cerr << "control: cannot create the control window; hotkeys only\n";
+            }
+            break;
+        }
+        case ControlSurface::kNone: {
+            std::cerr << "control: hotkeys only (--control none)\n";
+            break;
+        }
+        case ControlSurface::kAuto:
+        default: {
+            run.tray_added = run.tray.add(run.window.hwnd());
+            if (run.tray_added) {
+                std::cerr << "tray: icon added\n";
+            } else {
+                std::cerr << "tray: unavailable; control=window (Shell_NotifyIcon error "
+                          << run.tray.last_error() << ")\n";
+                if (create_control_window()) {
+                    std::cerr << "control: window shown as the tray fallback\n";
+                } else {
+                    std::cerr << "control: cannot create the control window; hotkeys only\n";
+                }
+            }
+            break;
+        }
     }
+    run.control_surface =
+        control_surface_name(run.tray_added, run.control_window_created);
     std::cerr << "commands: Ctrl+Alt+P pause/resume, Ctrl+Alt+H hide/show, "
-                 "Ctrl+Alt+T target language (" << run.target_lang << ")\n";
+                 "Ctrl+Alt+T target language, Ctrl+Alt+Q exit, Ctrl+Alt+C control "
+                 "window (" << run.control_surface << ")\n";
 
     // A separate top-level window. Closing it never closes the overlay; it is
     // destroyed only when the whole UI finishes. Its Save handler persists
@@ -1158,7 +1246,8 @@ int run_overlay(const Args& args) {
                             const int chosen =
                                 run.tray.show_menu(run.paused, !run.hidden_by_user);
                             if (chosen != 0) {
-                                handle_tray_command(run, chosen);
+                                apply_control_action(
+                                    run, control_action_from_id(chosen), "tray-exit");
                             }
                             break;
                         }

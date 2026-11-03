@@ -127,6 +127,20 @@ if(Python3_Interpreter_FOUND)
             set_tests_properties(soak_${case_name} PROPERTIES
                 WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
         endforeach()
+
+        # Control-surface selection reaches the report: none => hotkeys,
+        # window => the control window. Neither touches a real tray.
+        foreach(case_name IN ITEMS none window)
+            add_test(
+                NAME control_${case_name}_report
+                COMMAND ${Python3_EXECUTABLE}
+                        ${CMAKE_SOURCE_DIR}/tests/control_surface_test.py
+                        --case ${case_name}
+                        --build ${CMAKE_BINARY_DIR}
+                        --config $<CONFIG>)
+            set_tests_properties(control_${case_name}_report PROPERTIES
+                WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+        endforeach()
     endif()
 else()
     message(WARNING "Python3 not found: settings and installer checks are disabled")

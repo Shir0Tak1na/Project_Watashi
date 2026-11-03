@@ -409,6 +409,8 @@ watashi_copy_ctranslate2(watashi_cli)
 if(WIN32)
     add_library(watashi_ui_core STATIC
         src/ui/actions.cpp
+        src/ui/control.cpp
+        src/ui/control_window.cpp
         src/ui/model.cpp
         src/ui/presentation.cpp
         src/ui/settings.cpp

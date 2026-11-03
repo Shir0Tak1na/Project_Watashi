@@ -31,6 +31,7 @@
 #include "watashi/events.hpp"
 #include "watashi/ui/actions.hpp"
 #include "watashi/ui/child_stream.hpp"
+#include "watashi/ui/control.hpp"
 #include "watashi/ui/layered_window.hpp"
 #include "watashi/ui/model.hpp"
 #include "watashi/ui/tray.hpp"
@@ -181,15 +182,20 @@ std::string envelope_line(
 
 }  // namespace
 
-TEST_CASE("hotkeys are Ctrl+Alt+P, H and T with unique ids", "[ui][actions]") {
+TEST_CASE("hotkeys are Ctrl+Alt+P, H, T, Q and C with unique ids",
+          "[ui][actions]") {
     const auto bindings = ui::hotkey_bindings();
-    REQUIRE(bindings.size() == 3);
+    REQUIRE(bindings.size() == 5);
     REQUIRE(bindings[0].id == ui::kHotkeyPause);
     REQUIRE(bindings[1].id == ui::kHotkeyVisibility);
     REQUIRE(bindings[2].id == ui::kHotkeyLanguage);
+    REQUIRE(bindings[3].id == ui::kHotkeyQuit);
+    REQUIRE(bindings[4].id == ui::kHotkeyControl);
     REQUIRE(bindings[0].virtual_key == 'P');
     REQUIRE(bindings[1].virtual_key == 'H');
     REQUIRE(bindings[2].virtual_key == 'T');
+    REQUIRE(bindings[3].virtual_key == 'Q');
+    REQUIRE(bindings[4].virtual_key == 'C');
     for (const auto& binding : bindings) {
         REQUIRE(binding.modifiers == ui::kHotkeyModifiers);
     }
@@ -383,19 +389,49 @@ TEST_CASE("the CLI answers stdin commands and stops on shutdown", "[ui][cli]") {
     REQUIRE(results == 4);
 }
 
-TEST_CASE("tray menu ids map to the three actions", "[ui][actions]") {
-    REQUIRE(static_cast<int>(ui::tray_action(ui::kTrayCommandPause)) ==
-            static_cast<int>(ui::TrayAction::kTogglePause));
-    REQUIRE(static_cast<int>(ui::tray_action(ui::kTrayCommandVisibility)) ==
-            static_cast<int>(ui::TrayAction::kToggleVisibility));
-    REQUIRE(static_cast<int>(ui::tray_action(ui::kTrayCommandExit)) ==
-            static_cast<int>(ui::TrayAction::kExit));
-    REQUIRE(static_cast<int>(ui::tray_action(0)) ==
-            static_cast<int>(ui::TrayAction::kNone));
-    REQUIRE(static_cast<int>(ui::tray_action(1004)) ==
-            static_cast<int>(ui::TrayAction::kNone));
-    REQUIRE(static_cast<int>(ui::tray_action(-1)) ==
-            static_cast<int>(ui::TrayAction::kNone));
+TEST_CASE("tray menu, control buttons and hotkeys share one action table",
+          "[ui][actions]") {
+    REQUIRE(ui::control_action_from_id(ui::kTrayCommandPause) ==
+            ui::ControlAction::kTogglePause);
+    REQUIRE(ui::control_action_from_id(ui::kTrayCommandVisibility) ==
+            ui::ControlAction::kToggleVisibility);
+    REQUIRE(ui::control_action_from_id(ui::kTrayCommandExit) ==
+            ui::ControlAction::kExit);
+    REQUIRE(ui::control_action_from_id(ui::kHotkeyPause) ==
+            ui::ControlAction::kTogglePause);
+    REQUIRE(ui::control_action_from_id(ui::kHotkeyVisibility) ==
+            ui::ControlAction::kToggleVisibility);
+    REQUIRE(ui::control_action_from_id(ui::kHotkeyQuit) ==
+            ui::ControlAction::kExit);
+    REQUIRE(ui::control_action_from_id(ui::kHotkeyLanguage) ==
+            ui::ControlAction::kNone);
+    REQUIRE(ui::control_action_from_id(ui::kHotkeyControl) ==
+            ui::ControlAction::kNone);
+    REQUIRE(ui::control_action_from_id(0) == ui::ControlAction::kNone);
+    REQUIRE(ui::control_action_from_id(1004) == ui::ControlAction::kNone);
+    REQUIRE(ui::control_action_from_id(-1) == ui::ControlAction::kNone);
+}
+
+TEST_CASE("control mode parses only the four documented values", "[ui][actions]") {
+    ui::ControlSurface surface = ui::ControlSurface::kNone;
+    REQUIRE(ui::parse_control_surface("auto", surface));
+    REQUIRE(surface == ui::ControlSurface::kAuto);
+    REQUIRE(ui::parse_control_surface("tray", surface));
+    REQUIRE(surface == ui::ControlSurface::kTray);
+    REQUIRE(ui::parse_control_surface("window", surface));
+    REQUIRE(surface == ui::ControlSurface::kWindow);
+    REQUIRE(ui::parse_control_surface("none", surface));
+    REQUIRE(surface == ui::ControlSurface::kNone);
+    REQUIRE_FALSE(ui::parse_control_surface("", surface));
+    REQUIRE_FALSE(ui::parse_control_surface("WINDOW", surface));
+    REQUIRE_FALSE(ui::parse_control_surface("windows", surface));
+    REQUIRE_FALSE(ui::parse_control_surface("hotkeys", surface));
+}
+
+TEST_CASE("control surface names match the report contract", "[ui][actions]") {
+    REQUIRE(std::string(ui::control_surface_name(true, false)) == "tray");
+    REQUIRE(std::string(ui::control_surface_name(false, true)) == "window");
+    REQUIRE(std::string(ui::control_surface_name(false, false)) == "hotkeys");
 }
 
 TEST_CASE("raw tray events map to primary, context or ignored", "[ui][actions]") {
@@ -430,12 +466,12 @@ TEST_CASE("the tray menu follows every pause and visibility state", "[ui][action
         REQUIRE(menu[2].id == ui::kTrayCommandExit);
         REQUIRE(menu[2].label == "Exit");
         REQUIRE_FALSE(menu[2].checked);
-        REQUIRE(static_cast<int>(ui::tray_action(menu[0].id)) ==
-                static_cast<int>(ui::TrayAction::kTogglePause));
-        REQUIRE(static_cast<int>(ui::tray_action(menu[1].id)) ==
-                static_cast<int>(ui::TrayAction::kToggleVisibility));
-        REQUIRE(static_cast<int>(ui::tray_action(menu[2].id)) ==
-                static_cast<int>(ui::TrayAction::kExit));
+        REQUIRE(ui::control_action_from_id(menu[0].id) ==
+                ui::ControlAction::kTogglePause);
+        REQUIRE(ui::control_action_from_id(menu[1].id) ==
+                ui::ControlAction::kToggleVisibility);
+        REQUIRE(ui::control_action_from_id(menu[2].id) ==
+                ui::ControlAction::kExit);
     }
 }
 
@@ -515,14 +551,23 @@ TEST_CASE("a duration run writes its report", "[ui][report]") {
     const nlohmann::json document = read_json(report.path);
     REQUIRE(document.at("exit_reason") == "duration");
     REQUIRE(document.at("exit_code") == 0);
-    REQUIRE(document.at("hotkeys").at("attempted") == 3);
+    REQUIRE(document.at("hotkeys").at("attempted") == 5);
     // Registered and failed are the startup measurements, kept after the
     // cleanup that unregisters every hotkey.
     const int registered = document.at("hotkeys").at("registered").get<int>();
     const int failed = document.at("hotkeys").at("failed").get<int>();
-    REQUIRE(registered + failed == 3);
-    REQUIRE(document.at("hotkeys").at("all_registered") == (registered == 3));
+    REQUIRE(registered + failed == 5);
+    REQUIRE(document.at("hotkeys").at("all_registered") == (registered == 5));
+    // The report names the surface the run actually used, and whether the
+    // shell accepted the notification icon -- never that the tray "passed".
+    const std::string surface = document.at("control_surface").get<std::string>();
+    REQUIRE((surface == "tray" || surface == "window" || surface == "hotkeys"));
     REQUIRE(document.at("tray").at("added").is_boolean());
+    if (surface == "tray") {
+        REQUIRE(document.at("tray").at("added") == true);
+    } else {
+        REQUIRE(document.at("tray").at("added") == false);
+    }
     REQUIRE(document.at("click_through").at("passes").is_boolean());
 }
 

@@ -71,30 +71,29 @@
 | C4 | 检查安装包内仍无权重 | 无 `.bin/.onnx/.pt/.pth/.safetensors`，无 `models/` | ZIP 列表 | ☐ 未验 |
 | C5 | 阅读许可 | 代码 MIT；NLLB CC-BY-NC-4.0（非商业）；Whisper MIT；PP-OCRv4 Apache-2.0 | `licenses/MODEL_LICENSES.md` | ☐ 未验 |
 
-## 4. 托盘 / Tray
+## 4. 控制面 / Control surface（托盘 best-effort）
 
-仅在有正常通知区的桌面执行；若 `Shell_NotifyIcon` 失败，记录为 known issue，
-不要勾选通过。
+仅在有正常通知区的桌面执行托盘部分；**控制面（ControlWindow / 热键）才是
+发布必需项**。托盘是 best-effort：可用则走 tray，不可用则自动回退窗口。
 
 | # | 步骤 | 期望 | 证据 | 状态 |
 | --- | --- | --- | --- | --- |
-| T1 | 启动 `watashi_ui`，悬停图标 | 标准 tooltip 显示 `watashi overlay`；stderr 有 `tray: icon added` 与 `tray: version 4 enabled`（若为 `NIM_SETVERSION` 失败则记录 error 并走 legacy） | 截图 + stderr | ☐ 未验（需用户在 Medium 桌面重测） |
-| T2 | 左键单击图标 | **打开同一托盘菜单**（Pause/Hide/Exit），不是静默无反应 | stderr 的 `tray: callback ... loword=...` + 截图 | ☐ 未验（需用户在 Medium 桌面重测） |
-| T2b | 右键单击图标 | 弹出同一菜单（Pause/Hide/Exit） | stderr 的 `tray: callback ...`、`tray: menu ... chosen=...` + 截图 | ☐ 未验（需用户在 Medium 桌面重测） |
-| T3 | 点击 Exit | 进程退出，`--report` 的 `exit_reason=tray-exit`；无残留 `watashi_ui` 进程 | 报告 JSON + `Get-Process watashi_ui` | ☐ 未验（需用户在 Medium 桌面重测） |
+| T1 | `watashi_ui.exe --capture synthetic --ocr fake --duration 600 --control auto` | tray 可用 → 图标 + tooltip `watashi overlay`；tray 不可用 → 出现标题 **`watashi control`** 的窗口，日志 `tray: unavailable; control=window (Shell_NotifyIcon error N)` | 截图 + stderr | ☐ 用户手工 |
+| T2 | 点控制窗/托盘菜单的 Pause/Resume | 引擎收到 pause/resume；按钮文字切换；悬浮窗状态更新 | 截图 + report `commands` | ☐ 用户手工 |
+| T2b | 点 Hide/Show | 悬浮窗隐藏/恢复；控制窗保持可见；关闭控制窗只隐藏窗口，不退出进程 | 截图 | ☐ 用户手工 |
+| T3 | 点 Exit | 进程退出；report `exit_reason=control-exit`（控制窗回退）或 `tray-exit`（托盘可用） | report JSON | ☐ 用户手工 |
+| T4 | Ctrl+Alt+Q | 进程退出；report `exit_reason=hotkey-exit` | report JSON | ☐ 用户手工 |
+| T5 | 检查 report | `control_surface=tray|window|hotkeys`，`tray.added=true/false`，与实际界面一致 | report JSON | ☐ 用户手工（`none`/`window` 已由 CTest 自动验证字段） |
 
-**回调诊断**（W3.3 修复时加入）：每次托盘回调都会在 stderr 打印
-`tray: callback hwnd=0x... message=0x... wparam=... lparam=0x... loword=0x... hiword=0x...`。
-重测时把这一行贴进证据栏：`loword` 应为 `WM_CONTEXTMENU` / `WM_RBUTTONUP` /
-`NIN_SELECT` / `NIN_KEYSELECT`，而不是未知值。菜单路径同时打印
-`tray: menu owner=... foreground=... chosen=... error=...`。
+**回调诊断**（W3.3 修复时加入）：若走托盘，每次回调都会在 stderr 打印
+`tray: callback hwnd=0x... message=0x... wparam=... lparam=0x... loword=0x... hiword=0x...`；
+菜单路径同时打印 `tray: menu owner=... foreground=... chosen=... error=...`。
 
-> 已知问题：部分会话/宿主上 `Shell_NotifyIcon(NIM_ADD)` 返回 error 5，图标不可用；
-> 此时 T1–T3 记为 **known issue（未验）**，不影响其他条目。agent 不代替用户写 PASS。
+> 已知问题：部分会话/宿主上 `Shell_NotifyIcon(NIM_ADD)` 返回 error 5，托盘不可用；
+> 这时 **不要求 tray PASS**，但要求控制窗/热键控制面 PASS。agent 不代替用户写 PASS。
 >
-> 本次修复会话实测：`tray: NIM_ADD failed ... error=5`，因此 **没有取得真实
-> 回调样本**（无图标可点）。上面的 trace 字段与左右键映射仅由单测覆盖，实际
-> `WM_APP+10` 事件必须由用户在 Medium 桌面重测时取证。
+> 本机实测：`tray: NIM_ADD failed ... error=5`；最小 NotifyIcon 探针同样失败
+> （见 `docs/adr/0010-control-surface-fallback.md`）。
 
 ## 5. 长稳 / Soak
 
@@ -144,6 +143,6 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tools\soak.ps1 `
 | Medium 桌面（M） | 用户手工（待办） | 本机 Medium 可执行，需人工留证据 |
 | 干净 VM（V） | 未验证（环境不可用） | 无可用 VM |
 | 模型（C） | 用户手工（待办） | 需网络时才执行 `--fetch` |
-| 托盘（T） | 未验证 | 需真实通知区/菜单点击 |
+| 控制面（T） | 用户手工（待办） | ControlWindow/热键必须 PASS；tray 是 best-effort，不要求 tray PASS |
 | Soak（S） | **已验证（自动）**：10m PASS、8h PASS | 报告路径见上 |
 | 签名（G） | 未验证：当前 unsigned | 有证书才可验签名 |

@@ -19,6 +19,8 @@ namespace watashi::ui {
 inline constexpr int kHotkeyPause = 1;
 inline constexpr int kHotkeyVisibility = 2;
 inline constexpr int kHotkeyLanguage = 3;
+inline constexpr int kHotkeyQuit = 4;
+inline constexpr int kHotkeyControl = 5;
 
 /// MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, as unsigned so this header stays free
 /// of windows.h for headless tests.
@@ -30,8 +32,9 @@ struct HotkeyBinding {
     unsigned virtual_key = 0;
 };
 
-/// Ctrl+Alt+P / H / T. Virtual-key codes are the ASCII values of the letters.
-[[nodiscard]] std::array<HotkeyBinding, 3> hotkey_bindings();
+/// Ctrl+Alt+P / H / T keep their meaning; Q exits and C shows/hides the
+/// control window. Virtual-key codes are the ASCII values of the letters.
+[[nodiscard]] std::array<HotkeyBinding, 5> hotkey_bindings();
 
 inline constexpr int kTrayCommandPause = 1001;
 inline constexpr int kTrayCommandVisibility = 1002;
@@ -43,20 +46,9 @@ struct TrayMenuEntry {
     bool checked = false;
 };
 
-/// What a chosen menu id does. Kept separate from the menu labels so the
-/// mapping can be asserted without a shell or a window.
-enum class TrayAction {
-    kNone,
-    kTogglePause,
-    kToggleVisibility,
-    kExit,
-};
-
-/// Menu contents for the current state.
+/// Menu contents for the current state. The ids are shared with the control
+/// window buttons and are mapped to ControlAction by control_action_from_id.
 [[nodiscard]] std::vector<TrayMenuEntry> tray_menu(bool paused, bool visible);
-
-/// The action behind a menu id. Unknown ids answer ``kNone``.
-[[nodiscard]] TrayAction tray_action(int id) noexcept;
 
 [[nodiscard]] nlohmann::json pause_command(bool should_pause);
 [[nodiscard]] nlohmann::json target_language_command(std::string_view language);
