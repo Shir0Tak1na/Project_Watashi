@@ -11,7 +11,7 @@ INSTALL.md 是使用者安装说明。
 | 项目 | 状态 |
 | --- | --- |
 | 10 分钟 UI soak（synthetic/fake） | **PASS**（2026-11-01 clean-room，`build-rc/soak-10m.json`：602.5s，handles 169→244（退出前最后采样），内存 14.9 MiB，峰值 21.1 MiB，exit 0，log_errors 0） |
-| 8 小时 soak（`--duration 28800`） | **进行中**：2026-11-01 20:43 启动，PID 5224，报告 `build-rc/soak-8h.json` 尚未生成；完成前不得写成通过 |
+| 8 小时 soak（`--duration 28800`） | **PASS**（2026-11-01 20:43 → 2026-11-02 04:43，报告 `build-rc/soak-8h.json`：28801.5s，handles 169→169，内存 15.0→13.8 MiB（peak 16.4），exit 0，crashed=false，timed_out=false，log_errors=0，stderr_errors=0；executable=`build-rc\clean-build\Release\watashi_ui.exe`） |
 | 干净 Win11 VM | **未验证**：当前没有可用 VM |
 | 普通（Medium）桌面手工安装（W4.1） | **待办**：自动化在 Low IL 宿主会 skip，必须人工验收 |
 | W3.3 托盘 `tray-exit` | **未验证**：需要真实点击托盘菜单 |
@@ -23,8 +23,11 @@ INSTALL.md 是使用者安装说明。
 
 ### RC1 产物 / RC1 artefacts
 
-- `dist/ProjectWatashi-1.0.0-rc1-win64.zip`（约 16.4 MB）；
-  `dist/SHA256SUMS.txt` 记录归档的 SHA-256；具体字节数与哈希在打包输出中记录。
+- `dist/ProjectWatashi-1.0.0-rc1-win64.zip`（16,382,497 字节）。
+- `dist/SHA256SUMS.txt` 由 `tools/package_rc.ps1` 生成：UTF-8（无 BOM）、LF、
+  `<hash>  <filename>` 两空格；`sha256sum -c` 通过。ZIP 本身未被修改，
+  SHA-256 仍为
+  `a2ec862c4d4fd5fc59f4954b9ceb4d21ce7b701054be1f9ed4a57120b857f932`。
 - 解压审计（`build-rc/unzip-check`）：`install_manifest.json` 的 15 项 payload
   全部存在；`.bin`/`.onnx`/`.pt`/`.pth`/`.safetensors` 为 **0**；没有 `models/`；
   `.pdb` 为 **0**；ZIP 哈希与 `SHA256SUMS.txt` 一致。
@@ -44,8 +47,8 @@ INSTALL.md 是使用者安装说明。
   - **4 个二进制**（`watashi_ui.exe`、`watashi_cli.exe`、`watashi_fetch.exe`、
     `ctranslate2.dll`）尺寸相同但 SHA-256 不同（构建非确定性元数据；未嵌入源码
     路径）。其余二进制（ORT/oneDNN/VC runtime）与 SBOM 等逐字节一致；
-  - **结论：文件集合与尺寸一致，但不是逐字节可重现**；按任务要求如实记录，
-    不写成“ZIP 完全一致”。
+  - **结论：文件集合与尺寸一致，但不是逐字节可重现**；本 RC **不得宣传为
+    reproducible build**，按任务要求如实记录，不写成“ZIP 完全一致”。
 - 权重扫描：`clean-stage` 与 ZIP 均为 **0**，无 `models/`、无 `.pdb`。
 
 ## 1. 安装 / Install
@@ -102,21 +105,25 @@ INSTALL.md 是使用者安装说明。
 `soak_missing_exe`），10 分钟与 8 小时是**手工**运行：
 
 ```powershell
-# 10 分钟 smoke（发布前必须）
+# 10 分钟 smoke（已完成：build-rc/soak-10m.json）
 powershell -NoProfile -ExecutionPolicy Bypass -File tools\soak.ps1 `
-  --duration 600 --mode ui --report build-rc\soak-ui-10m.json
+  --duration 600 --mode ui --report build-rc\soak-10m.json
 
-# 8 小时（当前未跑；跑完才可把状态改成 pass）
+# 8 小时（已完成：build-rc/soak-8h.json）
 powershell -NoProfile -ExecutionPolicy Bypass -File tools\soak.ps1 `
-  --duration 28800 --mode ui --report build-rc\soak-ui-8h.json
+  --duration 28800 --mode ui --report build-rc\soak-8h.json
 ```
 
 报告 JSON 至少包含：`requested_duration_seconds`、`elapsed_seconds`、
 `handles_start` / `handles_end`、`memory_mib_start/end/peak`、`exit_code`、
-`crashed`、`log_errors`、`pass`、`failure_reason`。harness 不联网、不加载模型。
+`crashed`、`timed_out`、`log_errors`、`pass`、`failure_reason`。harness 不联网、
+不加载模型。
 
-- [ ] 10 分钟 smoke `pass=true`（把本文件第 0 节状态改为实际结果）；
-- [ ] 8 小时：**未跑** → 保持“未验证”，不得写成通过。
+- [x] 10 分钟 smoke：`pass=true`（`build-rc/soak-10m.json`，602.5 s）
+- [x] 8 小时：`pass=true`（`build-rc/soak-8h.json`，28801.5 s，exit 0，
+      handles 169→169，log_errors 0）
+- [ ] Medium 桌面手工安装、干净 VM、托盘 `tray-exit`、签名：仍是**未验证/待办**，
+      **不因 8h soak PASS 而转为通过**。
 
 ## 6. 签名 / Signing
 

@@ -5,6 +5,11 @@
 
 > 规则：只有实际执行并留下证据的条目才勾选。没有执行或无法执行的条目写
 > **未验**，不得写成“通过”。`skipped` 不等于 `passed`。
+>
+> 状态用三种：
+> **已验证（自动，有报告/日志）**、**用户手工（待办）**、**未验证（环境不可用）**。
+> 8h soak 的 PASS 只覆盖 soak 本身，**不会**把 Medium 桌面、干净 VM、托盘或签名
+> 一并转成通过。
 
 ## 0. 产物与前置 / Artefacts
 
@@ -82,14 +87,15 @@
 
 ## 5. 长稳 / Soak
 
-短测由 CTest 覆盖；10 分钟与 8 小时必须手工启动并保存报告。
+短测由 CTest 覆盖；10 分钟与 8 小时由 harness 运行并保存报告。
+证据路径：`build-rc/soak-10m.json`、`build-rc/soak-8h.json`。
 
 ```powershell
-# 10 分钟 smoke
+# 10 分钟 smoke（已完成）
 powershell -NoProfile -ExecutionPolicy Bypass -File tools\soak.ps1 `
   --duration 600 --mode ui --report build-rc\soak-10m.json
 
-# 8 小时（启动后记录 PID；未完成前状态只能是“进行中”）
+# 8 小时（已完成，2026-11-01 20:43 → 2026-11-02 04:43）
 powershell -NoProfile -ExecutionPolicy Bypass -File tools\soak.ps1 `
   --duration 28800 --mode ui --report build-rc\soak-8h.json
 ```
@@ -111,7 +117,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tools\soak.ps1 `
 | # | 步骤 | 期望 | 证据 | 状态 |
 | --- | --- | --- | --- | --- |
 | S1 | 10 分钟 UI smoke | `pass=true` | `build-rc/soak-10m.json` | ☑ PASS（自动 2026-11-01：602.5s，exit 0，log_errors 0） |
-| S2 | 8 小时 UI soak | 启动后记录 PID；运行中只能标“进行中”，完成且 `pass=true` 才可标 PASS | `build-rc/soak-8h.json` + PID 5224 | 进行中（2026-11-01 20:43 启动，报告尚未生成） |
+| S2 | 8 小时 UI soak | 完成且 `pass=true` | `build-rc/soak-8h.json`：28801.5 s，exit 0，crashed=false，timed_out=false，handles 169→169，内存 15.0→13.8 MiB（peak 16.4），log_errors 0，stderr_errors 0 | ✅ 已验证（自动 2026-11-01 20:43 → 2026-11-02 04:43） |
 
 ## 6. 签名 / Signing
 
@@ -124,9 +130,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tools\soak.ps1 `
 
 | 组 | 结论 | 备注 |
 | --- | --- | --- |
-| Medium 桌面（M） | 未验 | |
-| 干净 VM（V） | 未验 | 无可用 VM |
-| 模型（C） | 未验 | |
-| 托盘（T） | 未验 | 需真实通知区/菜单点击 |
-| Soak（S） | 10m PASS（自动）；8h 进行中 | 报告路径见上 |
-| 签名（G） | unsigned | |
+| Medium 桌面（M） | 用户手工（待办） | 本机 Medium 可执行，需人工留证据 |
+| 干净 VM（V） | 未验证（环境不可用） | 无可用 VM |
+| 模型（C） | 用户手工（待办） | 需网络时才执行 `--fetch` |
+| 托盘（T） | 未验证 | 需真实通知区/菜单点击 |
+| Soak（S） | **已验证（自动）**：10m PASS、8h PASS | 报告路径见上 |
+| 签名（G） | 未验证：当前 unsigned | 有证书才可验签名 |

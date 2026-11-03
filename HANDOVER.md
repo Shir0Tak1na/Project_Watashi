@@ -8,8 +8,8 @@
 C++ 正式版已冻结 **v1.0.0-rc1**（HEAD 为 RC commit）：本地捕获、PP-OCRv4、
 语料/规则、CTranslate2 NLLB、原生 Win32 悬浮窗、声明式呈现、stdin 命令通道、
 全局热键、托盘、设置页、per-user 安装包、模型获取器、SBOM 与 soak 工具均已落地。
-**代码侧 RC 完成；干净 Win11 VM、Medium 桌面手工安装、托盘 `tray-exit` 与 8 小时
-soak 仍待人工验收。**
+**代码侧 RC 完成；10 分钟与 8 小时 UI soak 均 PASS；干净 Win11 VM、Medium
+桌面手工安装与托盘 `tray-exit` 仍待人工验收。**
 
 ## 必读顺序（约 30 分钟）
 
@@ -58,10 +58,11 @@ soak 仍待人工验收。**
 | 当前构建 | `build-rc`（RC1）；`build-rc/clean-build` 为 `git archive` 干净复验 |
 | 契约 | schema/ 三份；events payload 开放，ReadyInfo 必填 3 字段 |
 | 黄金样本 | 200 条 + golden/verify_cases.py；NMT 另有 golden/nmt 120 条 |
-| 测试 | 313/313 CTest；新增 license/SBOM/soak 检查 |
+| 测试 | 313/313 CTest；license/SBOM/soak 检查 |
+| 长稳 | 10 分钟 UI soak PASS（602.5 s）；**8 小时 UI soak PASS**（28801.5 s，报告 `build-rc/soak-8h.json`） |
 | 安装包 | `dist/ProjectWatashi-1.0.0-rc1-win64.zip` + `SHA256SUMS.txt`（dist 不提交） |
-| 当前阻塞 | 干净 Win11 VM、Medium 桌面手工安装、托盘 `tray-exit`、8 小时 soak 均未验证；发布为 unsigned |
-| 下一步 | 按 [docs/ACCEPTANCE.md](docs/ACCEPTANCE.md) 人工验收；完成 8h soak 后才能改状态 |
+| 当前阻塞 | 干净 Win11 VM、Medium 桌面手工安装、托盘 `tray-exit` 未验证；发布为 unsigned |
+| 下一步 | 按 [docs/ACCEPTANCE.md](docs/ACCEPTANCE.md) 人工验收；8 小时 soak 已 PASS，不再列为阻塞 |
 
 ## W0 交付记录（2026-10-28）
 
@@ -130,4 +131,7 @@ exit_reason、tray.added、hotkeys 实测值。当前会话 raw `Shell_NotifyIco
 - [x] 接手方能说出“哪些文档是过期的”
 - [x] W3.3 托盘/报告修复（本 shell 正常 duration 报告通过；交互托盘待复验）
 - [x] W3.4 设置页（270 CTest；手工改值/保存未验）
-- [ ] W4 安装包/签名/8h soak
+- [x] W4 安装包/模型获取/SBOM/日志/10 分钟与 8 小时 soak（8h 报告
+      `build-rc/soak-8h.json` PASS；签名为 unsigned，未验）
+- [ ] 人工验收：Medium 桌面、干净 Win11 VM、托盘 `tray-exit`
+      （清单见 [docs/ACCEPTANCE.md](docs/ACCEPTANCE.md)）
