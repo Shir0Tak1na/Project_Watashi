@@ -481,6 +481,23 @@ if(WIN32)
     set(CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS_SKIP TRUE)
     include(InstallRequiredSystemLibraries)
 
+    # CTranslate2 links OpenMP, so its DLL imports VCOMP140.DLL. That file is
+    # part of the VC++ redistributable but not in CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS,
+    # and a clean Windows VM does not have it. Ship it beside ctranslate2.dll.
+    set(WATASHI_VCOMP_ROOT "$ENV{ProgramFiles\(x86\)}")
+    string(REPLACE "\\" "/" WATASHI_VCOMP_ROOT "${WATASHI_VCOMP_ROOT}")
+    file(GLOB WATASHI_VCOMP_CANDIDATES
+        "${WATASHI_VCOMP_ROOT}/Microsoft Visual Studio/2022/*/VC/Redist/MSVC/*/x64/Microsoft.VC143.OpenMP/vcomp140.dll")
+    if(NOT WATASHI_VCOMP_CANDIDATES)
+        file(GLOB WATASHI_VCOMP_CANDIDATES
+            "$ENV{VCToolsRedistDir}/x64/Microsoft.VC143.OpenMP/vcomp140.dll")
+    endif()
+    if(NOT WATASHI_VCOMP_CANDIDATES)
+        message(FATAL_ERROR "vcomp140.dll not found; install the MSVC OpenMP redistributable")
+    endif()
+    list(GET WATASHI_VCOMP_CANDIDATES 0 WATASHI_VCOMP_DLL)
+    string(REPLACE "\\" "/" WATASHI_VCOMP_DLL "${WATASHI_VCOMP_DLL}")
+
     # Only the watashi component belongs in the package. The FetchContent
     # dependencies add their own install rules (sentencepiece headers); without
     # a component, `cmake --install` and CPack would drag those in too.
@@ -489,6 +506,7 @@ if(WIN32)
     install(FILES
         "${WATASHI_ORT_DLL}"
         "${WATASHI_DNNL_DLL}"
+        "${WATASHI_VCOMP_DLL}"
         "$<TARGET_FILE:ctranslate2>"
         LICENSE
         THIRD_PARTY_LICENSES.md

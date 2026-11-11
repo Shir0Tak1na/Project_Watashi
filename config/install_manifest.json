@@ -8,6 +8,7 @@
     "onnxruntime.dll",
     "ctranslate2.dll",
     "dnnl.dll",
+    "vcomp140.dll",
     "models.lock.json",
     "LICENSE",
     "THIRD_PARTY_LICENSES.md",
