@@ -6,10 +6,10 @@
 | 项 | 值 |
 | --- | --- |
 | 版本 | 1.2 |
-| 日期 | 2026-11-01 |
-| 状态 | **v1.0.0-rc1 已冻结**；人工验收（干净 VM/托盘/8h soak）待办 |
+| 日期 | 2026-11-11 |
+| 状态 | **v1.0.0-rc1 B 验收完成**；最终 v1.0.0 包/tag 待 Stage D |
 | 基线 | C++ 主干 W1.1–W4.4 已落地；Python 原型 0.0.8a 仍是行为参考 |
-| 依据 | 2026-11-01 实测：313 CTest、RC1 ZIP + SBOM、10 分钟 UI soak PASS |
+| 依据 | 2026-11-11：318 CTest、stage-vcomp（含 vcomp140）、Medium/VM/控制面/安装/8h soak PASS |
 
 ---
 
@@ -29,7 +29,7 @@
 
 ---
 
-## 0.1 当前进度（2026-11-01，v1.0.0-rc1）
+## 0.1 当前进度（2026-11-11，v1.0.0-rc1）
 
 > 原始 WBS 保留作计划基线；实际交付顺序与编号不同，以本节和 git 提交为准。
 
@@ -47,14 +47,17 @@
 | W3.3 托盘/报告修复 | 完成 | 630af73；独立 tray owner + finish() |
 | W3.4 设置页 | 完成 | schema 驱动设置页 + user.json |
 | W4.1–W4.3 发布硬化 | 完成 | per-user 安装包、模型获取器、日志/minidump/--version |
-| W4.4 合规与长稳 | 完成 | SBOM + licenses/ + soak 工具；10m UI smoke PASS |
-| **v1.0.0-rc1** | **冻结** | 313/313 CTest；RC ZIP + SHA256SUMS；人工验收待办 |
+| W4.4 合规与长稳 | 完成 | SBOM + licenses/ + soak 工具；10m/8h UI soak PASS |
+| 控制面 | 完成 | ControlWindow + 热键回退；tray 不可用时自动走 window |
+| vcomp 打包 | 完成 | 9be995d；CTranslate2 的 VCOMP140 随包安装 |
+| **v1.0.0-rc1** | **验收完成** | 318/318 CTest；Medium+VM+控制面+安装/卸载 PASS；最终包/tag 待 Stage D |
 
 **实际人时**：W1 约 170 h、W2 约 120 h、W3 约 130 h、W4 约 90 h；剩余为人工验收。
 
 **日历**：原计划按 20 h/周；实际人工投入约 10–12 h/周，编码代理并行，最终截止仍是 2028-07，余量足够。
-**当前阻塞**：干净 Win11 VM、Medium 桌面手工安装、托盘 `tray-exit`、8 小时 soak
-未验证；发布为 unsigned。验收清单见 [docs/ACCEPTANCE.md](ACCEPTANCE.md)。
+**当前状态**：Medium、干净 Win11 VM、控制面、安装/卸载、10m/8h soak 已 PASS；
+托盘因通知区不可用而走控制窗，属 best-effort；发布为 unsigned。
+**下一步**：Stage D 升 1.0.0、clean build、最终包、本地 tag。
 
 ---
 
@@ -118,7 +121,7 @@ v1.0 = 能在自己机器上长期用、也能发给别人装的 Windows 桌面�
 | C++ 主干 | watashi_core / watashi_cli / watashi_ui；W1–W3.3 已落地 | 继续按 W3.4/W4 推进 |
 | 工具链 | MSVC 2022 + CMake；ORT 1.30.0 + CT2 4.8.4 | 构建 build-w32；CI 编译 + ctest |
 
-**五个原始阻塞的状态**：工具链已解决；契约已冻结并导出；黄金样本已具备；模型许可已明确（代码 MIT、权重 CC-BY-NC-4.0）；推理栈已在 C++ 侧跑通。当前阻塞只剩 W3.4 设置页与交互托盘复验。
+**五个原始阻塞的状态**：工具链、契约、黄金样本、模型许可、推理栈均已解决；W3.4 设置页已完成；交互托盘改为 control surface 回退。最终只剩 1.0.0 打包与 tag。
 
 ---
 

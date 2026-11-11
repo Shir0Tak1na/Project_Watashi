@@ -160,10 +160,11 @@ label）敏感。`tests/installer_test.py` 在 staging 和 `install.ps1` 之前�
 分类函数本身由 `installer_self_test`（`python tests/installer_test.py --self-test`）
 覆盖 Low / Medium / Unknown 三种输入。
 
-### 普通用户桌面需手工验收 / Manual acceptance is still required
+### 手工验收已完成 / Manual acceptance completed (2026-11-11)
 
-自动化测试不足以给出“安装已验收”的结论。请在**普通（Medium）用户桌面**、
-不要“以管理员身份运行”，手工执行并逐项检查：
+Medium 桌面和干净 Win11 VM 的安装/运行/卸载已由用户完成，结果见
+[docs/ACCEPTANCE.md](ACCEPTANCE.md)。**注意**：该 VM 使用 BIOS + LabConfig
+绕过 TPM/SecureBoot，不是 UEFI 安全启动验收。下面命令保留为复验步骤：
 
 ```powershell
 # 1) 从构建树 staging（只含 watashi 组件，不含模型权重）
@@ -187,12 +188,11 @@ powershell -NoProfile -ExecutionPolicy Bypass -File C:\Temp\watashi-app\uninstal
 - W4.3：日志环形轮转（5×2 MiB）、minidump 文件写入、`--version` 字段均有
   单元测试；宿主若禁止原生进程创建 `%LOCALAPPDATA%\ProjectWatashi`，日志会
   按设计静默停用（不阻塞主流程）。
-- W3.3 托盘：某次运行打印 `tray: icon added`（该环境通知区可用）；`tray-exit`
-  需要真实点击托盘菜单，未执行，标记为**交互未验**。
+- 控制面：托盘在本机/VM 通知区不可用；`--control auto` 回退到 `watashi control`，
+  Pause/Hide/Exit 已验。托盘实点仍是未验证项。
 - 合规文件：`licenses/sbom.spdx.json` 由 `tools/make_sbom.py` 从
   `tools/license_manifest.json` 生成；漂移检查 `python tools/make_sbom.py --check`。
-- 发布前清单（干净 Win11 VM、10 分钟/8 小时 soak、手工安装待办）见
-  [docs/RELEASE.md](RELEASE.md)。
-- **未在干净 Win11 VM 上验证**：当前环境没有可用的干净 VM。
+- 发布前清单和已知限制见 [docs/RELEASE.md](RELEASE.md) 与
+  [docs/ACCEPTANCE.md](ACCEPTANCE.md)。
 - 签名脚本在无证书环境下运行，产物明确标记为 unsigned（未冒充已签名）。
 

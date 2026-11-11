@@ -78,11 +78,13 @@ system audio / microphone / WAV file
 The Python prototype in `prototype/` remains the behavioural reference and a
 complete runnable implementation.
 
-The C++ mainline has moved from a walking skeleton to **W1.1-W3.3**: local
-capture, PP-OCRv4, layered corpora/rules, CTranslate2 NLLB, a native Win32
-overlay, declarative presentation, a stdin command channel, global hotkeys and
-a tray. **The W3.3 tray owner and exit report are fixed**; the settings page (W3.4)
-and release hardening (W4) are not started.
+The C++ mainline is at **v1.0.0-rc1**: local capture, PP-OCRv4, layered
+corpora/rules, CTranslate2 NLLB, a native Win32 overlay, declarative presentation,
+a stdin command channel, global hotkeys, a settings page, a per-user installer,
+a model fetcher, SBOM/soak tooling and an optional control surface (tray when the
+host has a working notification area, otherwise a control window/hotkeys).
+**RC1 B acceptance passed on a Medium desktop and a clean Win11 VM on 2026-11-11.**
+Final v1.0.0 packaging/tag is the remaining step.
 
 | Area | C++ tree (src/) | Python prototype (prototype/) |
 | --- | --- | --- |
@@ -95,11 +97,11 @@ and release hardening (W4) are not started.
 | Term protection | Working: corpus first, placeholder retry, fallback reason | Working |
 | Storage / cache | In memory only; SQLite not implemented | In memory only |
 | UI, floating overlay | Working: native Win32 layered, click-through/topmost/no-focus; tray has its own owner | Working (Tk bar + panel) |
-| Desktop control window | Not implemented (W3.4) | Working (--desktop) |
+| Desktop control window | Working: settings window (W3.4) + control window fallback | Working (--desktop) |
 | Plugins | Not implemented (v1.1) | v1 extension points + 2 examples |
-| UI architecture | Working: CLI JSONL + stdin commands; watashi_ui does not link the engine | Working: CLI / overlay / desktop share one schema |
-| Customization | Working: declarative presentation + 400 ms hot reload; settings page pending (W3.4) | Working: 7 presets, live switching |
-| Tests | 240 C++ cases; NMT 120/120 differential; OCR 1.0000 | --selftest + 21 self-check scripts |
+| UI architecture | Working: CLI JSONL + stdin commands; watashi_ui currently links watashi_core for envelope/DPI (tracked architecture debt) | Working: CLI / overlay / desktop share one schema |
+| Customization | Working: declarative presentation + 400 ms hot reload; settings page (W3.4) | Working: 7 presets, live switching |
+| Tests | 318 C++ cases; NMT 120/120 differential; OCR 1.0000 | --selftest + 21 self-check scripts |
 
 ## Runtime requirements
 
@@ -547,8 +549,8 @@ They are safe to ignore.
 | M1 | Minimal loop: capture -> OCR -> corpus -> bilingual overlay — **done in C++ W1.1-W1.4 and in the Python prototype** |
 | M2 | Corpus and rule engine with hot reload — **done in C++ W1.2, 120/120 differential** |
 | M3 | Local NMT fallback, term protection, batching — **done in C++ W2, 120/120, 100% term protection** |
-| M4 | Latency budget and UI: overlay/hotkeys/tray/settings — **W3.0-W3.3 landed; W3.4 settings pending** |
-| M5 | Release hardening: installer, signing, soak, SBOM — **W4, not started** |
+| M4 | Latency budget and UI: overlay/hotkeys/settings/control surface — **W3.0-W3.4 landed; tray best-effort** |
+| M5 | Release hardening: installer, models, SBOM, soak, control surface — **W4.4 landed; final v1.0.0 package/tag pending** |
 | M6 | Cross-platform and plugin sandbox — **post-v1.0, not in scope** |
 
 ## Portability targets

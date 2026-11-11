@@ -1,68 +1,68 @@
 # 交接说明 / Handover
 
 > 给接手的人或编码代理：**先读这一页，再读别的。**
-> 最后更新：2026-11-01（v1.0.0-rc1）
+> 最后更新：**2026-11-11（v1.0.0-rc1，B 验收完成；最终 1.0.0 待发布）**
 
 ## 一句话状态
 
-C++ 正式版已冻结 **v1.0.0-rc1**（HEAD 为 RC commit）：本地捕获、PP-OCRv4、
-语料/规则、CTranslate2 NLLB、原生 Win32 悬浮窗、声明式呈现、stdin 命令通道、
-全局热键、托盘、设置页、per-user 安装包、模型获取器、SBOM 与 soak 工具均已落地。
-**代码侧 RC 完成；10 分钟与 8 小时 UI soak 均 PASS；干净 Win11 VM、Medium
-桌面手工安装与托盘 `tray-exit` 仍待人工验收。**
+C++ 主干已到 `v1.0.0-rc1`，**B 验收完成**：Medium 桌面、干净 Win11 VM、
+控制面、安装/卸载、10 分钟与 8 小时 soak 均 PASS。当前 HEAD `9be995d`。
+**最终 v1.0.0 尚未打 tag**；下一步 Stage D：升版本、clean build、最终包、本地 tag。
 
 ## 必读顺序（约 30 分钟）
 
-1. [docs/cpp-v1-plan.md](docs/cpp-v1-plan.md) — 执行计划；先看 §0 的当前进度，再看原始 WBS
-2. [README_zh.md](README_zh.md) — 实际能力、构建方式与已知限制（英文版 [README.md](README.md)）
-3. [prototype/README.md](prototype/README.md) — Python 参考实现的实测数据与失败模式
-4. [prototype/watashi/events.py](prototype/watashi/events.py) — 事件/命令契约，**冻结对象**
-5. [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md) — 许可边界（代码 MIT，NLLB 权重 CC-BY-NC-4.0）
+1. [docs/ACCEPTANCE.md](docs/ACCEPTANCE.md) — 本次人工验收的真实结果与证据
+2. [docs/RELEASE.md](docs/RELEASE.md) — 发布状态、包、已知限制
+3. [docs/cpp-v1-plan.md](docs/cpp-v1-plan.md) — 执行计划；先看 §0
+4. [README_zh.md](README_zh.md) / [README.md](README.md) — 实际能力与构建
+5. [prototype/README.md](prototype/README.md) — Python 参考实现
+6. [prototype/watashi/events.py](prototype/watashi/events.py) — 事件/命令契约，冻结对象
+7. [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md) — 许可边界
 
 ## 什么是真的（可复现）
 
-- **C++ 测试**：v1.0.0-rc1 的 `build-rc` 通过 **313/313 CTest**（低完整性宿主上 installer 两例以 77 skip，不计为 pass）；干净源码 `git archive` 重建亦通过。
-- **NMT 差分**：tools/compare_nmt.py **120/120** 与 Python 参考逐字段一致（target/backend/protected_terms/lost_placeholders/fallback_reason/used_model）。
-- **NMT 性能**：watashi_nmt_probe 加载 **660.6 ms**；4 句 batch 共 **490.9 ms**（约 123 ms/句），在 350 ms/句的预算内。
-- **OCR**：50 张合成帧 + 10 张受控字幕，逐帧均值/中位数/最小 **1.0000**，框数 0 不一致，最大框差 **2 px**；1200×200 P50 **49–52 ms**。
-- **捕获**：窗口捕获 P50 **2.05 ms**；屏幕捕获 P50 **264.6 ms**，是 GameViewer 虚拟显示的环境限制（独立 mss 同样 264–268 ms，DXGI E_ACCESSDENIED）。
-- **原生 UI**：watashi_ui 点击穿透、置顶、不抢焦点；144 DPI 下 20 帧、click_through=pass、焦点前后不变、内存 **8.4 MiB**；目标文字换行完整。
-- **流校验**：fake / corpus / 捕获流仍通过 tools/validate_stream.py 与 events.schema.json（42 事件 + 负例）。
+- **C++ 测试**：当前 HEAD `9be995d` 通过 **318/318 CTest**；低完整性宿主上 installer 两例以 77 skip。
+- **控制面**：`--control auto` 在 tray 不可用时自动显示 `watashi control`；Pause/Hide/Exit 已验。
+- **安装/卸载**：标准用户、无管理员；HKCU + 开始菜单；卸载默认保留 `user\`。
+- **8h soak**：28801.5 s，exit 0，handles 169→169，内存 15.0→13.8 MiB（peak 16.4），log_errors 0。
+- **vcomp**：CTranslate2 依赖 `VCOMP140.DLL`；包内已包含，干净 VM 不再 `0xC0000135`。
+- **NMT 差分**：120/120 与 Python 参考逐字段一致。
+- **OCR**：50 合成帧 + 10 受控字幕，均值/中位数/最小 1.0000；1200×200 P50 49–52 ms。
+- **捕获**：窗口 P50 2.05 ms；屏幕 P50 264.6 ms 是虚拟显示环境限制。
 
 ## 什么是过期的（别照着做）
 
 | 位置 | 写着 | 实情 |
 | --- | --- | --- |
-| [docs/cpp-v1-plan.md](docs/cpp-v1-plan.md) | W1/W3 的旧工作包编号、20 h/周 | 实际交付顺序与编号不同；以 §0 进度和实际提交为准 |
-| [Project Watashi.md](Project%20Watashi.md) | “8 个自检脚本、298 项断言” | 0.0.2 时代数字；原型现在是 21 个脚本、1119 项（含界面） |
-| [docs/screen_ocr_design.md](docs/screen_ocr_design.md) | 建议“降采样后再 OCR” | 实测是陷阱：640 px 会把词粘在一起，导致语料命中失败 |
-| [CMakeLists.txt](CMakeLists.txt) | PaddleOCR / llama.cpp 选项 | 验证过的栈是 ONNX Runtime（OCR）+ CTranslate2（NLLB/Whisper） |
-| config/app.yaml | C++ 主配置 | 目前 C++ 不读它；CLI 用显式参数，设置页尚未实现 |
+| 旧 README 状态/W3.3 | W3.4/W4 未开始 | 已到 W4.4 / RC1；以本页和 ACCEPTANCE 为准 |
+| docs/RELEASE 旧段 | RC1 未验收/无 VM | 已于 2026-11-11 完成 B 验收；最终 1.0.0 待发布 |
+| config/app.yaml | C++ 主配置 | C++ 不读它；设置页从 config/settings_ui.json 读取 |
+| docs/architecture.md | UI 不链接 engine | 当前 CMake 仍为取事件解码/DPI 链接 `watashi_core`；这是待偿还的架构债，不要当成已实现边界 |
 
 ## 硬约束（违反即返工）
 
-1. 事件 JSON 与 [events.py](prototype/watashi/events.py) 逐字段一致（v/seq/ts 信封），不许自创形状。
-2. 设置项键名与默认值来自 [settings_schema.py](prototype/watashi/settings_schema.py)，不许加未登记键；W3.4 设置页必须从 schema 生成。
-3. 语料命中即权威，模型不得改写术语；未命中落到模型时必须报告**兜底原因**。
-4. 推理后端必须实现现有 Translator 协议；v1.0 只允许本地后端，外部/局域网后端默认关闭且需先有 ADR。
-5. 模型权重不进 git、不进安装包（见 [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md)）。
-6. UI 不得复制引擎逻辑：watashi_ui 只消费 watashi_cli --json-lines，命令只走 stdin 的 JSON 命令通道。
+1. 事件 JSON 与 events.py 逐字段一致（v/seq/ts 信封）。
+2. 设置项键名/默认值来自 settings_schema.py；W3.4 已落地。
+3. 语料命中即权威；未命中落模型必须报告兜底原因。
+4. v1.0 只允许本地后端；外部/局域网默认关闭，需先有 ADR。
+5. 模型权重不进 git、不进安装包。
+6. UI 只消费 watashi_cli --json-lines，命令只走 stdin；当前 CMake 的 UI→core 链接是待还债，不是新许可。
 
-## 当前状态（v1.0.0-rc1，2026-11-01）
+## 当前状态（2026-11-11）
 
 | 项 | 状态 |
 | --- | --- |
-| HEAD | v1.0.0-rc1 的 RC commit（版本冻结提交） |
+| HEAD | `9be995d`（vcomp 打包修复） |
 | 远端 | 未 push；不创建远端 tag |
-| 工作区 | 代码 clean；build-*/dist/ 已 gitignore |
-| 当前构建 | `build-rc`（RC1）；`build-rc/clean-build` 为 `git archive` 干净复验 |
-| 契约 | schema/ 三份；events payload 开放，ReadyInfo 必填 3 字段 |
-| 黄金样本 | 200 条 + golden/verify_cases.py；NMT 另有 golden/nmt 120 条 |
-| 测试 | 313/313 CTest；license/SBOM/soak 检查 |
-| 长稳 | 10 分钟 UI soak PASS（602.5 s）；**8 小时 UI soak PASS**（28801.5 s，报告 `build-rc/soak-8h.json`） |
-| 安装包 | `dist/ProjectWatashi-1.0.0-rc1-win64.zip` + `SHA256SUMS.txt`（dist 不提交） |
-| 当前阻塞 | 干净 Win11 VM、Medium 桌面手工安装、托盘 `tray-exit` 未验证；发布为 unsigned |
-| 下一步 | 按 [docs/ACCEPTANCE.md](docs/ACCEPTANCE.md) 人工验收；8 小时 soak 已 PASS，不再列为阻塞 |
+| 工作区 | clean；build-*/dist/ 已 gitignore |
+| 测试 | **318/318 CTest**；license/SBOM/soak 检查 |
+| 验收 | Medium PASS；VM PASS（BIOS/TPM 绕过）；控制面 PASS；安装/卸载 PASS |
+| 长稳 | 10m PASS；8h PASS（`build-rc/soak-8h.json`） |
+| 验收包 | `build-rc/stage-vcomp.zip`（含 vcomp，16,943,345 bytes） |
+| 旧包 | `build-rc/archive/rc1/ProjectWatashi-1.0.0-rc1-win64.zip`（归档） |
+| 托盘 | 本机/VM 通知区不可用；best-effort，不阻塞发布 |
+| 签名 | unsigned |
+| 下一步 | **Stage D**：升 1.0.0、clean build、最终包、本地 tag；不 push |
 
 ## W0 交付记录（2026-10-28）
 
@@ -122,16 +122,16 @@ exit_reason、tray.added、hotkeys 实测值。当前会话 raw `Shell_NotifyIco
 
 ## 交接检查单
 
-- [x] 工作区代码已提交；文档更新待提交
+- [x] 工作区代码已提交；文档已更新到 2026-11-11 B 验收状态
 - [x] CI 能编译 C++（schema/stream 双校验）
 - [x] 契约 schema 已导出
 - [x] 黄金样本 ≥200；NMT 120 条
 - [x] 模型哈希清单
 - [x] 接手方能独立跑 prototype\run.cmd --selftest
 - [x] 接手方能说出“哪些文档是过期的”
-- [x] W3.3 托盘/报告修复（本 shell 正常 duration 报告通过；交互托盘待复验）
-- [x] W3.4 设置页（270 CTest；手工改值/保存未验）
+- [x] 控制面：ControlWindow/热键（tray 在本机不可用，best-effort；控制窗 Pause/Hide/Exit PASS）
+- [x] W3.4 设置页（已落地；Medium/VM 设置页打开已验）
 - [x] W4 安装包/模型获取/SBOM/日志/10 分钟与 8 小时 soak（8h 报告
-      `build-rc/soak-8h.json` PASS；签名为 unsigned，未验）
-- [ ] 人工验收：Medium 桌面、干净 Win11 VM、托盘 `tray-exit`
-      （清单见 [docs/ACCEPTANCE.md](docs/ACCEPTANCE.md)）
+      `build-rc/soak-8h.json` PASS；vcomp140 打包已修；unsigned）
+- [x] 人工验收：Medium 桌面、干净 Win11 VM、安装/卸载（2026-11-11 PASS）
+- [ ] 托盘实点：本机/VM 通知区不可用；control surface 已 PASS，tray 仍为 best-effort

@@ -28,7 +28,7 @@ outranks the dictionary and stops the model from being consulted at all. A wrong
 answer from an authoritative corpus is not a gap, so the only thing that can fix
 it is a person saying what the line should have said.
 
-## Current implementation (2026-10-31)
+## Current implementation (2026-11-11)
 
 The C++ mainline now implements the screen path end to end:
 
@@ -41,13 +41,15 @@ The C++ mainline now implements the screen path end to end:
 | Rules | affix / morpheme / template / transliterate with confidence and trace |
 | NMT | CTranslate2 4.8.4 + NLLB-200 int8; corpus first, term protection, placeholder retry, fallback reason |
 | Session | Single-writer event stream (v/seq/ts); stdin JSON command channel (pause/resume/target/scene/fps/shutdown) |
-| UI | watashi_ui: Win32 layered, click-through, topmost, no-focus overlay; consumes watashi_cli --json-lines |
+| UI | watashi_ui: Win32 layered, click-through, topmost, no-focus overlay; consumes watashi_cli --json-lines; optional control window/hotkeys when the tray is unavailable |
 | Compatibility | The same JSONL stream is consumed by the Python overlay adapter (W1.4) |
 
-The native UI does **not** link the engine. It spawns the engine binary next to
-it and decodes the event stream; commands go back over stdin. This keeps the
-contract boundary real: a different UI can replace watashi_ui without touching
-OCR, corpus, rules or NMT.
+The intended boundary is that the native UI does **not** link the engine: it
+spawns the engine binary next to it, decodes the event stream, and sends commands
+over stdin. **Current CMake does not enforce that yet**: `watashi_ui_core` links
+`watashi_core` for the event envelope decoder and DPI helper. This is tracked
+architecture debt; the contract boundary is still the JSONL/stdin surface, but it
+is not enforced by the target graph.
 
 Qt6 was evaluated in W3.0 and rejected for this host: no local Qt6, vcpkg source
 build exceeded the one-day timebox, and Qt's install/package footprint was out
@@ -80,8 +82,8 @@ requirements.
 | Interface | Owner | Current state |
 | --- | --- | --- |
 | Model backend | Translator protocol | corpus + rules + local CTranslate2 NMT implemented; remote backends reserved, off by default |
-| Settings | settings_schema.py | schema is frozen; native settings page is W3.4, not implemented yet |
-| Application collaboration | event/command envelope | JSON-lines events + stdin JSON commands implemented; Python overlay and native UI share them |
+| Settings | settings_schema.py | schema is frozen; native settings page (W3.4) implemented in C++ |
+| Application collaboration | event/command envelope | JSON-lines events + stdin JSON commands implemented; Python overlay and native UI share them; control window/hotkeys are a UI-side fallback, not a second engine |
 
 Rules:
 
@@ -91,7 +93,8 @@ Rules:
 3. Data boundary first: a backend that sends text, screenshots or audio must state
    what it sends, to whom, and require consent.
 4. UI never reimplements engine logic. It decodes events, sends commands, and
-   renders; the engine owns OCR, corpus, rules and NMT.
+   renders; the engine owns OCR, corpus, rules and NMT. The current UI→core link
+   is technical debt, not an invitation to move logic into the UI.
 
 ## Plugin and rules principle
 

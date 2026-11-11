@@ -1,134 +1,98 @@
-﻿# 发布验收清单 / Release checklist
+# 发布验收清单 / Release checklist
 
-适用对象：**干净 Win11 VM 上的普通用户桌面**（per-user 安装，不需要管理员，
-不触发 UAC）。与 [docs/INSTALL.md](INSTALL.md) 互补：本文是发布前逐项检查表，
-INSTALL.md 是使用者安装说明。
+状态日期：**2026-11-11**（RC1 人工验收完成；最终 v1.0.0 待 Stage D）。
 
-状态日期：2026-11-01（**v1.0.0-rc1**）。
-
-## 0. 当前验证状态 / Status
+## 0. 当前状态 / Status
 
 | 项目 | 状态 |
 | --- | --- |
-| 10 分钟 UI soak（synthetic/fake） | **PASS**（2026-11-01 clean-room，`build-rc/soak-10m.json`：602.5s，handles 169→244（退出前最后采样），内存 14.9 MiB，峰值 21.1 MiB，exit 0，log_errors 0） |
-| 8 小时 soak（`--duration 28800`） | **PASS**（2026-11-01 20:43 → 2026-11-02 04:43，报告 `build-rc/soak-8h.json`：28801.5s，handles 169→169，内存 15.0→13.8 MiB（peak 16.4），exit 0，crashed=false，timed_out=false，log_errors=0，stderr_errors=0；executable=`build-rc\clean-build\Release\watashi_ui.exe`） |
-| 干净 Win11 VM | **未验证**：当前没有可用 VM |
-| 普通（Medium）桌面手工安装（W4.1） | **待办**：自动化在 Low IL 宿主会 skip，必须人工验收 |
-| W3.3 托盘 `tray-exit` | **未验证**：已加入回调 trace、`NIF_SHOWTIP` 与左右键统一映射；需用户在 Medium 桌面按 `docs/ACCEPTANCE.md` T1/T2/T2b/T3 重测，不得由 agent 写 PASS |
-| 签名 | **unsigned**：仓库无证书；`sign.ps1` 只会在有证书时签名 |
+| CTest（当前 HEAD 9be995d） | **318/318 通过**（2 个 installer 在 Low IL 宿主 skip） |
+| 10 分钟 UI soak | **PASS**：`build-rc/soak-10m.json`，602.5 s，exit 0，log_errors 0 |
+| 8 小时 UI soak | **PASS**：`build-rc/soak-8h.json`，28801.5 s，exit 0，handles 169→169，内存 15.0→13.8 MiB（peak 16.4），log_errors 0 |
+| Medium 桌面安装/运行/卸载 | **PASS（用户 2026-11-11）** |
+| 干净 Win11 VM 安装/运行/卸载 | **PASS（用户 2026-11-11）**；VM 为 **BIOS + LabConfig 绕过 TPM/SecureBoot**，不是 UEFI 验收 |
+| 控制面 | **PASS**：`control_surface=window`，Pause/Hide/Exit，`exit_reason=control-exit` |
+| 托盘 | **不可用**（本机/VM 均无正常通知区）；best-effort，不是 release blocker |
+| 模型下载 | 未执行 `--fetch`；`--check` 未验 |
+| 签名 | **unsigned**；无证书 |
 
 > **skipped ≠ passed**：CTest 中 `installer_install` /
-> `installer_remove_user_data` 在 Low IL（`S-1-16-4096`）宿主会以 77 退出并被
-> 标记为 skipped；这只说明宿主不能写 HKCU，不是安装通过。
+> `installer_remove_user_data` 在 Low IL 宿主以 77 退出并显示 skipped；
+> 人工安装验收已由用户完成，但自动 skip 不写成 pass。
 
-### RC1 产物 / RC1 artefacts
+## 1. RC1 验收产物 / RC1 acceptance artefact
 
-- `dist/ProjectWatashi-1.0.0-rc1-win64.zip`（16,382,497 字节）。
-- `dist/SHA256SUMS.txt` 由 `tools/package_rc.ps1` 生成：UTF-8（无 BOM）、LF、
-  `<hash>  <filename>` 两空格；`sha256sum -c` 通过。ZIP 本身未被修改，
-  SHA-256 仍为
-  `a2ec862c4d4fd5fc59f4954b9ceb4d21ce7b701054be1f9ed4a57120b857f932`。
-- 解压审计（`build-rc/unzip-check`）：`install_manifest.json` 的 15 项 payload
-  全部存在；`.bin`/`.onnx`/`.pt`/`.pth`/`.safetensors` 为 **0**；没有 `models/`；
-  `.pdb` 为 **0**；ZIP 哈希与 `SHA256SUMS.txt` 一致。
-- ZIP 不进仓库（`dist/` 已在 `.gitignore`）。
+- `build-rc/stage-vcomp.zip`，16,943,345 字节
+- SHA-256：`c117554c7fe2ddc79c38b3789d63a32407f7abada423f790df33427935da8ee2`
+- 含 `vcomp140.dll`（CTranslate2/OpenMP 运行时；干净 VM 必需）
+- 旧 RC1 ZIP 已归档：`build-rc/archive/rc1/ProjectWatashi-1.0.0-rc1-win64.zip`
+  （SHA-256 `a2ec862c4d4fd5fc59f4954b9ceb4d21ce7b701054be1f9ed4a57120b857f932`）
+- **最终 `dist/ProjectWatashi-1.0.0-win64.zip` 尚未生成**，由 Stage D 负责。
 
-### clean-room 复验 / Clean-room rebuild (2026-11-01)
+## 2. clean-room / reproducibility
 
-- `git archive HEAD` → `build-rc/clean-src`，在 `build-rc/clean-build` 重新
-  configure/build；`ctest --parallel 4` → **313/313 通过**。
-- `cmake --install` 到 `build-rc/clean-stage` 与
-  `dist/ProjectWatashi-1.0.0-rc1-win64.zip` 逐文件对比：
-  - 文件列表 **26/26 一致**，无缺失/多余；
-  - **9 个文本文件**（`install.ps1`、`uninstall.ps1`、`install_manifest.json`、
-    两份 `LICENSE`、两份 `THIRD_PARTY_LICENSES.md`、`MODEL_LICENSES.md`、
-    `config/settings_ui.json`）字节不同：工作区检出为 CRLF，`git archive` 为 LF；
-    **归一化行尾后内容完全一致**；
-  - **4 个二进制**（`watashi_ui.exe`、`watashi_cli.exe`、`watashi_fetch.exe`、
-    `ctranslate2.dll`）尺寸相同但 SHA-256 不同（构建非确定性元数据；未嵌入源码
-    路径）。其余二进制（ORT/oneDNN/VC runtime）与 SBOM 等逐字节一致；
-  - **结论：文件集合与尺寸一致，但不是逐字节可重现**；本 RC **不得宣传为
-    reproducible build**，按任务要求如实记录，不写成“ZIP 完全一致”。
-- 权重扫描：`clean-stage` 与 ZIP 均为 **0**，无 `models/`、无 `.pdb`。
+- 旧 RC1 clean-room：`git archive` → `build-rc/clean-build`，313/313 通过；
+  日志已归档到 `build-rc/archive/rc1/clean-ctest.log`。
+- 当前 HEAD 已加入 control surface 和 vcomp，测试为 **318/318**；最终包必须
+  从 clean build 重新生成。
+- **不是逐字节可复现**：此前对比有 9 个文本文件 CRLF/LF 不同、4 个二进制
+  同尺寸不同哈希。最终发布不得宣传 reproducible build；如实记录。
+- 模型权重、`.pdb`、`models/` 均不得进入包。
 
-## 1. 安装 / Install
+## 3. 安装 / Install（已验）
 
-在干净 VM 上，用**普通用户**、不要“以管理员身份运行”：
+在干净 VM / Medium 桌面，普通用户、不要管理员：
 
-- [ ] 解压 `dist/ProjectWatashi-1.0.0-rc1-win64.zip`，确认里面**没有** `.bin` / `.onnx` /
-      `.pt`，没有 `models/` 目录；
-- [ ] 确认 `licenses/` 含 `LICENSE`、`THIRD_PARTY_LICENSES.md`、
-      `MODEL_LICENSES.md`、`sbom.spdx.json`；
-- [ ] 运行 `install.ps1`，检查：
-  - `%LOCALAPPDATA%\ProjectWatashi` 下有 exe、DLL、`config\`、`licenses\`；
-  - `user\` 已创建；
-  - `HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\ProjectWatashi`
-    写入 `DisplayName` / `DisplayVersion` / `InstallLocation` / `UninstallString`；
-  - 开始菜单出现 `Project Watashi` 快捷方式；
-- [ ] `watashi_ui.exe --version` 输出产品版本、git commit、build type；
-- [ ] `watashi_ui.exe --settings` 能打开设置页（字段来自
-      `config/settings_ui.json`）。
+- [x] 解压 `stage-vcomp.zip`，无权重、无 `models/`、无 `.pdb`；
+- [x] `install.ps1` 安装到 `%LOCALAPPDATA%\ProjectWatashi`，无 UAC；
+- [x] HKCU 卸载项 + 开始菜单快捷方式；
+- [x] `watashi_ui.exe --version` 输出 1.0.0-rc1 + commit + Release；
+- [x] `watashi_ui.exe --settings` 打开设置页；
+- [x] `vcomp140.dll` 随 payload 安装（干净 VM 必需）。
 
-## 2. 运行 / Run
+## 4. 运行 / Run（已验）
 
-- [ ] 用 synthetic/fake 跑一次短会话（不需要模型）：
-      `watashi_ui.exe --capture synthetic --ocr fake --duration 60`
-- [ ] 检查悬浮窗、点击穿透、`--report` 的 `product` / `exit_reason`；
-- [ ] `%LOCALAPPDATA%\ProjectWatashi\logs\watashi.log` 有 start/exit 行，
-      且**没有字幕原文**；
-- [ ] 通知区可用时确认 `tray: icon added`；`tray-exit` 需真实点击菜单，
-      未验证时如实记录。
+- [x] synthetic/fake 60 s 运行，悬浮窗/点击穿透正常；
+- [x] `--control auto` 在 tray 不可用时自动显示 `watashi control`；
+- [x] Pause/Resume、Hide/Show、Exit；
+- [x] Exit 后 report：`exit_code=0`、`exit_reason=control-exit`、`subtitles>0`；
+- [x] `stream.exit_code=-1` 是主动停止哨兵，不是失败；
+- [x] 日志有 start/exit，无字幕原文。
 
-## 3. 模型 / Models
+## 5. 卸载 / Uninstall（已验）
 
-- [ ] 先验证缺失模型的行为：`watashi_fetch.exe --check --dest <user>` → 退出码
-      **1**，不联网；
-- [ ] 只在明确需要时执行 `watashi_fetch.exe --fetch --dest <user>`（这是唯一
-      会联网的步骤，需另行确认网络与体积）；
-- [ ] 校验通过后模型落在 `user\models\...`，安装包内始终没有权重；
-- [ ] 阅读并确认许可：代码 **MIT**；NLLB-200-distilled-600M 为
-      **CC-BY-NC-4.0（非商业）**；Whisper small **MIT**；PP-OCRv4
-      **Apache-2.0**。见 `licenses/MODEL_LICENSES.md` 与
-      `THIRD_PARTY_LICENSES.md`。
+- [x] payload/快捷方式/HKCU 项移除；
+- [x] `user\` 默认保留（`Test-Path` = True）；
+- [ ] `-RemoveUserData` 单独复验（可选，未做）。
 
-## 4. 卸载 / Uninstall
+## 6. 模型 / Models（未验）
 
-- [ ] 先写入一点用户数据（如 `user\user.json`、语料）；
-- [ ] 运行 `uninstall.ps1`（开始菜单快捷方式或 HKCU 的 UninstallString 都可）；
-- [ ] 检查：payload、`licenses\`、快捷方式、HKCU 卸载项全部移除；
-- [ ] `user\` **默认保留**；只有 `-RemoveUserData` 才删除；
-- [ ] 前缀中只剩 `user\` 时，前缀目录保留（这是预期行为）。
+- [ ] `watashi_fetch.exe --check` 缺模型返回 1；
+- [ ] `--offline` 拒绝 http；
+- [ ] 实际 `--fetch` 下载 + 哈希/原子改名；
+- [x] 安装包内无权重；
+- [x] 许可文档存在（MIT / CC-BY-NC-4.0 / Apache-2.0）。
 
-## 5. Soak / Long-run
+## 7. Soak / 长稳（已验）
 
-短测由 CTest 覆盖（`soak_bad_args`、`soak_short_ui`、`soak_short_cli`、
-`soak_missing_exe`），10 分钟与 8 小时是**手工**运行：
+- [x] 10 分钟：`build-rc/soak-10m.json`，pass=true；
+- [x] 8 小时：`build-rc/soak-8h.json`，pass=true，28801.5 s，exit 0。
 
-```powershell
-# 10 分钟 smoke（已完成：build-rc/soak-10m.json）
-powershell -NoProfile -ExecutionPolicy Bypass -File tools\soak.ps1 `
-  --duration 600 --mode ui --report build-rc\soak-10m.json
+## 8. 签名 / Signing
 
-# 8 小时（已完成：build-rc/soak-8h.json）
-powershell -NoProfile -ExecutionPolicy Bypass -File tools\soak.ps1 `
-  --duration 28800 --mode ui --report build-rc\soak-8h.json
-```
+- [x] 当前发布为 **unsigned**（无证书）；
+- [ ] 有证书时 `sign.ps1` + signtool verify（未验）。
 
-报告 JSON 至少包含：`requested_duration_seconds`、`elapsed_seconds`、
-`handles_start` / `handles_end`、`memory_mib_start/end/peak`、`exit_code`、
-`crashed`、`timed_out`、`log_errors`、`pass`、`failure_reason`。harness 不联网、
-不加载模型。
+## 9. 已知限制 / Known limitations
 
-- [x] 10 分钟 smoke：`pass=true`（`build-rc/soak-10m.json`，602.5 s）
-- [x] 8 小时：`pass=true`（`build-rc/soak-8h.json`，28801.5 s，exit 0，
-      handles 169→169，log_errors 0）
-- [ ] Medium 桌面手工安装、干净 VM、托盘 `tray-exit`、签名：仍是**未验证/待办**，
-      **不因 8h soak PASS 而转为通过**。
+1. 本机/VM 无可用通知区，tray 为 best-effort；控制窗/热键是发布必需项。
+2. VM 为 BIOS + TPM/SecureBoot 绕过安装；UEFI/安全启动未验收。
+3. 未做实际模型下载；`--check`/离线拒绝仍未验。
+4. 构建不可逐字节复现；不得宣传 reproducible build。
+5. 发布 unsigned；无证书。
 
-## 6. 签名 / Signing
+## 10. 下一步 / Next
 
-- [ ] 无证书时明确标记 **unsigned**（当前发布就是 unsigned）；
-- [ ] 有证书时设置 `WATASHI_SIGN_CERT`（密码可选 `WATASHI_SIGN_PASSWORD`），
-      运行 `installer\sign.ps1`，确认 `SIGNED` 与 signtool 校验通过；
-      仓库内不得出现证书/密码。
-
+Stage D：升 1.0.0，clean build，生成
+`dist/ProjectWatashi-1.0.0-win64.zip` + LF checksums，更新本文件与
+`docs/ACCEPTANCE.md`，本地打 `v1.0.0` tag；不 push。

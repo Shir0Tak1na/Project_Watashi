@@ -1,148 +1,134 @@
 # v1.0.0-rc1 人工验收 / Manual acceptance
 
-状态：**未验收（pending）**。本文件是给人工执行的清单，不是通过证明。
-自动测试结果见 [docs/RELEASE.md](RELEASE.md)；安装说明见 [docs/INSTALL.md](INSTALL.md)。
+状态日期：**2026-11-11**。
+结论：**RC1 的 B 验收已完成**（Medium 桌面、干净 Win11 VM、控制面、安装/卸载）。
+最终 **v1.0.0** 尚未打 tag；最终包和版本升级见 Stage D。
 
-> 规则：只有实际执行并留下证据的条目才勾选。没有执行或无法执行的条目写
-> **未验**，不得写成“通过”。`skipped` 不等于 `passed`。
+> 规则：只有实际执行并留下证据的条目才写 PASS。没有执行或无法执行的条目写
+> **未验**，不得写成“通过”。skipped 不等于 passed。
 >
-> 状态用三种：
-> **已验证（自动，有报告/日志）**、**用户手工（待办）**、**未验证（环境不可用）**。
-> 8h soak 的 PASS 只覆盖 soak 本身，**不会**把 Medium 桌面、干净 VM、托盘或签名
-> 一并转成通过。
+> 本次验收对象是 `build-rc/stage-vcomp.zip`（含 vcomp140.dll），不是旧 RC1 ZIP。
+> 旧 RC1 ZIP 已归档到 `build-rc/archive/rc1/`。
 
-## 0. 产物与前置 / Artefacts
+## 0. 产物 / Artefacts
 
-- ZIP：`dist/ProjectWatashi-1.0.0-rc1-win64.zip`
-- 校验：`dist/SHA256SUMS.txt`
-- 安装方式：解压后运行 `install.ps1`；**per-user**，不需要管理员，不触发 UAC。
-- 所有证据（截图、日志、报告）放到 `build-rc/acceptance/<日期>/` 或本文件
-  表格的“证据”栏中；不要提交用户数据或证书。
+| 项 | 值 |
+| --- | --- |
+| 验收包 | `build-rc/stage-vcomp.zip` |
+| 字节数 | 16,943,345 |
+| SHA-256 | `c117554c7fe2ddc79c38b3789d63a32407f7abada423f790df33427935da8ee2` |
+| 版本输出 | `Project Watashi 1.0.0-rc1`，commit `b524ce0c3c18`，build Release |
+| 旧 RC1 包 | `build-rc/archive/rc1/ProjectWatashi-1.0.0-rc1-win64.zip`，SHA-256 `a2ec862c...` |
+| 最终 v1.0.0 | **未生成**（Stage D 负责） |
 
-### 0.1 环境记录
+安装方式：解压后运行 `install.ps1`；per-user，不需要管理员，不触发 UAC。
+证据目录：`build-rc/acceptance/2026-11-11/`（本机可审计的控制面报告）；
+VM 内的证据由用户确认，截图未入库。
+
+## 0.1 环境记录 / Environment
 
 | 项 | 记录 |
 | --- | --- |
-| 验收人 / 日期 | |
-| 机器 / Windows 版本 | |
-| 用户类型（普通 / 管理员） | |
-| 完整性级别（`whoami /groups`） | |
-| 是否有通知区 | |
+| 日期 | 2026-11-11 |
+| 主机 | Windows 10 Home China（build 26300），Medium 完整性，无可用通知区 |
+| 主机通知区 | `Shell_TrayWnd`/`TrayNotifyWnd` 存在，`ToolbarWindow32=0`；`Shell_NotifyIcon(NIM_ADD)` 返回 error 5；最小 NotifyIcon 探针同样失败 |
+| VM | VirtualBox 7.2.22；Windows 11 Enterprise Evaluation build 26100 |
+| VM 安装方式 | **BIOS + LabConfig 绕过 TPM/SecureBoot**；VirtualBox 7.2 EFI 在 DXE_AP 阶段黑屏，未完成 UEFI/TPM 安装验收 |
+| VM 用户 | 标准用户 `watashi-test`（管理员 `tester` 仅用于建账户） |
+| VM 安装包 | `stage-vcomp.zip`，含 `vcomp140.dll` |
 
-## 1. Medium 桌面（当前开发机） / Medium-integrity desktop
+## 1. Medium 桌面 / Medium desktop
 
-前置：普通用户 PowerShell，**不要**“以管理员身份运行”。
-
-| # | 步骤 | 期望 | 证据 | 状态 |
-| --- | --- | --- | --- | --- |
-| M1 | 解压 ZIP 到临时目录，检查无 `.bin/.onnx/.pt`、无 `models/`、无 `.pdb` | 全部为空 | ZIP 列表截图 / `unzip-check` 路径 | ☐ 未验 |
-| M2 | `install.ps1 -Prefix <tmp>\app -UninstallKey HKCU:\Software\ProjectWatashi\AcceptTest -ShortcutDir <tmp>\menu` | 退出码 0；输出 installed + user 路径 | 终端日志 | ☐ 未验 |
-| M3 | 检查 HKCU 卸载项：`Get-ItemProperty HKCU:\Software\ProjectWatashi\AcceptTest` | `DisplayName=Project Watashi`、`InstallLocation` 指向前缀 | 截图/注册表导出 | ☐ 未验 |
-| M4 | 检查开始菜单快捷方式 `<tmp>\menu\Project Watashi.lnk` | 存在，目标为 `watashi_ui.exe` | 截图 | ☐ 未验 |
-| M5 | `watashi_ui.exe --settings --capture synthetic --ocr fake --duration 60` | 设置页打开；悬浮窗出现；60 s 后自行退出 0 | `--report` JSON + 截图 | ☐ 未验 |
-| M6 | `watashi_ui.exe --version` | `Project Watashi 1.0.0-rc1` + commit + `build Release` | 终端输出 | ☐ 未验 |
-| M7 | 检查 `%LOCALAPPDATA%\ProjectWatashi\logs\watashi.log` | 有 start/exit 行；无字幕原文；无 `[error]` | 日志文件 | ☐ 未验 |
-| M8 | 写入 `user\user.json` 后运行 `uninstall.ps1` | payload/快捷方式/HKCU 项移除；`user\user.json` 保留 | 终端日志 + `Test-Path` | ☐ 未验 |
-| M9 | 卸载后 `-RemoveUserData` 单独复验（可选） | `user\` 删除，前缀在无残留时删除 | 终端日志 | ☐ 未验 |
+| # | 步骤 | 结果 | 证据 |
+| --- | --- | --- | --- |
+| M1 | 解压验收包，检查无权重/无 `models/`/无 `.pdb` | ✅ PASS（用户确认） | 用户截图；ZIP 审计 |
+| M2 | `install.ps1` per-user 安装，无管理员/UAC | ✅ PASS（用户确认） | 用户终端输出 |
+| M3 | HKCU 卸载项 | ✅ PASS（用户确认） | 用户截图 |
+| M4 | 开始菜单快捷方式 | ✅ PASS（用户确认） | 用户截图 |
+| M5 | 设置页 / synthetic 运行 | ✅ PASS（用户确认） | 用户确认 |
+| M6 | `--version` = 1.0.0-rc1 + commit + Release | ✅ PASS | 终端输出 |
+| M7 | 日志无字幕原文、无 error | ✅ PASS（用户确认） | 日志 |
+| M8 | `uninstall.ps1` 保留 `user\` | ✅ PASS（用户确认） | `Test-Path` |
+| M9 | `-RemoveUserData` 单独复验 | 未验（可选） | — |
 
 ## 2. 干净 Win11 VM / Clean VM
 
-前置：全新 Win11 VM，**普通用户**，不安装管理员工具；记录是否出现 UAC 提示。
+| # | 步骤 | 结果 | 证据 |
+| --- | --- | --- | --- |
+| V1 | 标准用户安装，无管理员/UAC | ✅ PASS（用户确认） | VM 终端输出 |
+| V2 | 控制窗 / synthetic 运行 | ✅ PASS（用户确认） | VM 内 `control-report.json` |
+| V3 | `--version` = 1.0.0-rc1 + commit + Release | ✅ PASS | VM 终端输出 |
+| V4 | 日志 / `user\` / 卸载项 / 快捷方式 | ✅ PASS（用户确认） | VM 截图 |
+| V5 | `uninstall.ps1`，保留 `user\` | ✅ PASS（用户确认） | 用户 `Test-Path` 输出 |
 
-| # | 步骤 | 期望 | 证据 | 状态 |
-| --- | --- | --- | --- | --- |
-| V1 | 解压 ZIP，运行 `install.ps1` | 无 UAC、无管理员；安装到 `%LOCALAPPDATA%\ProjectWatashi` | 录屏/截图 | ☐ 未验 |
-| V2 | `watashi_ui.exe --settings` + synthetic 60 s | 同上，窗口正常、DPI 正确 | 报告 JSON | ☐ 未验 |
-| V3 | `watashi_ui.exe --version` | 1.0.0-rc1 + commit + Release | 终端输出 | ☐ 未验 |
-| V4 | 检查日志/`user\`/卸载项/快捷方式 | 同 M3/M4/M7 | 文件清单 | ☐ 未验 |
-| V5 | 运行 `uninstall.ps1` | 清理 payload/快捷方式/HKCU；保留 `user\` | 终端日志 | ☐ 未验 |
+**VM 诚实记录**：此 VM 是 **BIOS + TPM/SecureBoot 绕过**安装的，不是 UEFI/安全启动
+验收；应用功能验收有效，但“UEFI/TPM 干净安装”仍是未验证项。
 
-> 该项在仓库当前状态下是 **未验证**：没有可用的干净 VM。见 RELEASE.md。
+## 3. 控制面 / Control surface
 
-## 3. 模型 / Models
+| # | 步骤 | 结果 | 证据 |
+| --- | --- | --- | --- |
+| T1 | `--control auto/window` 在 tray 不可用时显示 `watashi control` | ✅ PASS | `build-rc/acceptance/2026-11-11/control-report.json`；`control_surface=window`、`tray.added=false` |
+| T2 | Pause/Resume 按钮 | ✅ PASS（用户确认） | report `commands.last_cmd`/`results` |
+| T2b | Hide/Show 按钮 | ✅ PASS（用户确认） | 用户截图/确认 |
+| T3 | Exit 按钮 | ✅ PASS | report `exit_reason=control-exit`、`exit_code=0`、`subtitles=131` |
+| T4 | Ctrl+Alt+Q | 未验（VM 中 2 个热键注册失败，未单独确认） | — |
+| T5 | report 字段与实际一致 | ✅ PASS | `control_surface=window`、`tray.added=false`、`exit_reason=control-exit` |
 
-不需要模型即可完成安装与 UI 验收；以下条目需要网络时才执行 `--fetch`。
-
-| # | 步骤 | 期望 | 证据 | 状态 |
-| --- | --- | --- | --- | --- |
-| C1 | `watashi_fetch.exe --check --dest <user>`（未下载模型） | 退出码 **1**；打印缺失清单；不联网 | 终端输出 | ☐ 未验 |
-| C2 | `watashi_fetch.exe --fetch --offline --dest <user>` | 拒绝全部 http；退出码 1；不发起网络请求 | 终端输出 | ☐ 未验 |
-| C3 | （另行确认网络与体积后）`watashi_fetch.exe --fetch --dest <user>` | 下载后 SHA-256/字节数校验通过，原子改名 | 报告/文件哈希 | ☐ 未验 |
-| C4 | 检查安装包内仍无权重 | 无 `.bin/.onnx/.pt/.pth/.safetensors`，无 `models/` | ZIP 列表 | ☐ 未验 |
-| C5 | 阅读许可 | 代码 MIT；NLLB CC-BY-NC-4.0（非商业）；Whisper MIT；PP-OCRv4 Apache-2.0 | `licenses/MODEL_LICENSES.md` | ☐ 未验 |
-
-## 4. 控制面 / Control surface（托盘 best-effort）
-
-仅在有正常通知区的桌面执行托盘部分；**控制面（ControlWindow / 热键）才是
-发布必需项**。托盘是 best-effort：可用则走 tray，不可用则自动回退窗口。
-
-| # | 步骤 | 期望 | 证据 | 状态 |
-| --- | --- | --- | --- | --- |
-| T1 | `watashi_ui.exe --capture synthetic --ocr fake --duration 600 --control auto` | tray 可用 → 图标 + tooltip `watashi overlay`；tray 不可用 → 出现标题 **`watashi control`** 的窗口，日志 `tray: unavailable; control=window (Shell_NotifyIcon error N)` | 截图 + stderr | ☐ 用户手工 |
-| T2 | 点控制窗/托盘菜单的 Pause/Resume | 引擎收到 pause/resume；按钮文字切换；悬浮窗状态更新 | 截图 + report `commands` | ☐ 用户手工 |
-| T2b | 点 Hide/Show | 悬浮窗隐藏/恢复；控制窗保持可见；关闭控制窗只隐藏窗口，不退出进程 | 截图 | ☐ 用户手工 |
-| T3 | 点 Exit | 进程退出；report `exit_reason=control-exit`（控制窗回退）或 `tray-exit`（托盘可用） | report JSON | ☐ 用户手工 |
-| T4 | Ctrl+Alt+Q | 进程退出；report `exit_reason=hotkey-exit` | report JSON | ☐ 用户手工 |
-| T5 | 检查 report | `control_surface=tray|window|hotkeys`，`tray.added=true/false`，与实际界面一致 | report JSON | ☐ 用户手工（`none`/`window` 已由 CTest 自动验证字段） |
-
-**回调诊断**（W3.3 修复时加入）：若走托盘，每次回调都会在 stderr 打印
-`tray: callback hwnd=0x... message=0x... wparam=... lparam=0x... loword=0x... hiword=0x...`；
-菜单路径同时打印 `tray: menu owner=... foreground=... chosen=... error=...`。
-
-> 已知问题：部分会话/宿主上 `Shell_NotifyIcon(NIM_ADD)` 返回 error 5，托盘不可用；
-> 这时 **不要求 tray PASS**，但要求控制窗/热键控制面 PASS。agent 不代替用户写 PASS。
+> `stream.exit_code=-1` 是 `ChildStream.stop()` 主动停止的哨兵值，不是失败；
+> 以 UI 的 `exit_code=0` 和 `exit_reason` 为准。
 >
-> 本机实测：`tray: NIM_ADD failed ... error=5`；最小 NotifyIcon 探针同样失败
-> （见 `docs/adr/0010-control-surface-fallback.md`）。
+> 托盘：本机/VM 均未取得可用 tray；**不要求 tray PASS**。控制面（ControlWindow）
+> 已 PASS。tray 实点仍是未验证项。
 
-## 5. 长稳 / Soak
+## 4. 安装 / 卸载
 
-短测由 CTest 覆盖；10 分钟与 8 小时由 harness 运行并保存报告。
-证据路径：`build-rc/soak-10m.json`、`build-rc/soak-8h.json`。
+| 项 | 结果 |
+| --- | --- |
+| 标准用户 install，无 UAC | ✅ PASS（VM + Medium） |
+| HKCU 卸载项 / 开始菜单 | ✅ PASS |
+| payload + licenses + config + vcomp | ✅ PASS |
+| uninstall 移除 payload / 快捷方式 / HKCU | ✅ PASS |
+| 默认保留 `user\` | ✅ PASS（`Test-Path ...\user` = True） |
 
-```powershell
-# 10 分钟 smoke（已完成）
-powershell -NoProfile -ExecutionPolicy Bypass -File tools\soak.ps1 `
-  --duration 600 --mode ui --report build-rc\soak-10m.json
+## 5. 模型 / Models
 
-# 8 小时（已完成，2026-11-01 20:43 → 2026-11-02 04:43）
-powershell -NoProfile -ExecutionPolicy Bypass -File tools\soak.ps1 `
-  --duration 28800 --mode ui --report build-rc\soak-8h.json
-```
+未执行 `--fetch`（需要网络/体积确认）；以下为未验，不是失败：
 
-报告字段：`mode`、`requested_duration_seconds`、`elapsed_seconds`、
-`handles_start` / `handles_end`、`memory_mib_start/end/peak`、`exit_code`、
-`crashed`、`timed_out`、`log_errors`、`pass`、`failure_reason`、`started_at`、
-`finished_at`。
+| # | 步骤 | 状态 |
+| --- | --- | --- |
+| C1 | `watashi_fetch --check` 缺模型返回 1 | 未验 |
+| C2 | `--offline` 拒绝网络 | 未验 |
+| C3 | 实际下载与哈希/原子改名 | 未验 |
+| C4 | 包内无权重 | ✅ PASS（ZIP 审计） |
+| C5 | 许可阅读 | ✅ PASS（`licenses/MODEL_LICENSES.md`） |
 
-通过标准（建议）：
+## 6. 长稳 / Soak
 
-- `pass=true`；
-- `exit_code=0`，`crashed=false`，`timed_out=false`；
-- `elapsed_seconds >= requested_duration_seconds - 容差`；
-- `log_errors=0`；
-- handles 不应持续单调增长（记录数值，不做硬性门槛）；
-- 工作集峰值记录在案，用于对比。
+| # | 项目 | 结果 |
+| --- | --- | --- |
+| S1 | 10 分钟 UI smoke | ✅ PASS：602.5 s，exit 0，log_errors 0 |
+| S2 | 8 小时 UI soak | ✅ PASS：28801.5 s，exit 0，crashed=false，timed_out=false，handles 169→169，内存 15.0→13.8 MiB（peak 16.4），log_errors 0，stderr_errors 0 |
 
-| # | 步骤 | 期望 | 证据 | 状态 |
-| --- | --- | --- | --- | --- |
-| S1 | 10 分钟 UI smoke | `pass=true` | `build-rc/soak-10m.json` | ☑ PASS（自动 2026-11-01：602.5s，exit 0，log_errors 0） |
-| S2 | 8 小时 UI soak | 完成且 `pass=true` | `build-rc/soak-8h.json`：28801.5 s，exit 0，crashed=false，timed_out=false，handles 169→169，内存 15.0→13.8 MiB（peak 16.4），log_errors 0，stderr_errors 0 | ✅ 已验证（自动 2026-11-01 20:43 → 2026-11-02 04:43） |
+报告：`build-rc/soak-10m.json`、`build-rc/soak-8h.json`。
 
-## 6. 签名 / Signing
+## 7. 签名 / Signing
 
-| # | 步骤 | 期望 | 证据 | 状态 |
-| --- | --- | --- | --- | --- |
-| G1 | 无证书运行 `sign.ps1` | 打印 `UNSIGNED`，不冒充已签名 | 终端输出 | ☐ 未验 |
-| G2 | 有证书时 `WATASHI_SIGN_CERT=...` 运行 | `SIGNED` 且 signtool verify 通过；证书不入库 | 终端输出 | ☐ 未验 |
+- 当前发布：**unsigned**。
+- 证书签名未验证；`sign.ps1` 只在有证书时签名。
 
-## 7. 汇总 / Summary
+## 8. 汇总 / Summary
 
 | 组 | 结论 | 备注 |
 | --- | --- | --- |
-| Medium 桌面（M） | 用户手工（待办） | 本机 Medium 可执行，需人工留证据 |
-| 干净 VM（V） | 未验证（环境不可用） | 无可用 VM |
-| 模型（C） | 用户手工（待办） | 需网络时才执行 `--fetch` |
-| 控制面（T） | 用户手工（待办） | ControlWindow/热键必须 PASS；tray 是 best-effort，不要求 tray PASS |
-| Soak（S） | **已验证（自动）**：10m PASS、8h PASS | 报告路径见上 |
-| 签名（G） | 未验证：当前 unsigned | 有证书才可验签名 |
+| Medium 桌面（M） | ✅ PASS（用户确认） | 无可用 tray |
+| 干净 VM（V） | ✅ PASS（用户确认） | BIOS + TPM/SecureBoot 绕过；UEFI 未验 |
+| 控制面（T） | ✅ PASS | T1/T2/T2b/T3/T5；T4 未验 |
+| 安装/卸载 | ✅ PASS | `user\` 保留 |
+| 模型（C） | 未验 | 未执行网络下载 |
+| Soak（S） | ✅ PASS | 10m + 8h |
+| 签名（G） | unsigned | 未验 |
+
+**B 结论：通过。**
+
+**最终 v1.0.0：待 Stage D。**
