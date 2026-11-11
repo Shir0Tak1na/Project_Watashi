@@ -12,7 +12,7 @@
 
     Future releases:
       powershell -ExecutionPolicy Bypass -File tools\package_rc.ps1 `
-        -Zip build-rc\package\ProjectWatashi-1.0.0-rc1-win64.zip -OutputDirectory dist
+        -Zip build-final\package\ProjectWatashi-1.0.0-win64.zip -OutputDirectory dist
 
     Exit codes: 0 checksum written and verified (when sha256sum is available),
     1 missing ZIP / write failure.
