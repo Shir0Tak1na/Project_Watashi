@@ -2,13 +2,19 @@
 
 状态日期：**2026-11-11**。
 结论：**RC1 的 B 验收已完成**（Medium 桌面、干净 Win11 VM、控制面、安装/卸载）。
-最终 **v1.0.0** 尚未打 tag；最终包和版本升级见 Stage D。
+**最终 v1.0.0 已发布（2026-11-11，本地 tag，未 push）**：本文档的 RC1 验收
+结果作为最终 1.0.0 的**验收输入**沿用；历史结果不改写。最终包、clean build
+与发布记录见 [docs/RELEASE.md](RELEASE.md)。
 
 > 规则：只有实际执行并留下证据的条目才写 PASS。没有执行或无法执行的条目写
 > **未验**，不得写成“通过”。skipped 不等于 passed。
 >
 > 本次验收对象是 `build-rc/stage-vcomp.zip`（含 vcomp140.dll），不是旧 RC1 ZIP。
 > 旧 RC1 ZIP 已归档到 `build-rc/archive/rc1/`。
+>
+> 最终 1.0.0 包（`dist/ProjectWatashi-1.0.0-win64.zip`）与验收包的 payload
+> 文件列表一致（自动 ZIP 审计核对），差异仅为版本字符串（1.0.0-rc1 → 1.0.0）
+> 与 SBOM 日期；因此本文档的人工结果对最终包有效。
 
 ## 0. 产物 / Artefacts
 
@@ -19,7 +25,7 @@
 | SHA-256 | `c117554c7fe2ddc79c38b3789d63a32407f7abada423f790df33427935da8ee2` |
 | 版本输出 | `Project Watashi 1.0.0-rc1`，commit `b524ce0c3c18`，build Release |
 | 旧 RC1 包 | `build-rc/archive/rc1/ProjectWatashi-1.0.0-rc1-win64.zip`，SHA-256 `a2ec862c...` |
-| 最终 v1.0.0 | **未生成**（Stage D 负责） |
+| 最终 v1.0.0 | ✅ 已生成：`dist/ProjectWatashi-1.0.0-win64.zip`，16,483,547 字节，SHA-256 `da6f0c99...`（完整值见 RELEASE §1）；payload 列表与验收包一致，版本输出 `Project Watashi 1.0.0 / commit 7a2c1a0f2eb4 / Release` |
 
 安装方式：解压后运行 `install.ps1`；per-user，不需要管理员，不触发 UAC。
 证据目录：`build-rc/acceptance/2026-11-11/`（本机可审计的控制面报告）；
@@ -131,4 +137,6 @@ VM 内的证据由用户确认，截图未入库。
 
 **B 结论：通过。**
 
-**最终 v1.0.0：待 Stage D。**
+**最终 v1.0.0：已发布（2026-11-11，本地 tag）。** 本文 RC1 验收即其验收输入；
+未验项（T4 热键实按、UEFI/TPM、tray 实点、模型下载、签名）继续列为未验，
+见 [docs/RELEASE.md](RELEASE.md) §9。

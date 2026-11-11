@@ -4,9 +4,19 @@ All notable changes to this project are recorded here.
 
 Earlier prototype phases used `0.0.x` on purpose: they were the Python validation
 prototype, not the C++ product described in `Project Watashi.md`. The C++ product
-now ships as **1.0.0-rc1** (below). Older entries stay as written and describe what
+now ships as **1.0.0** (below). Older entries stay as written and describe what
 they did or did not do at the time; "Known limitations" is part of the release
 rather than a footnote.
+
+## [1.0.0] -- 2026-11-11 -- final release
+
+发布内容与 1.0.0-rc1 相同的产品行为；差异仅为版本统一（CMake/manifest/SBOM/
+`--version` 均为 1.0.0）与文档收口。验证：clean build（`git archive` 版本
+commit）318/318 CTest；最终包 `dist/ProjectWatashi-1.0.0-win64.zip` +
+`SHA256SUMS.txt`（`sha256sum -c` OK）；包内含 `vcomp140.dll`，无权重、无
+`.pdb`。RC1 的人工验收（Medium 桌面、干净 Win11 VM、控制面、安装/卸载）作为
+本次发布的验收输入；tray 在验收环境不可用，为 best-effort，不声称 tray PASS。
+本地 tag `v1.0.0`，未 push。详见 `docs/RELEASE.md` 与 `docs/ACCEPTANCE.md`。
 
 ## [1.0.0-rc1] -- 2026-11-01 -- release candidate
 

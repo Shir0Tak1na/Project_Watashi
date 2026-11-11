@@ -1,13 +1,15 @@
 # 交接说明 / Handover
 
 > 给接手的人或编码代理：**先读这一页，再读别的。**
-> 最后更新：**2026-11-11（v1.0.0-rc1，B 验收完成；最终 1.0.0 待发布）**
+> 最后更新：**2026-11-11（v1.0.0 已发布：本地 tag `v1.0.0`，未 push）**
 
 ## 一句话状态
 
-C++ 主干已到 `v1.0.0-rc1`，**B 验收完成**：Medium 桌面、干净 Win11 VM、
-控制面、安装/卸载、10 分钟与 8 小时 soak 均 PASS。当前 HEAD `9be995d`。
-**最终 v1.0.0 尚未打 tag**；下一步 Stage D：升版本、clean build、最终包、本地 tag。
+C++ 主线 **v1.0.0 已发布**：B 验收完成（Medium 桌面、干净 Win11 VM、控制面、
+安装/卸载、10 分钟与 8 小时 soak），clean build 318/318，最终包
+`dist/ProjectWatashi-1.0.0-win64.zip`（SHA-256 与审计见 docs/RELEASE.md），
+本地 annotated tag `v1.0.0`（**未 push**）。托盘在本机不可用，为 best-effort，
+控制窗/热键是已验收的发布入口。
 
 ## 必读顺序（约 30 分钟）
 
@@ -21,7 +23,7 @@ C++ 主干已到 `v1.0.0-rc1`，**B 验收完成**：Medium 桌面、干净 Win1
 
 ## 什么是真的（可复现）
 
-- **C++ 测试**：当前 HEAD `9be995d` 通过 **318/318 CTest**；低完整性宿主上 installer 两例以 77 skip。
+- **C++ 测试**：clean build（git archive 版本 commit `7a2c1a0`）通过 **318/318 CTest**；低完整性宿主上 installer 两例会以 77 skip（本机实际执行通过）。
 - **控制面**：`--control auto` 在 tray 不可用时自动显示 `watashi control`；Pause/Hide/Exit 已验。
 - **安装/卸载**：标准用户、无管理员；HKCU + 开始菜单；卸载默认保留 `user\`。
 - **8h soak**：28801.5 s，exit 0，handles 169→169，内存 15.0→13.8 MiB（peak 16.4），log_errors 0。
@@ -34,8 +36,8 @@ C++ 主干已到 `v1.0.0-rc1`，**B 验收完成**：Medium 桌面、干净 Win1
 
 | 位置 | 写着 | 实情 |
 | --- | --- | --- |
-| 旧 README 状态/W3.3 | W3.4/W4 未开始 | 已到 W4.4 / RC1；以本页和 ACCEPTANCE 为准 |
-| docs/RELEASE 旧段 | RC1 未验收/无 VM | 已于 2026-11-11 完成 B 验收；最终 1.0.0 待发布 |
+| 旧 README 状态/W3.3 | W3.4/W4 未开始 | 已发布 v1.0.0；以本页和 ACCEPTANCE 为准 |
+| docs/RELEASE 旧段 | RC1 未验收/无 VM | 已于 2026-11-11 完成 B 验收并发布 v1.0.0 |
 | config/app.yaml | C++ 主配置 | C++ 不读它；设置页从 config/settings_ui.json 读取 |
 | docs/architecture.md | UI 不链接 engine | 当前 CMake 仍为取事件解码/DPI 链接 `watashi_core`；这是待偿还的架构债，不要当成已实现边界 |
 
@@ -52,17 +54,18 @@ C++ 主干已到 `v1.0.0-rc1`，**B 验收完成**：Medium 桌面、干净 Win1
 
 | 项 | 状态 |
 | --- | --- |
-| HEAD | `9be995d`（vcomp 打包修复） |
+| 版本 | **v1.0.0**（本地 annotated tag，未 push；tag 前最后版本 commit `7a2c1a0`） |
 | 远端 | 未 push；不创建远端 tag |
 | 工作区 | clean；build-*/dist/ 已 gitignore |
-| 测试 | **318/318 CTest**；license/SBOM/soak 检查 |
+| 测试 | clean build（git archive 7a2c1a0）**318/318 CTest**（installer 两例本机实际执行）；license/SBOM/soak 检查 |
 | 验收 | Medium PASS；VM PASS（BIOS/TPM 绕过）；控制面 PASS；安装/卸载 PASS |
 | 长稳 | 10m PASS；8h PASS（`build-rc/soak-8h.json`） |
-| 验收包 | `build-rc/stage-vcomp.zip`（含 vcomp，16,943,345 bytes） |
+| **最终包** | **`dist/ProjectWatashi-1.0.0-win64.zip`**，16,483,547 字节，SHA-256 `da6f0c99...`（完整值/审计见 docs/RELEASE.md §1；`dist/SHA256SUMS.txt` `sha256sum -c` OK） |
+| 验收包 | `build-rc/stage-vcomp.zip`（RC1 B 验收对象，16,943,345 bytes） |
 | 旧包 | `build-rc/archive/rc1/ProjectWatashi-1.0.0-rc1-win64.zip`（归档） |
 | 托盘 | 本机/VM 通知区不可用；best-effort，不阻塞发布 |
 | 签名 | unsigned |
-| 下一步 | **Stage D**：升 1.0.0、clean build、最终包、本地 tag；不 push |
+| 下一步 | v1.0.0 已发布；后续工作（模型下载验收、签名、UEFI/TPM、tray 实点）见 docs/RELEASE.md §9 |
 
 ## W0 交付记录（2026-10-28）
 
@@ -122,7 +125,7 @@ exit_reason、tray.added、hotkeys 实测值。当前会话 raw `Shell_NotifyIco
 
 ## 交接检查单
 
-- [x] 工作区代码已提交；文档已更新到 2026-11-11 B 验收状态
+- [x] 工作区代码已提交；文档已更新到 2026-11-11 v1.0.0 发布状态
 - [x] CI 能编译 C++（schema/stream 双校验）
 - [x] 契约 schema 已导出
 - [x] 黄金样本 ≥200；NMT 120 条

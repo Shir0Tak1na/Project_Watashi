@@ -78,13 +78,16 @@ system audio / microphone / WAV file
 The Python prototype in `prototype/` remains the behavioural reference and a
 complete runnable implementation.
 
-The C++ mainline is at **v1.0.0-rc1**: local capture, PP-OCRv4, layered
-corpora/rules, CTranslate2 NLLB, a native Win32 overlay, declarative presentation,
-a stdin command channel, global hotkeys, a settings page, a per-user installer,
-a model fetcher, SBOM/soak tooling and an optional control surface (tray when the
-host has a working notification area, otherwise a control window/hotkeys).
-**RC1 B acceptance passed on a Medium desktop and a clean Win11 VM on 2026-11-11.**
-Final v1.0.0 packaging/tag is the remaining step.
+The C++ mainline is released as **v1.0.0** (local tag, not pushed): local capture,
+PP-OCRv4, layered corpora/rules, CTranslate2 NLLB, a native Win32 overlay,
+declarative presentation, a stdin command channel, global hotkeys, a settings
+page, a per-user installer, a model fetcher, SBOM/soak tooling and an optional
+control surface (tray when the host has a working notification area, otherwise a
+control window/hotkeys). The tray is best-effort: it never passed on the
+acceptance hosts and is not a release blocker.
+**RC1 B acceptance passed on a Medium desktop and a clean Win11 VM on
+2026-11-11; the final package is `dist/ProjectWatashi-1.0.0-win64.zip`**
+(see `docs/RELEASE.md`).
 
 | Area | C++ tree (src/) | Python prototype (prototype/) |
 | --- | --- | --- |
@@ -550,7 +553,7 @@ They are safe to ignore.
 | M2 | Corpus and rule engine with hot reload — **done in C++ W1.2, 120/120 differential** |
 | M3 | Local NMT fallback, term protection, batching — **done in C++ W2, 120/120, 100% term protection** |
 | M4 | Latency budget and UI: overlay/hotkeys/settings/control surface — **W3.0-W3.4 landed; tray best-effort** |
-| M5 | Release hardening: installer, models, SBOM, soak, control surface — **W4.4 landed; final v1.0.0 package/tag pending** |
+| M5 | Release hardening: installer, models, SBOM, soak, control surface — **v1.0.0 released (local tag); see docs/RELEASE.md** |
 | M6 | Cross-platform and plugin sandbox — **post-v1.0, not in scope** |
 
 ## Portability targets

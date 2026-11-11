@@ -1,6 +1,6 @@
 # ADR 0010：控制面回退（ControlSurface）/ Control-surface fallback
 
-- 状态：Accepted（v1.0.0-rc1 之后，未升版本）
+- 状态：Accepted（v1.0.0-rc1 之后提出；随最终 v1.0.0 发布生效）
 - 日期：2026-11-03
 - 关联：W3.3 托盘、`--control`、ControlWindow、Ctrl+Alt+Q/C
 

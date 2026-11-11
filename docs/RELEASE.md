@@ -1,56 +1,77 @@
 # 发布验收清单 / Release checklist
 
-状态日期：**2026-11-11**（RC1 人工验收完成；最终 v1.0.0 待 Stage D）。
+状态日期：**2026-11-11**（**v1.0.0 已发布**：本地 tag，未 push）。
 
 ## 0. 当前状态 / Status
 
 | 项目 | 状态 |
 | --- | --- |
-| CTest（当前 HEAD 9be995d） | **318/318 通过**（2 个 installer 在 Low IL 宿主 skip） |
+| 版本 | **1.0.0**（CMake/manifest/SBOM/--version 统一；RC1 之后未改产品行为） |
+| 最终包 | `dist/ProjectWatashi-1.0.0-win64.zip`，16,483,547 字节 |
+| SHA-256 | `da6f0c99275d20699569faa421159067dd6a42da73d40d5b27a9997df62bd1c6` |
+| checksum | `dist/SHA256SUMS.txt`（UTF-8 无 BOM、LF）；`sha256sum -c` → **OK** |
+| clean build | `git archive 7a2c1a0` → `build-final/clean-src` → **318/318 CTest 通过** |
 | 10 分钟 UI soak | **PASS**：`build-rc/soak-10m.json`，602.5 s，exit 0，log_errors 0 |
 | 8 小时 UI soak | **PASS**：`build-rc/soak-8h.json`，28801.5 s，exit 0，handles 169→169，内存 15.0→13.8 MiB（peak 16.4），log_errors 0 |
-| Medium 桌面安装/运行/卸载 | **PASS（用户 2026-11-11）** |
-| 干净 Win11 VM 安装/运行/卸载 | **PASS（用户 2026-11-11）**；VM 为 **BIOS + LabConfig 绕过 TPM/SecureBoot**，不是 UEFI 验收 |
+| Medium 桌面安装/运行/卸载 | **PASS（用户 2026-11-11）**，对象为 RC1 验收包 |
+| 干净 Win11 VM 安装/运行/卸载 | **PASS（用户 2026-11-11）**，对象为 RC1 验收包；VM 为 **BIOS + LabConfig 绕过 TPM/SecureBoot**，不是 UEFI 验收 |
 | 控制面 | **PASS**：`control_surface=window`，Pause/Hide/Exit，`exit_reason=control-exit` |
-| 托盘 | **不可用**（本机/VM 均无正常通知区）；best-effort，不是 release blocker |
+| 托盘 | **不可用**（本机/VM 均无正常通知区）；best-effort，不是 release blocker，**未声称 PASS** |
 | 模型下载 | 未执行 `--fetch`；`--check` 未验 |
 | 签名 | **unsigned**；无证书 |
 
-> **skipped ≠ passed**：CTest 中 `installer_install` /
-> `installer_remove_user_data` 在 Low IL 宿主以 77 退出并显示 skipped；
-> 人工安装验收已由用户完成，但自动 skip 不写成 pass。
+> **人工验收与最终包的关系**：RC1 的 B 验收（见 `docs/ACCEPTANCE.md`）是对
+> `stage-vcomp.zip` 完成的；最终 1.0.0 包与验收包的 payload 文件列表一致
+> （自动 ZIP 审计核对），差异仅为版本字符串与 SBOM 日期。人工结果作为
+> 最终 1.0.0 的验收输入沿用，历史结果未改写。
+>
+> **skipped ≠ passed**：本次 clean build 中 `installer_install` /
+> `installer_remove_user_data` 在本机实际执行并通过（staging prefix 安装），
+> 并非 skip；在 Low IL 宿主上它们会以 77 skip。
 
-## 1. RC1 验收产物 / RC1 acceptance artefact
+## 1. 最终发布产物 / Final release artefact
 
-- `build-rc/stage-vcomp.zip`，16,943,345 字节
-- SHA-256：`c117554c7fe2ddc79c38b3789d63a32407f7abada423f790df33427935da8ee2`
-- 含 `vcomp140.dll`（CTranslate2/OpenMP 运行时；干净 VM 必需）
-- 旧 RC1 ZIP 已归档：`build-rc/archive/rc1/ProjectWatashi-1.0.0-rc1-win64.zip`
-  （SHA-256 `a2ec862c4d4fd5fc59f4954b9ceb4d21ce7b701054be1f9ed4a57120b857f932`）
-- **最终 `dist/ProjectWatashi-1.0.0-win64.zip` 尚未生成**，由 Stage D 负责。
+- `dist/ProjectWatashi-1.0.0-win64.zip`，**16,483,547 字节**
+- SHA-256：`da6f0c99275d20699569faa421159067dd6a42da73d40d5b27a9997df62bd1c6`
+- `dist/SHA256SUMS.txt`：UTF-8 无 BOM、LF-only、`<hash>  <filename>` 两空格；
+  `sha256sum -c` → **OK**
+- ZIP 审计（29 项）：
+  - 必含：`vcomp140.dll`、`onnxruntime.dll`、`ctranslate2.dll`、`dnnl.dll`、
+    VC runtime（msvcp140*/vcruntime140*/concrt140，8 个）、`licenses/`（4 份
+    许可 + SBOM）、`config/`（presentation/settings_ui/install_manifest）、
+    `install.ps1`/`uninstall.ps1`/`install_manifest.json`、三个 exe、
+    `models.lock.json`
+  - 版本：`install_manifest.json` 与 `licenses/sbom.spdx.json` 内均为 1.0.0，
+    无 rc1 残留；包内三个 exe `--version` 输出
+    `Project Watashi 1.0.0 / commit 7a2c1a0f2eb4 / build Release`
+  - 禁含核对：无 `.pdb`、无 `.onnx`、无 `.bin`、无 `models/` 目录（0 项命中）
+- 历史包（证据，不再分发）：`build-rc/stage-vcomp.zip`（RC1 B 验收对象）、
+  `build-rc/archive/rc1/ProjectWatashi-1.0.0-rc1-win64.zip`
 
 ## 2. clean-room / reproducibility
 
-- 旧 RC1 clean-room：`git archive` → `build-rc/clean-build`，313/313 通过；
-  日志已归档到 `build-rc/archive/rc1/clean-ctest.log`。
-- 当前 HEAD 已加入 control surface 和 vcomp，测试为 **318/318**；最终包必须
-  从 clean build 重新生成。
+- 最终 clean-room：`git archive 7a2c1a0`（版本 commit）→
+  `build-final/clean-src`，独立 configure/build 于 `build-final/clean-build`；
+  **318/318 CTest 通过**；`tools/make_sbom.py --check` 通过；
+  `vcomp140.dll` 确认随 `cmake --install`/CPack 进入包（ZIP 审计 + installer
+  测试 staging 均含）。
+- RC1 clean-room（历史）：`git archive` → `build-rc/clean-build`，313/313。
 - **不是逐字节可复现**：此前对比有 9 个文本文件 CRLF/LF 不同、4 个二进制
-  同尺寸不同哈希。最终发布不得宣传 reproducible build；如实记录。
-- 模型权重、`.pdb`、`models/` 均不得进入包。
+  同尺寸不同哈希。不得宣传 reproducible build；如实记录。
+- 模型权重、`.pdb`、`models/` 均不进包（本次已核对为 0 命中）。
 
-## 3. 安装 / Install（已验）
+## 3. 安装 / Install（RC1 验收已覆盖）
 
 在干净 VM / Medium 桌面，普通用户、不要管理员：
 
-- [x] 解压 `stage-vcomp.zip`，无权重、无 `models/`、无 `.pdb`；
+- [x] 解压验收包，无权重、无 `models/`、无 `.pdb`；
 - [x] `install.ps1` 安装到 `%LOCALAPPDATA%\ProjectWatashi`，无 UAC；
 - [x] HKCU 卸载项 + 开始菜单快捷方式；
-- [x] `watashi_ui.exe --version` 输出 1.0.0-rc1 + commit + Release；
+- [x] `watashi_ui.exe --version` 输出 1.0.0-rc1 + commit + Release（最终包输出 1.0.0，见 §1）；
 - [x] `watashi_ui.exe --settings` 打开设置页；
 - [x] `vcomp140.dll` 随 payload 安装（干净 VM 必需）。
 
-## 4. 运行 / Run（已验）
+## 4. 运行 / Run（RC1 验收已覆盖）
 
 - [x] synthetic/fake 60 s 运行，悬浮窗/点击穿透正常；
 - [x] `--control auto` 在 tray 不可用时自动显示 `watashi control`；
@@ -59,7 +80,7 @@
 - [x] `stream.exit_code=-1` 是主动停止哨兵，不是失败；
 - [x] 日志有 start/exit，无字幕原文。
 
-## 5. 卸载 / Uninstall（已验）
+## 5. 卸载 / Uninstall（RC1 验收已覆盖）
 
 - [x] payload/快捷方式/HKCU 项移除；
 - [x] `user\` 默认保留（`Test-Path` = True）；
@@ -85,14 +106,14 @@
 
 ## 9. 已知限制 / Known limitations
 
-1. 本机/VM 无可用通知区，tray 为 best-effort；控制窗/热键是发布必需项。
+1. 本机/VM 无可用通知区，tray 为 best-effort；控制窗/热键是发布必需项；tray 实点未验。
 2. VM 为 BIOS + TPM/SecureBoot 绕过安装；UEFI/安全启动未验收。
 3. 未做实际模型下载；`--check`/离线拒绝仍未验。
 4. 构建不可逐字节复现；不得宣传 reproducible build。
 5. 发布 unsigned；无证书。
 
-## 10. 下一步 / Next
+## 10. 发布记录 / Release record
 
-Stage D：升 1.0.0，clean build，生成
-`dist/ProjectWatashi-1.0.0-win64.zip` + LF checksums，更新本文件与
-`docs/ACCEPTANCE.md`，本地打 `v1.0.0` tag；不 push。
+- 版本 commit：`7a2c1a0`（chore: bump the product version to 1.0.0）；
+  文档收口后打 **本地 annotated tag `v1.0.0`**，未 push、无远端 tag。
+- 最终包由该 clean 树构建（见 §2）；tag commit 仅含文档，不改变二进制。

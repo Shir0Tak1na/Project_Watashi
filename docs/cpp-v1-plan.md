@@ -7,7 +7,7 @@
 | --- | --- |
 | 版本 | 1.2 |
 | 日期 | 2026-11-11 |
-| 状态 | **v1.0.0-rc1 B 验收完成**；最终 v1.0.0 包/tag 待 Stage D |
+| 状态 | **v1.0.0 已发布**（本地 tag，未 push）；clean build 318/318；最终包见 docs/RELEASE.md |
 | 基线 | C++ 主干 W1.1–W4.4 已落地；Python 原型 0.0.8a 仍是行为参考 |
 | 依据 | 2026-11-11：318 CTest、stage-vcomp（含 vcomp140）、Medium/VM/控制面/安装/8h soak PASS |
 
@@ -50,14 +50,14 @@
 | W4.4 合规与长稳 | 完成 | SBOM + licenses/ + soak 工具；10m/8h UI soak PASS |
 | 控制面 | 完成 | ControlWindow + 热键回退；tray 不可用时自动走 window |
 | vcomp 打包 | 完成 | 9be995d；CTranslate2 的 VCOMP140 随包安装 |
-| **v1.0.0-rc1** | **验收完成** | 318/318 CTest；Medium+VM+控制面+安装/卸载 PASS；最终包/tag 待 Stage D |
+| **v1.0.0** | **已发布** | clean build 318/318；RC1 Medium/VM/控制面/安装/卸载 PASS 作为验收输入；`dist/ProjectWatashi-1.0.0-win64.zip` + 本地 tag |
 
 **实际人时**：W1 约 170 h、W2 约 120 h、W3 约 130 h、W4 约 90 h；剩余为人工验收。
 
 **日历**：原计划按 20 h/周；实际人工投入约 10–12 h/周，编码代理并行，最终截止仍是 2028-07，余量足够。
 **当前状态**：Medium、干净 Win11 VM、控制面、安装/卸载、10m/8h soak 已 PASS；
 托盘因通知区不可用而走控制窗，属 best-effort；发布为 unsigned。
-**下一步**：Stage D 升 1.0.0、clean build、最终包、本地 tag。
+**下一步**：v1.0.0 已发布（本地 tag，未 push）；后续为未验项收尾（模型下载、签名、UEFI/TPM、tray 实点），见 docs/RELEASE.md §9。
 
 ---
 
