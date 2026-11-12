@@ -18,6 +18,13 @@ commit）318/318 CTest；最终包 `dist/ProjectWatashi-1.0.0-win64.zip` +
 本次发布的验收输入；tray 在验收环境不可用，为 best-effort，不声称 tray PASS。
 本地 tag `v1.0.0`，未 push。详见 `docs/RELEASE.md` 与 `docs/ACCEPTANCE.md`。
 
+### Post-release (2026-11-12)
+
+v1.0.0 remains a local release: `main` + tag are not pushed and the ZIP is not
+backed up yet. The next work is validation, not new features: push/backup,
+real PP-OCRv4 + NLLB end-to-end, and a final-ZIP install pass. See
+[docs/POST-V1.0.md](docs/POST-V1.0.md).
+
 ## [1.0.0-rc1] -- 2026-11-01 -- release candidate
 
 首个 C++ 产品发布候选（RC），代码 MIT；模型权重不随包分发。

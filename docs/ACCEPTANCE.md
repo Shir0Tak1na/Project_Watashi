@@ -140,3 +140,20 @@ VM 内的证据由用户确认，截图未入库。
 **最终 v1.0.0：已发布（2026-11-11，本地 tag）。** 本文 RC1 验收即其验收输入；
 未验项（T4 热键实按、UEFI/TPM、tray 实点、模型下载、签名）继续列为未验，
 见 [docs/RELEASE.md](RELEASE.md) §9。
+
+## 9. 发布后验证 / Post-release checks
+
+以下不属于 RC1 的 B 验收，但属于最终 1.0.0 的发布后 P0：
+
+| # | 项目 | 状态 |
+| --- | --- | --- |
+| R1 | push `main` + `v1.0.0` tag，远端可查 | 未做 |
+| R2 | ZIP + SHA256SUMS 备份到第二个盘/外部存储 | 未做 |
+| R3 | `watashi_fetch --check` 缺模型返回 1 | 未验 |
+| R4 | `--offline` 拒绝网络 | 未验 |
+| R5 | 实际 `--fetch`（模型约 1.1 GB） | 未验 |
+| R6 | 真实 OCR + NMT 运行（非 fake/corpus） | 未验 |
+| R7 | 最终 1.0.0 ZIP 干净安装/运行/卸载 | 未验 |
+
+详见 [docs/POST-V1.0.md](POST-V1.0.md)。P0 通过前不开始 v1.1，
+也不把 tray/UEFI/签名/复现性当作新功能开发。

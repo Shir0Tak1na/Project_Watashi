@@ -51,7 +51,9 @@ Project Watashi（渡）是一款桌面工具：持续识别用户在屏幕上�
 
 Python 原型仍在 `prototype/`，是行为参考与当前可运行的完整实现。
 
-C++ 主线已发布 **v1.0.0**（本地 tag，未 push）：本地捕获、PP-OCRv4、分层语料/规则、CTranslate2 NLLB、原生 Win32 悬浮窗、声明式呈现、stdin 命令通道、全局热键、设置页、per-user 安装包、模型获取器、SBOM/soak 工具，以及可选控制面（通知区可用时走托盘，否则控制窗/热键）。托盘是 best-effort：在验收环境不可用，不是发布阻塞项。**2026-11-11 已在 Medium 桌面和干净 Win11 VM 通过 RC1 的 B 验收；最终包为 `dist/ProjectWatashi-1.0.0-win64.zip`**（见 `docs/RELEASE.md`）。
+C++ 主线已发布 **v1.0.0**（本地 tag，未 push）：本地捕获、PP-OCRv4、分层语料/规则、CTranslate2 NLLB、原生 Win32 悬浮窗、声明式呈现、stdin 命令通道、全局热键、设置页、per-user 安装包、模型获取器、SBOM/soak 工具，以及可选控制面（通知区可用时走托盘，否则控制窗/热键）。托盘是 best-effort：在验收环境不可用，不是发布阻塞项。
+
+**发布后 P0**：本地 tag/ZIP 尚未 push/备份；真实 PP-OCRv4 + NLLB 尚未在最终包上验证。见 [docs/POST-V1.0.md](docs/POST-V1.0.md)。**2026-11-11 已在 Medium 桌面和干净 Win11 VM 通过 RC1 的 B 验收；最终包为 `dist/ProjectWatashi-1.0.0-win64.zip`**（见 `docs/RELEASE.md`）。
 
 | 模块 | C++ 主干（src/） | Python 原型（prototype/） |
 | --- | --- | --- |

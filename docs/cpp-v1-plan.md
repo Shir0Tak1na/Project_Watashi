@@ -61,6 +61,19 @@
 
 ---
 
+## 0.2 发布后 P0 / Post-release
+
+v1.0.0 本地发布完成，但 push/备份、真实模型端到端、最终 ZIP 安装复验仍未做。
+执行计划见 [docs/POST-V1.0.md](POST-V1.0.md)：
+
+1. push `main` + `v1.0.0`，备份 ZIP/checksum；
+2. `watashi_fetch --check` / `--offline` / 实际 fetch；
+3. 真实 PP-OCRv4 + NLLB 运行；
+4. 最终 1.0.0 ZIP 安装验收；
+5. 只有 P0 暴露问题才发 v1.0.1；P0 通过后才排架构债/v1.1。
+
+---
+
 ## 1. 目标与范围
 
 ### 1.1 产品目标

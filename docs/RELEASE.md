@@ -1,6 +1,6 @@
 # 发布验收清单 / Release checklist
 
-状态日期：**2026-11-11**（**v1.0.0 已发布**：本地 tag，未 push）。
+状态日期：**2026-11-12**（**v1.0.0 已本地发布**；tag/包未 push、未备份；真实模型与最终 ZIP 安装复验仍待做）。
 
 ## 0. 当前状态 / Status
 
@@ -117,3 +117,13 @@
 - 版本 commit：`7a2c1a0`（chore: bump the product version to 1.0.0）；
   文档收口后打 **本地 annotated tag `v1.0.0`**，未 push、无远端 tag。
 - 最终包由该 clean 树构建（见 §2）；tag commit 仅含文档，不改变二进制。
+
+## 10. 发布后 P0 / Post-release P0
+
+1. push `main` + `v1.0.0` tag，并 `git ls-remote` 验证；
+2. 把 `dist/ProjectWatashi-1.0.0-win64.zip` + `SHA256SUMS.txt` 备份到第二个盘/外部存储；
+3. 真实模型：`watashi_fetch --check` → 实际 `--fetch` → `--ocr onnx` + `--translator nmt/hybrid`；
+4. 用最终 1.0.0 ZIP 做一次干净安装/运行/卸载；
+5. 只有 P0 暴露问题才发 v1.0.1；P0 通过才进入架构债/v1.1。
+
+详见 [docs/POST-V1.0.md](POST-V1.0.md)。

@@ -1,7 +1,7 @@
 # 交接说明 / Handover
 
 > 给接手的人或编码代理：**先读这一页，再读别的。**
-> 最后更新：**2026-11-11（v1.0.0 已发布：本地 tag `v1.0.0`，未 push）**
+> 最后更新：**2026-11-12（v1.0.0 本地发布；下一步 P0 发布收口/真实模型验收）**
 
 ## 一句话状态
 
@@ -14,12 +14,13 @@ C++ 主线 **v1.0.0 已发布**：B 验收完成（Medium 桌面、干净 Win11 
 ## 必读顺序（约 30 分钟）
 
 1. [docs/ACCEPTANCE.md](docs/ACCEPTANCE.md) — 本次人工验收的真实结果与证据
-2. [docs/RELEASE.md](docs/RELEASE.md) — 发布状态、包、已知限制
-3. [docs/cpp-v1-plan.md](docs/cpp-v1-plan.md) — 执行计划；先看 §0
-4. [README_zh.md](README_zh.md) / [README.md](README.md) — 实际能力与构建
-5. [prototype/README.md](prototype/README.md) — Python 参考实现
-6. [prototype/watashi/events.py](prototype/watashi/events.py) — 事件/命令契约，冻结对象
-7. [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md) — 许可边界
+2. [docs/POST-V1.0.md](docs/POST-V1.0.md) — 发布后 P0/P1/P2 计划
+3. [docs/RELEASE.md](docs/RELEASE.md) — 发布状态、包、已知限制
+4. [docs/cpp-v1-plan.md](docs/cpp-v1-plan.md) — 执行计划；先看 §0
+5. [README_zh.md](README_zh.md) / [README.md](README.md) — 实际能力与构建
+6. [prototype/README.md](prototype/README.md) — Python 参考实现
+7. [prototype/watashi/events.py](prototype/watashi/events.py) — 事件/命令契约，冻结对象
+8. [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md) — 许可边界
 
 ## 什么是真的（可复现）
 
@@ -50,7 +51,7 @@ C++ 主线 **v1.0.0 已发布**：B 验收完成（Medium 桌面、干净 Win11 
 5. 模型权重不进 git、不进安装包。
 6. UI 只消费 watashi_cli --json-lines，命令只走 stdin；当前 CMake 的 UI→core 链接是待还债，不是新许可。
 
-## 当前状态（2026-11-11）
+## 当前状态（2026-11-12）
 
 | 项 | 状态 |
 | --- | --- |
@@ -65,7 +66,7 @@ C++ 主线 **v1.0.0 已发布**：B 验收完成（Medium 桌面、干净 Win11 
 | 旧包 | `build-rc/archive/rc1/ProjectWatashi-1.0.0-rc1-win64.zip`（归档） |
 | 托盘 | 本机/VM 通知区不可用；best-effort，不阻塞发布 |
 | 签名 | unsigned |
-| 下一步 | v1.0.0 已发布；后续工作（模型下载验收、签名、UEFI/TPM、tray 实点）见 docs/RELEASE.md §9 |
+| 下一步 | **P0 发布收口**：push tag、备份 ZIP、真实模型端到端、最终 ZIP 安装复验；见 [docs/POST-V1.0.md](docs/POST-V1.0.md) |
 
 ## W0 交付记录（2026-10-28）
 
