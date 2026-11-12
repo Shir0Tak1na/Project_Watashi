@@ -255,6 +255,10 @@ bool http_download(
         path += std::wstring(
             components.lpszExtraInfo, components.dwExtraInfoLength);
     }
+    // WinHTTP picks TLS from this flag, not from the port: without it an
+    // https:// URL goes out as a plaintext request to 443.
+    const DWORD request_flags =
+        components.nScheme == INTERNET_SCHEME_HTTPS ? WINHTTP_FLAG_SECURE : 0;
 
     HINTERNET session = WinHttpOpen(
         L"watashi-fetch/1.0", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
@@ -273,7 +277,7 @@ bool http_download(
     if (connection != nullptr) {
         request = WinHttpOpenRequest(
             connection, L"GET", path.c_str(), nullptr, WINHTTP_NO_REFERER,
-            WINHTTP_DEFAULT_ACCEPT_TYPES, 0);
+            WINHTTP_DEFAULT_ACCEPT_TYPES, request_flags);
     }
     if (request != nullptr) {
         if (offset > 0) {
