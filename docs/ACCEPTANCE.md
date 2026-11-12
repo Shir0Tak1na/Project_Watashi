@@ -145,15 +145,15 @@ VM 内的证据由用户确认，截图未入库。
 
 以下不属于 RC1 的 B 验收，但属于最终 1.0.0 的发布后 P0：
 
-| # | 项目 | 状态 |
+| # | 项目 | 状态（2026-11-12） |
 | --- | --- | --- |
-| R1 | push `main` + `v1.0.0` tag，远端可查 | 未做 |
-| R2 | ZIP + SHA256SUMS 备份到第二个盘/外部存储 | 未做 |
-| R3 | `watashi_fetch --check` 缺模型返回 1 | 未验 |
-| R4 | `--offline` 拒绝网络 | 未验 |
-| R5 | 实际 `--fetch`（模型约 1.1 GB） | 未验 |
-| R6 | 真实 OCR + NMT 运行（非 fake/corpus） | 未验 |
-| R7 | 最终 1.0.0 ZIP 干净安装/运行/卸载 | 未验 |
+| R1 | push `main` + `v1.0.0` tag，远端可查 | ✅ 完成：`4ea7a2a` / tag deref `a0ecccd` |
+| R2 | ZIP + SHA256SUMS 备份到第二个盘/外部存储 | ✅ 完成：`D:\WatashiRelease\v1.0.0\`，`-c` OK |
+| R3 | `watashi_fetch --check` 缺模型返回 1 | ✅ 通过：exit 1，14 个缺失项 |
+| R4 | `--offline` 拒绝网络 | ✅ 通过：exit 1，13 个 http 资产被拒 |
+| R5 | 实际 `--fetch`（模型约 1.1 GB） | ⛔ 未验：本轮未联网 |
+| R6 | 真实 OCR + NMT 运行（非 fake/corpus） | ⚠️ 功能通过 / 报告字段不通过：`watashi control` → `瓦西控制`，但 `backend`/`trace` 写死为 fake |
+| R7 | 最终 1.0.0 ZIP 干净安装/运行/卸载 | ⚠️ 安装/运行通过；卸载在 `%LOCALAPPDATA%` 被本机拦截，备用 prefix 通过 → 真实目录卸载未验 |
 
 详见 [docs/POST-V1.0.md](POST-V1.0.md)。P0 通过前不开始 v1.1，
 也不把 tray/UEFI/签名/复现性当作新功能开发。
