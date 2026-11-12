@@ -175,6 +175,14 @@ https 被当明文发到 443，代理返回 502。修复后同一请求 200，�
 VM 内 `logs\` 目录仍然保留（运行时环形日志，属于运行时数据而非 payload），
 已如实记录，不当作“目录完全为空”。
 
+远端同步记录（`git ls-remote` 实测，2026-11-12，无 force）：
+
+| ref | 对象 |
+| --- | --- |
+| `refs/heads/main` | `b613b7b`（`4ea7a2a..b613b7b`） |
+| `refs/tags/v1.0.1` | `dde1a67` → deref `b613b7b` |
+| `refs/tags/v1.0.0` | `50f5aab` → deref `a0ecccd`（**未移动**） |
+
 ## 3. P1 · v1.0.1（仅修 P0 暴露的问题）
 
 触发条件：

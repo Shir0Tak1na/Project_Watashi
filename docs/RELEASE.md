@@ -272,8 +272,9 @@ Release**，也未伪造任何 Release URL。手工上传步骤（当前发布 =
   `dist/SHA256SUMS.txt` 已同步更新。
 - 备份：`D:\WatashiRelease\v1.0.1\`（ZIP + SHA256SUMS，副本校验结果见
   `docs/POST-V1.0.md` 的同步记录）。
-- 远端：push `main` + `v1.0.1`（无 force），`git ls-remote` 结果记录在
-  `docs/POST-V1.0.md` 同步记录。
+- 远端：push `main` + `v1.0.1`（无 force）成功；`git ls-remote` 实测：
+  `main` = `b613b7b`，`v1.0.1`（对象 `dde1a67`）deref `b613b7b`，
+  `v1.0.0`（对象 `50f5aab`）deref `a0ecccd` **未移动**。
 
 ## 11. 发布后 P0 / Post-release P0
 
