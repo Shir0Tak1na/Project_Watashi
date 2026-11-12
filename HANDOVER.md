@@ -1,7 +1,7 @@
 # 交接说明 / Handover
 
 > 给接手的人或编码代理：**先读这一页，再读别的。**
-> 最后更新：**2026-11-12（v1.0.0 已 push 到远端并备份；下一步真实模型验收）**
+> 最后更新：**2026-11-12（v1.0.0 已 push/备份；P0 剩余实际 fetch、backend/trace、真实目录卸载）**
 
 ## 一句话状态
 
@@ -60,7 +60,7 @@ annotated tag `v1.0.0`（deref `a0ecccd`）**已 push**，包已备份到
 | 远端 | **已 push（2026-11-12）**：`origin/main` = `4ea7a2a`，tag `v1.0.0`（`50f5aab` → `a0ecccd`），**tag 未移动、无 force** |
 | 工作区 | clean；build-*/dist/ 已 gitignore |
 | 测试 | clean build（git archive 7a2c1a0）**318/318 CTest**（installer 两例本机实际执行）；license/SBOM/soak 检查 |
-| 验收 | Medium PASS；VM PASS（BIOS/TPM 绕过）；控制面 PASS；安装/卸载 PASS |
+| 验收 | Medium PASS；VM PASS（BIOS/TPM 绕过）；控制面 PASS；安装/运行 PASS；真实目录卸载未验（备用 prefix PASS） |
 | 长稳 | 10m PASS；8h PASS（`build-rc/soak-8h.json`） |
 | **最终包** | **`dist/ProjectWatashi-1.0.0-win64.zip`**，16,483,547 字节，SHA-256 `da6f0c99...`（完整值/审计见 docs/RELEASE.md §1；`dist/SHA256SUMS.txt` `sha256sum -c` OK） |
 | 备份 | **已备份（2026-11-12）**：`D:\WatashiRelease\v1.0.0\`（ZIP + SHA256SUMS，副本 `sha256sum -c` OK，哈希与 `dist/` 一致） |
@@ -69,7 +69,7 @@ annotated tag `v1.0.0`（deref `a0ecccd`）**已 push**，包已备份到
 | 旧包 | `build-rc/archive/rc1/ProjectWatashi-1.0.0-rc1-win64.zip`（归档） |
 | 托盘 | 本机/VM 通知区不可用；best-effort，不阻塞发布 |
 | 签名 | unsigned |
-| 下一步 | 真实模型端到端、最终 ZIP 安装复验、GitHub Release 上传；见 [docs/POST-V1.0.md](docs/POST-V1.0.md) |
+| 下一步 | P0 剩余：实际 `--fetch`、`ppocr_keys_v1.txt`、`backend`/`trace` 写死、真实目录卸载、GitHub Release；见 [docs/POST-V1.0.md](docs/POST-V1.0.md) |
 
 ## W0 交付记录（2026-10-28）
 

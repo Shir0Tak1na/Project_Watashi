@@ -78,7 +78,7 @@ system audio / microphone / WAV file
 The Python prototype in `prototype/` remains the behavioural reference and a
 complete runnable implementation.
 
-The C++ mainline is released as **v1.0.0** (local tag, not pushed): local capture,
+The C++ mainline is released as **v1.0.0** (tag and main pushed; ZIP backed up): local capture,
 PP-OCRv4, layered corpora/rules, CTranslate2 NLLB, a native Win32 overlay,
 declarative presentation, a stdin command channel, global hotkeys, a settings
 page, a per-user installer, a model fetcher, SBOM/soak tooling and an optional
@@ -86,9 +86,9 @@ control surface (tray when the host has a working notification area, otherwise a
 control window/hotkeys). The tray is best-effort: it never passed on the
 acceptance hosts and is not a release blocker.
 
-**Post-release P0:** the local tag and ZIP are not pushed/backed up yet, and the
-real PP-OCRv4 + NLLB path has not been validated on the final package. See
-[docs/POST-V1.0.md](docs/POST-V1.0.md).
+**Post-release P0:** real PP-OCRv4 + NLLB has been exercised, but actual
+`--fetch`, the hardcoded `backend`/`trace` fields, the OCR key file and a real
+directory uninstall are still open. See [docs/POST-V1.0.md](docs/POST-V1.0.md).
 **RC1 B acceptance passed on a Medium desktop and a clean Win11 VM on
 2026-11-11; the final package is `dist/ProjectWatashi-1.0.0-win64.zip`**
 (see `docs/RELEASE.md`).

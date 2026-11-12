@@ -2,9 +2,9 @@
 
 状态日期：**2026-11-11**。
 结论：**RC1 的 B 验收已完成**（Medium 桌面、干净 Win11 VM、控制面、安装/卸载）。
-**最终 v1.0.0 已发布（2026-11-11，本地 tag，未 push）**：本文档的 RC1 验收
-结果作为最终 1.0.0 的**验收输入**沿用；历史结果不改写。最终包、clean build
-与发布记录见 [docs/RELEASE.md](RELEASE.md)。
+**最终 v1.0.0 已发布并 push（2026-11-12，tag `v1.0.0` deref `a0ecccd`）**：本文档的
+RC1 验收结果作为最终 1.0.0 的**验收输入**沿用；历史结果不改写。最终包、clean
+build 与发布记录见 [docs/RELEASE.md](RELEASE.md)。
 
 > 规则：只有实际执行并留下证据的条目才写 PASS。没有执行或无法执行的条目写
 > **未验**，不得写成“通过”。skipped 不等于 passed。
@@ -103,9 +103,9 @@ VM 内的证据由用户确认，截图未入库。
 
 | # | 步骤 | 状态 |
 | --- | --- | --- |
-| C1 | `watashi_fetch --check` 缺模型返回 1 | 未验 |
-| C2 | `--offline` 拒绝网络 | 未验 |
-| C3 | 实际下载与哈希/原子改名 | 未验 |
+| C1 | `watashi_fetch --check` 缺模型返回 1 | ✅ 通过（2026-11-12）：exit 1，14 个缺失项 |
+| C2 | `--offline` 拒绝网络 | ✅ 通过（2026-11-12）：13 个 http 资产被拒 |
+| C3 | 实际下载与哈希/原子改名 | ⛔ 未验：未联网执行 `--fetch`；`ppocr_keys_v1.txt` 也不在 lock 中 |
 | C4 | 包内无权重 | ✅ PASS（ZIP 审计） |
 | C5 | 许可阅读 | ✅ PASS（`licenses/MODEL_LICENSES.md`） |
 
@@ -137,7 +137,7 @@ VM 内的证据由用户确认，截图未入库。
 
 **B 结论：通过。**
 
-**最终 v1.0.0：已发布（2026-11-11，本地 tag）。** 本文 RC1 验收即其验收输入；
+**最终 v1.0.0：已发布并 push（2026-11-12，tag `v1.0.0`）。** 本文 RC1 验收即其验收输入；
 未验项（T4 热键实按、UEFI/TPM、tray 实点、模型下载、签名）继续列为未验，
 见 [docs/RELEASE.md](RELEASE.md) §9。
 
@@ -151,7 +151,7 @@ VM 内的证据由用户确认，截图未入库。
 | R2 | ZIP + SHA256SUMS 备份到第二个盘/外部存储 | ✅ 完成：`D:\WatashiRelease\v1.0.0\`，`-c` OK |
 | R3 | `watashi_fetch --check` 缺模型返回 1 | ✅ 通过：exit 1，14 个缺失项 |
 | R4 | `--offline` 拒绝网络 | ✅ 通过：exit 1，13 个 http 资产被拒 |
-| R5 | 实际 `--fetch`（模型约 1.1 GB） | ⛔ 未验：本轮未联网 |
+| R5 | 实际 `--fetch`（模型约 1.1 GB） | ⛔ 未验：本轮未联网；`ppocr_keys_v1.txt` 不在 lock |
 | R6 | 真实 OCR + NMT 运行（非 fake/corpus） | ⚠️ 功能通过 / 报告字段不通过：`watashi control` → `瓦西控制`，但 `backend`/`trace` 写死为 fake |
 | R7 | 最终 1.0.0 ZIP 干净安装/运行/卸载 | ⚠️ 安装/运行通过；卸载在 `%LOCALAPPDATA%` 被本机拦截，备用 prefix 通过 → 真实目录卸载未验 |
 

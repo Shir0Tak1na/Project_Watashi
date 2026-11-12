@@ -35,7 +35,7 @@ P0 完成前，不开 v1.1、不做大规模架构重构。
 | --- | --- | --- | --- |
 | P0.5 | `watashi_fetch --check` 缺模型 | 退出码 1，打印缺失项，不联网 | **通过**：exit 1，列出 14 个缺失文件 |
 | P0.6 | `--offline` | 拒绝 http，退出码 1 | **通过**：exit 1，13 个 http 资产被拒；OCR 标记 manual |
-| P0.7 | 实际 `--fetch` | SHA-256/字节数/原子改名通过 | **未验**：本轮未联网下载（见 §2.2），`--fetch` 的网络/校验/原子改名路径未执行 |
+| P0.7 | 实际 `--fetch` | SHA-256/字节数/原子改名通过 | **未验**：本轮未联网下载（见 §2.2），`--fetch` 的网络/校验/原子改名路径未执行；`ppocr_keys_v1.txt` 不在 lock |
 | P0.8 | 真实 OCR + NMT 运行 | `--ocr onnx` + `--translator nmt/hybrid` 有字幕、有 backend、无崩溃 | **功能通过 / 报告字段不通过**：真实识别 `watashi control` → NMT `瓦西控制`（`used_model=true`，置信度 0.998）；但事件 `backend`/`trace` 写死为 `fake`，见 §2.3 |
 | P0.9 | 报告 | 记录模型加载、首帧/延迟、内存、失败原因 | **部分通过**：NMT 加载 798 ms、内存 10.9–11.7 MiB、exit 0 有记录；`backend`/`trace` 字段不真实 |
 | P0.10 | 最终 ZIP 安装后复跑 | 标准用户安装的 `watashi_ui.exe` 上同样通过 | **功能通过**：最终 1.0.0 ZIP 安装后跑通；安装进程为提升令牌，见 §2.1 |
