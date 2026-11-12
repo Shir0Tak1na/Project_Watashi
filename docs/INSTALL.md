@@ -86,9 +86,14 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "$env:LOCALAPPDATA\ProjectWa
 `.part` 并报错**。
 
 `models.lock.json` 的 `source` 对 Hugging Face 仓库会推导
-`<source>/resolve/main/<file>`；OCR 三项来自 PyPI 的 `rapidocr-onnxruntime`
-包内，没有可直接下载的单文件 URL，获取器会标为 `[manual]`——请从该 wheel 中
-复制三个 ONNX 文件，或先安装 Python 包后按 `models.lock.json` 的路径放置。
+`<source>/resolve/main/<file>`；OCR 三个 ONNX 模型来自 PyPI 的
+`rapidocr-onnxruntime` 包内，没有可直接下载的单文件 URL，获取器会标为
+`[manual]`——请从该 wheel 中复制三个 ONNX 文件，或先安装 Python 包后按
+`models.lock.json` 的路径放置。
+
+字符表 `models/ppocr_keys_v1.txt` 例外：lock 里给了 PaddleOCR v2.7.3 的显式
+`url`（`ppocr/utils/ppocr_keys_v1.txt`）与 SHA-256/字节数，`--fetch` 会下载、
+校验后原子改名到 `user\models\ppocr_keys_v1.txt`。
 
 ### 许可 / Licences
 

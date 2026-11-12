@@ -129,8 +129,8 @@ TEST_CASE("the shipped lock parses every model", "[fetch]") {
     REQUIRE(watashi::fetch::load_lock(
         repo_root() / "models.lock.json", lock, &error));
     REQUIRE(lock.version == 1);
-    REQUIRE(lock.models.size() == 3);
-    REQUIRE(lock.total_bytes == 1149752969ull);
+    REQUIRE(lock.models.size() == 4);
+    REQUIRE(lock.total_bytes == 1149779218ull);
 
     const auto& nllb = lock.models[0];
     REQUIRE(nllb.id == "nllb-200-distilled-600M-ct2-int8");
@@ -141,6 +141,59 @@ TEST_CASE("the shipped lock parses every model", "[fetch]") {
 
     REQUIRE(lock.models[1].files.size() == 4);
     REQUIRE(lock.models[2].files.size() == 3);
+
+    const auto& charset = lock.models[3];
+    REQUIRE(charset.id == "pp-ocrv4-charset");
+    REQUIRE(charset.files.size() == 1);
+    REQUIRE(charset.files[0].path == "models/ppocr_keys_v1.txt");
+    REQUIRE(charset.files[0].size == 26249ull);
+    REQUIRE(
+        charset.files[0].sha256 ==
+        "28b2362ad4ab2dc38769aa72feb535e3a9ddb3fd2a7585a05920e6393b1dc7f7");
+    REQUIRE_FALSE(charset.files[0].url.empty());
+}
+
+TEST_CASE("the OCR charset has a downloadable canonical URL", "[fetch]") {
+    watashi::fetch::Lock lock;
+    std::string error;
+    REQUIRE(watashi::fetch::load_lock(
+        repo_root() / "models.lock.json", lock, &error));
+    REQUIRE(error.empty());
+
+    const auto& charset = lock.models[3];
+    const std::string url =
+        watashi::fetch::download_url(charset, charset.files[0]);
+    REQUIRE(url ==
+            "https://raw.githubusercontent.com/PaddlePaddle/PaddleOCR/v2.7.3/"
+            "ppocr/utils/ppocr_keys_v1.txt");
+}
+
+TEST_CASE("the OCR charset lands beside the OCR models", "[fetch]") {
+    watashi::fetch::Lock lock;
+    std::string error;
+    REQUIRE(watashi::fetch::load_lock(
+        repo_root() / "models.lock.json", lock, &error));
+
+    const auto& charset = lock.models[3];
+    const auto target = watashi::fetch::target_path(
+        std::filesystem::path("root"), charset, charset.files[0], &error);
+    REQUIRE(error.empty());
+    REQUIRE(target.generic_string() == "root/models/ppocr_keys_v1.txt");
+}
+
+TEST_CASE("a missing OCR charset is reported by name", "[fetch]") {
+    watashi::fetch::Lock lock;
+    std::string error;
+    REQUIRE(watashi::fetch::load_lock(
+        repo_root() / "models.lock.json", lock, &error));
+
+    TempDir dir;
+    const auto& charset = lock.models[3];
+    std::string verify_error;
+    REQUIRE_FALSE(watashi::fetch::verify_file(
+        dir.path / "models" / "ppocr_keys_v1.txt", charset.files[0],
+        &verify_error));
+    REQUIRE(verify_error.find("ppocr_keys_v1.txt") != std::string::npos);
 }
 
 TEST_CASE("a synthetic lock with explicit URLs parses", "[fetch]") {

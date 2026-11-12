@@ -5,7 +5,8 @@
 deref = `a0ecccd`，未移动）；最终包
 `dist/ProjectWatashi-1.0.0-win64.zip`（不进 git）已备份到
 `D:\WatashiRelease\v1.0.0\`，副本 `sha256sum -c` 通过。GitHub Release 尚未
-创建（本机无 `gh`）。
+创建（本机无 `gh`）。2026-11-12 另有三个发布后缺陷修复（未升版本、未重打包、
+未移动 tag），见 §2.6。
 
 ## 0. 结论
 
@@ -33,14 +34,14 @@ P0 完成前，不开 v1.1、不做大规模架构重构。
 
 | # | 任务 | 通过标准 | 状态（2026-11-12 实测） |
 | --- | --- | --- | --- |
-| P0.5 | `watashi_fetch --check` 缺模型 | 退出码 1，打印缺失项，不联网 | **通过**：exit 1，列出 14 个缺失文件 |
-| P0.6 | `--offline` | 拒绝 http，退出码 1 | **通过**：exit 1，13 个 http 资产被拒；OCR 标记 manual |
-| P0.7 | 实际 `--fetch` | SHA-256/字节数/原子改名通过 | **未验**：本轮未联网下载（见 §2.2），`--fetch` 的网络/校验/原子改名路径未执行；`ppocr_keys_v1.txt` 不在 lock |
-| P0.8 | 真实 OCR + NMT 运行 | `--ocr onnx` + `--translator nmt/hybrid` 有字幕、有 backend、无崩溃 | **功能通过 / 报告字段不通过**：真实识别 `watashi control` → NMT `瓦西控制`（`used_model=true`，置信度 0.998）；但事件 `backend`/`trace` 写死为 `fake`，见 §2.3 |
-| P0.9 | 报告 | 记录模型加载、首帧/延迟、内存、失败原因 | **部分通过**：NMT 加载 798 ms、内存 10.9–11.7 MiB、exit 0 有记录；`backend`/`trace` 字段不真实 |
+| P0.5 | `watashi_fetch --check` 缺模型 | 退出码 1，打印缺失项，不联网 | **通过**：exit 1，列出 15 个缺失文件（含字符表） |
+| P0.6 | `--offline` | 拒绝 http，退出码 1 | **通过**：exit 1，12 个 https 资产被拒；3 个 ONNX 文件标记 manual |
+| P0.7 | 实际 `--fetch` | SHA-256/字节数/原子改名通过 | **未验（仅网络路径）**：本机 WinHTTP 为 direct access、系统代理在 WinINet，`watashi_fetch` 报 `send failed`；字符表已用 file:// 镜像跑通下载/校验/原子改名（§2.6） |
+| P0.8 | 真实 OCR + NMT 运行 | `--ocr onnx` + `--translator nmt/hybrid` 有字幕、有 backend、无崩溃 | **已修复（2026-11-12）**：真实路径报告 `backend="onnx, local-nmt/int8"`、`trace="ocr: onnx\nlocal-nmt/int8"`，见 §2.3/§2.6 |
+| P0.9 | 报告 | 记录模型加载、首帧/延迟、内存、失败原因 | **通过**：真实 backend/trace 已进入事件与 report；NMT 加载 707–816 ms、内存 10.9–11.7 MiB、exit 0 |
 | P0.10 | 最终 ZIP 安装后复跑 | 标准用户安装的 `watashi_ui.exe` 上同样通过 | **功能通过**：最终 1.0.0 ZIP 安装后跑通；安装进程为提升令牌，见 §2.1 |
 
-模型下载约 1.1 GB（lock 合计 1,149,752,969 字节）；网络/体积需用户确认。不能用
+模型下载约 1.1 GB（lock 合计 1,149,779,218 字节）；网络/体积需用户确认。不能用
 fake/corpus 冒充真实模型验收。
 
 ### 2.1 最终 ZIP 安装（2026-11-12）
@@ -65,15 +66,17 @@ fake/corpus 冒充真实模型验收。
 | Whisper small CT2 int8 | 4 个（483 MiB） | 哈希/字节数全部匹配 |
 | PP-OCRv4 det/rec/cls ONNX | 3 个（15 MiB） | 哈希/字节数全部匹配 |
 
-铺入后 `watashi_fetch --check --dest <user>` → **exit 0（ok=14）**。
+铺入后 `watashi_fetch --check --dest <user>` → **exit 0（ok=14）**（lock 变更前
+的 14 个文件；加入字符表后应校验 15 个，见 §2.6 的注意项）。
 
-**发现**：`ppocr_keys_v1.txt` 不在 lock 中，`watashi_fetch` 也无法获取它
-（OCR 三项标记 manual）；本轮的字符表从 rec 模型自带元数据
-（`character`，6623 行）导出，与模型 6625 类输出一致，未使用外部下载。
+**已修复（2026-11-12）**：`ppocr_keys_v1.txt` 已加入 `models.lock.json`
+（`pp-ocrv4-charset`，26,249 字节，SHA-256 `28b2362a…`，来源 PaddleOCR
+`v2.7.3` 的 `ppocr/utils/ppocr_keys_v1.txt`），`--check` 现在校验 15 个文件，
+`--fetch` 对该文件走显式 URL、校验后原子改名。
 
-**发现**：`install.ps1` 提示 `--dest "<prefix>\user\models"`，而 lock 的路径以
-`models/` 开头、`--dest` 默认值就是 `...\user`；按提示执行会得到
-`user\models\models\...`。未改代码，记为文档/提示缺陷。
+**已修复（2026-11-12）**：`install.ps1` 的提示改为
+`--dest "<prefix>\user"`，与 lock 的 `models/` 前缀和默认 dest 一致；
+`docs/INSTALL.md` 同步说明字符表可自动下载。
 
 ### 2.3 真实 OCR + NMT 结果
 
@@ -92,10 +95,9 @@ fake/corpus 冒充真实模型验收。
 - NMT：`nmt: loaded in 798–816 ms (int8, 4 threads, beam 1)`，`corpus: 0 entries`；
 - 内存 `10.86–11.75 MiB`；无崩溃、无 `0xC0000135`。
 
-**缺陷（待修，未改代码）**：`src/core/pipeline.cpp:99-100` 无条件写
+**修复前**（2026-11-12 上午）：`src/core/pipeline.cpp:99-100` 无条件写
 `backend="fake"` 和 `trace="fake: skeleton path, no OCR and no model"`，
-即使真实 OCR/NMT 生效。报告因此无法作为“真实后端”的证据，且与
-`docs/ACCEPTANCE` 的“backend 不是 fake/corpus-only”冲突。列为 v1.0.1 候选。
+即使真实 OCR/NMT 生效。修复后见 §2.6。
 
 ### 2.4 卸载
 
@@ -114,6 +116,43 @@ fake/corpus 冒充真实模型验收。
 
 本轮 120 s 运行首次出现 `tray: icon added`，报告 `tray.added=true`、
 `control_surface=tray`；但**没有做真实图标点击**，托盘仍不记为 PASS。
+
+### 2.6 三个 P0 缺陷的修复（2026-11-12）
+
+未升版本、未重打包、未移动 `v1.0.0` tag，也未 push。
+
+1. **backend / trace 写死**（`src/core/pipeline.cpp`）：OCR 层按实现类型命名
+   （`FakeOcr` → `fake`，其余为 ONNX 路径 → `onnx`），翻译层取每行
+   `Translation.backend`/`trace` 的并集；纯 fake 骨架路径仍输出
+   `backend="fake"`、`trace="fake: skeleton path, no OCR and no model"`。
+   - 单测：`tests/test_session.cpp` 新增 3 例（fake 语义、真实路径非 fake、
+     空帧仍命名 OCR 层）；`tests/test_fetch.cpp` 新增 4 例。
+   - 真实模型复跑（重建的 `watashi_cli.exe`，本机已铺模型，未联网）：
+     `--capture window --window-title "watashi control" --ocr onnx
+     --translator nmt` 5 s → `backend="onnx, local-nmt/int8"`、
+     `trace="ocr: onnx\nlocal-nmt/int8"`、`source="watashi control"` →
+     `target="瓦西控制"`、`used_model=true`、`confidence=0.9888`、exit 0。
+     证据：`build-rc/real-path-events.ndjson`（不进 git）。
+2. **`ppocr_keys_v1.txt`**（`models.lock.json`）：新增 `pp-ocrv4-charset`，
+   26,249 字节，SHA-256 `28b2362ad4ab2dc38769aa72feb535e3a9ddb3fd2a7585a05920e6393b1dc7f7`，
+   来源 PaddleOCR `v2.7.3` `ppocr/utils/ppocr_keys_v1.txt`（已下载比对：
+   与从 rec 元数据导出的 6,623 行内容逐字节一致，仅本地导出多一个行尾换行）。
+   `--check` 空目录 → exit 1，15 个缺失项含该文件；`--offline` → exit 1，
+   12 个 https 资产被拒。file:// 镜像跑通 `--fetch`：下载 1、校验通过、
+   26,249 字节、无残留 `.part`，随后 `--check` exit 0。
+3. **`install.ps1 --dest` 提示**：改为 `--dest "<prefix>\user"`；
+   `docs/INSTALL.md` 同步说明字符表走显式 URL。
+
+构建/回归：`cmake --build build-rc --config Release` 通过；
+`ctest` **324/324**（原 318 + 新增 6）。
+
+**注意**：先前铺入 `%LOCALAPPDATA%\ProjectWatashi\user\models` 的字符表是本地
+导出的 26,250 字节版本，与新 lock 的 canonical 26,249 字节不一致；用新版
+`--check` 会把它判为哈希不符，需重新 `--fetch`（或替换为 canonical 文件）。
+
+**仍未验**：1.1 GB 模型的真实网络下载。本机 Windows 系统代理在 WinINet
+（`127.0.0.1:7891`），而 `watashi_fetch` 的 WinHTTP 为 direct access，
+因此报 `send failed`；这是宿主网络配置问题，不是本次三处修复的行为回归。
 
 ## 3. P1 · v1.0.1（仅修 P0 暴露的问题）
 

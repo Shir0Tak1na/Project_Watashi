@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "watashi/events.hpp"
@@ -28,6 +29,37 @@ class EmptyOcr final : public watashi::OcrSource {
 public:
     [[nodiscard]] watashi::OcrResult recognize(const watashi::ImageView&) const override {
         return {};
+    }
+};
+
+/// Not the deterministic FakeOcr, so the pipeline treats it as the real ONNX
+/// path. It stands in for a loaded PP-OCRv4 model without needing the weights.
+class StubOcr final : public watashi::OcrSource {
+public:
+    [[nodiscard]] watashi::OcrResult recognize(const watashi::ImageView&) const override {
+        watashi::OcrResult result;
+        watashi::OcrLine line;
+        line.text = "hello";
+        line.box = watashi::Box{1, 2, 30, 10};
+        result.lines.push_back(line);
+        return result;
+    }
+};
+
+/// Names a model-backed layer, so the frame has a real translator backend to
+/// aggregate rather than the skeleton's "fake".
+class StubNmtTranslator final : public watashi::Translator {
+public:
+    [[nodiscard]] watashi::Translation translate(
+        std::string_view source,
+        const watashi::TranslateContext&) const override {
+        (void)source;
+        watashi::Translation result;
+        result.target = "你好";
+        result.backend = "local-nmt/int8";
+        result.trace = "local-nmt/int8";
+        result.used_model = true;
+        return result;
     }
 };
 
@@ -208,4 +240,58 @@ TEST_CASE("an OCR source that finds nothing does not crash") {
     REQUIRE(subtitle != events.end());
     REQUIRE(subtitle->data.at("lines").empty());
     REQUIRE(events.back().type == "stopped");
+}
+
+TEST_CASE("the skeleton path keeps the historical fake backend and trace") {
+    const auto events = run_synthetic(1.0, 10.0);
+    const auto subtitle = std::find_if(
+        events.begin(), events.end(),
+        [](const watashi::Envelope& event) { return event.type == "subtitle"; });
+    REQUIRE(subtitle != events.end());
+
+    REQUIRE(subtitle->data.at("backend") == "fake");
+    REQUIRE(subtitle->data.at("trace") ==
+            "fake: skeleton path, no OCR and no model");
+}
+
+TEST_CASE("a real OCR and translator report their own backends") {
+    StubOcr ocr;
+    StubNmtTranslator translator;
+    watashi::Session session({1.0, 1.0}, ocr, translator);
+
+    std::vector<watashi::Envelope> events;
+    session.run([&events](const watashi::Envelope& envelope) {
+        events.push_back(envelope);
+    });
+
+    const auto subtitle = std::find_if(
+        events.begin(), events.end(),
+        [](const watashi::Envelope& event) { return event.type == "subtitle"; });
+    REQUIRE(subtitle != events.end());
+
+    const auto backend = subtitle->data.at("backend").get<std::string>();
+    const auto trace = subtitle->data.at("trace").get<std::string>();
+    REQUIRE(backend != "fake");
+    REQUIRE(backend.find("onnx") != std::string::npos);
+    REQUIRE(backend.find("local-nmt/int8") != std::string::npos);
+    REQUIRE(trace.rfind("ocr: onnx", 0) == 0);
+    REQUIRE(trace.find("local-nmt/int8") != std::string::npos);
+}
+
+TEST_CASE("an empty real frame still names the OCR layer") {
+    EmptyOcr ocr;
+    StubNmtTranslator translator;
+    watashi::Session session({1.0, 1.0}, ocr, translator);
+
+    std::vector<watashi::Envelope> events;
+    session.run([&events](const watashi::Envelope& envelope) {
+        events.push_back(envelope);
+    });
+
+    const auto subtitle = std::find_if(
+        events.begin(), events.end(),
+        [](const watashi::Envelope& event) { return event.type == "subtitle"; });
+    REQUIRE(subtitle != events.end());
+    REQUIRE(subtitle->data.at("backend") == "onnx");
+    REQUIRE(subtitle->data.at("trace") == "ocr: onnx");
 }

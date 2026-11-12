@@ -145,7 +145,7 @@ try {
 
     Write-Host "installed Project Watashi $version to $fullPrefix"
     Write-Host "user data: $userDir (kept on uninstall)"
-    Write-Host "model weights are not included; run watashi_fetch.exe --fetch --dest `"$(Join-Path $userDir 'models')`""
+    Write-Host "model weights are not included; run watashi_fetch.exe --fetch --dest `"$userDir`""
     exit 0
 } catch {
     Write-Error $_

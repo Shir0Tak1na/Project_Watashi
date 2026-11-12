@@ -101,7 +101,24 @@
       "package": "rapidocr_onnxruntime",
       "source": "PyPI: rapidocr-onnxruntime==1.4.4",
       "version": "1.4.4"
+    },
+    {
+      "acquired": "2026-11-12",
+      "files": [
+        {
+          "path": "models/ppocr_keys_v1.txt",
+          "sha256": "28b2362ad4ab2dc38769aa72feb535e3a9ddb3fd2a7585a05920e6393b1dc7f7",
+          "size": 26249,
+          "url": "https://raw.githubusercontent.com/PaddlePaddle/PaddleOCR/v2.7.3/ppocr/utils/ppocr_keys_v1.txt"
+        }
+      ],
+      "id": "pp-ocrv4-charset",
+      "kind": "ocr",
+      "license": "Apache-2.0",
+      "path": "models",
+      "source": "https://github.com/PaddlePaddle/PaddleOCR/blob/v2.7.3/ppocr/utils/ppocr_keys_v1.txt",
+      "version": "2.7.3"
     }
   ],
-  "total_bytes": 1149752969
+  "total_bytes": 1149779218
 }

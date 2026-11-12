@@ -149,11 +149,21 @@ VM 内的证据由用户确认，截图未入库。
 | --- | --- | --- |
 | R1 | push `main` + `v1.0.0` tag，远端可查 | ✅ 完成：`4ea7a2a` / tag deref `a0ecccd` |
 | R2 | ZIP + SHA256SUMS 备份到第二个盘/外部存储 | ✅ 完成：`D:\WatashiRelease\v1.0.0\`，`-c` OK |
-| R3 | `watashi_fetch --check` 缺模型返回 1 | ✅ 通过：exit 1，14 个缺失项 |
-| R4 | `--offline` 拒绝网络 | ✅ 通过：exit 1，13 个 http 资产被拒 |
-| R5 | 实际 `--fetch`（模型约 1.1 GB） | ⛔ 未验：本轮未联网；`ppocr_keys_v1.txt` 不在 lock |
-| R6 | 真实 OCR + NMT 运行（非 fake/corpus） | ⚠️ 功能通过 / 报告字段不通过：`watashi control` → `瓦西控制`，但 `backend`/`trace` 写死为 fake |
+| R3 | `watashi_fetch --check` 缺模型返回 1 | ✅ 通过：exit 1，15 个缺失项（含 `ppocr_keys_v1.txt`） |
+| R4 | `--offline` 拒绝网络 | ✅ 通过：exit 1，12 个 https 资产被拒，3 个 ONNX 文件标 manual |
+| R5 | 实际 `--fetch`（模型约 1.1 GB） | ⚠️ 网络路径未验：本机 WinHTTP 为 direct access，系统代理在 WinINet（127.0.0.1:7891），`watashi_fetch` 走 WinHTTP 因此 `send failed`；字符表用 file:// 镜像跑通 fetch 校验 + 原子改名 |
+| R6 | 真实 OCR + NMT 运行（非 fake/corpus） | ✅ 已修复（2026-11-12）：`backend="onnx, local-nmt/int8"`、`trace="ocr: onnx\nlocal-nmt/int8"` |
 | R7 | 最终 1.0.0 ZIP 干净安装/运行/卸载 | ⚠️ 安装/运行通过；卸载在 `%LOCALAPPDATA%` 被本机拦截，备用 prefix 通过 → 真实目录卸载未验 |
+
+**2026-11-12 发布后修复（未升版本、未重打包、未移动 tag）**：
+
+- `src/core/pipeline.cpp` 不再写死 `backend`/`trace`：OCR 层与实际命中的翻译
+  后端合并上报；纯 fake 骨架路径保持原值。
+- `models.lock.json` 新增 `pp-ocrv4-charset`（`models/ppocr_keys_v1.txt`，
+  26,249 字节，SHA-256 `28b2362a…`，来源 PaddleOCR `v2.7.3`
+  `ppocr/utils/ppocr_keys_v1.txt`），`--check`/`--fetch`/原子改名均覆盖。
+- `installer/install.ps1` 的 `--dest` 提示改为 `<prefix>\user`，与默认 dest 一致。
+- 回归：`ctest` 324/324（新增 6 个用例），`cmake --build build-rc --config Release` 通过。
 
 详见 [docs/POST-V1.0.md](POST-V1.0.md)。P0 通过前不开始 v1.1，
 也不把 tray/UEFI/签名/复现性当作新功能开发。
