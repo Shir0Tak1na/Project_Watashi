@@ -1,8 +1,11 @@
 # v1.0.0 之后 / Post-release plan
 
 状态日期：**2026-11-12**。
-当前发布：**v1.0.0 本地 annotated tag**，`main` 领先远端 12 个提交，tag 未 push；
-最终包在 `dist/ProjectWatashi-1.0.0-win64.zip`（不进 git）。
+当前发布：**v1.0.0 已 push 到远端**（`origin/main` = `4ea7a2a`，tag `v1.0.0`
+deref = `a0ecccd`，未移动）；最终包
+`dist/ProjectWatashi-1.0.0-win64.zip`（不进 git）已备份到
+`D:\WatashiRelease\v1.0.0\`，副本 `sha256sum -c` 通过。GitHub Release 尚未
+创建（本机无 `gh`）。
 
 ## 0. 结论
 
@@ -11,20 +14,20 @@
 v1.0.0 已通过 RC1 的 B 验收（Medium、干净 VM、控制面、安装/卸载、8h soak），
 但还有三项“已发布但未证明”的 P0：
 
-1. 发布物没有远端备份/远端 tag；
+1. ~~发布物没有远端备份/远端 tag~~ → **已完成 2026-11-12**（push + 本机第二卷备份；仍无异地副本）；
 2. 真实模型（PP-OCRv4 + NLLB）没有在最终包上跑通；
 3. 最终 1.0.0 ZIP 没有重新走一次安装验收（验收对象是 RC1 的 `stage-vcomp.zip`）。
 
 P0 完成前，不开 v1.1、不做大规模架构重构。
 
-## 1. P0 · 发布收口（预计 2–4 h）
+## 1. P0 · 发布收口
 
-| # | 任务 | 通过标准 |
-| --- | --- | --- |
-| P0.1 | push `main` + `v1.0.0` tag | `git ls-remote` 能看到 tag/commit |
-| P0.2 | 备份 ZIP + checksum 到第二个盘/外部存储 | 副本 `sha256sum -c` 通过 |
-| P0.3 | GitHub Release（可选，但建议） | Release 有 ZIP + SHA256SUMS |
-| P0.4 | 确认远端 tag 指向 `a0ecccd` | tag 未移动 |
+| # | 任务 | 通过标准 | 状态 |
+| --- | --- | --- | --- |
+| P0.1 | push `main` + `v1.0.0` tag | `git ls-remote` 能看到 tag/commit | **完成**：`4ea7a2a` / tag deref `a0ecccd` |
+| P0.2 | 备份 ZIP + checksum 到第二个盘/外部存储 | 副本 `sha256sum -c` 通过 | **完成**：`D:\WatashiRelease\v1.0.0\`，`-c` OK |
+| P0.3 | GitHub Release（可选，但建议） | Release 有 ZIP + SHA256SUMS | **未做**：无 `gh`/token；手工步骤见 RELEASE §10.3 |
+| P0.4 | 确认远端 tag 指向 `a0ecccd` | tag 未移动 | **完成**：远端 `50f5aab` → `a0ecccd` |
 
 ## 2. P0 · 真实模型端到端（预计 3–6 h）
 

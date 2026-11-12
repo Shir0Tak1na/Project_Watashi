@@ -1,6 +1,6 @@
 # 发布验收清单 / Release checklist
 
-状态日期：**2026-11-12**（**v1.0.0 已本地发布**；tag/包未 push、未备份；真实模型与最终 ZIP 安装复验仍待做）。
+状态日期：**2026-11-12**（**v1.0.0 已本地发布并 push 到远端**；tag 未移动；包已备份到第二个盘；真实模型与最终 ZIP 安装复验仍待做）。
 
 ## 0. 当前状态 / Status
 
@@ -19,6 +19,9 @@
 | 托盘 | **不可用**（本机/VM 均无正常通知区）；best-effort，不是 release blocker，**未声称 PASS** |
 | 模型下载 | 未执行 `--fetch`；`--check` 未验 |
 | 签名 | **unsigned**；无证书 |
+| 远端 | **已 push**：`origin/main` = `4ea7a2a`；远端 annotated tag `v1.0.0`（对象 `50f5aab`）deref → `a0ecccd`（见 §10） |
+| 备份 | **已备份**：`D:\WatashiRelease\v1.0.0\`（ZIP + SHA256SUMS），副本 `sha256sum -c` → OK |
+| GitHub Release | **未创建**（本机无 `gh`/token）；手工步骤见 §10.2 |
 
 > **人工验收与最终包的关系**：RC1 的 B 验收（见 `docs/ACCEPTANCE.md`）是对
 > `stage-vcomp.zip` 完成的；最终 1.0.0 包与验收包的 payload 文件列表一致
@@ -114,16 +117,57 @@
 
 ## 10. 发布记录 / Release record
 
+### 10.1 本地 tag 与推送（2026-11-12 完成）
+
 - 版本 commit：`7a2c1a0`（chore: bump the product version to 1.0.0）；
-  文档收口后打 **本地 annotated tag `v1.0.0`**，未 push、无远端 tag。
-- 最终包由该 clean 树构建（见 §2）；tag commit 仅含文档，不改变二进制。
+  文档收口 commit `a0ecccd`；**annotated tag `v1.0.0` 指向 `a0ecccd`**。
+- 最终包由 `7a2c1a0` 的 clean 树构建（见 §2）；`a0ecccd` 仅含文档。
 
-## 10. 发布后 P0 / Post-release P0
+推送结果（`git push origin main` / `git push origin v1.0.0`，均成功，**无 force**）：
 
-1. push `main` + `v1.0.0` tag，并 `git ls-remote` 验证；
-2. 把 `dist/ProjectWatashi-1.0.0-win64.zip` + `SHA256SUMS.txt` 备份到第二个盘/外部存储；
-3. 真实模型：`watashi_fetch --check` → 实际 `--fetch` → `--ocr onnx` + `--translator nmt/hybrid`；
-4. 用最终 1.0.0 ZIP 做一次干净安装/运行/卸载；
-5. 只有 P0 暴露问题才发 v1.0.1；P0 通过才进入架构债/v1.1。
+| 项 | 值 |
+| --- | --- |
+| `origin/main` | `4ea7a2a69219deff83899324c94bad43a6f014a8`（`d739086..4ea7a2a`） |
+| 远端 tag 对象 | `50f5aabbcadd831c96ab2d411678a57859bd5212`（`refs/tags/v1.0.0`） |
+| 远端 tag deref | `a0ecccde1aeb1ee4aa7414cfc7b6401c5e26878b` |
+| tag 是否移动 | **否**：本地 deref 与远端 deref 同为 `a0ecccd`，tag 创建后未重建 |
+
+`git ls-remote origin refs/heads/main refs/tags/v1.0.0 'refs/tags/v1.0.0^{}'`
+实测输出与上表一致。
+
+### 10.2 备份（2026-11-12 完成）
+
+| 项 | 值 |
+| --- | --- |
+| 备份路径 | `D:\WatashiRelease\v1.0.0\` |
+| 内容 | `ProjectWatashi-1.0.0-win64.zip`（16,483,547 字节）、`SHA256SUMS.txt`（97 字节） |
+| 校验 | 在副本目录执行 `sha256sum -c SHA256SUMS.txt` → `ProjectWatashi-1.0.0-win64.zip: OK`（exit 0） |
+| 副本 SHA-256 | `da6f0c99275d20699569faa421159067dd6a42da73d40d5b27a9997df62bd1c6`（与 `dist/` 一致） |
+
+备份是本地第二个物理卷（`D:` Data，NTFS），**不是**异地/云备份；两者同时
+损坏即丢失，后续可再加一份离线副本。
+
+### 10.3 GitHub Release（未创建）
+
+本机**没有安装 `gh`**，也没有可用的 `GH_TOKEN`/`GITHUB_TOKEN`，因此**没有创建
+Release**，也未伪造任何 Release URL。手工上传步骤：
+
+1. 打开 <https://github.com/Shir0Tak1na/Project_Watashi/releases/new>；
+2. Tag 选已有的 `v1.0.0`（不要新建 tag）；
+3. 标题填 `Project Watashi v1.0.0`；
+4. 说明正文粘贴 `docs/RELEASE.md` 的 §0 状态表、§1 产物与 §9 已知限制；
+5. 上传资产：
+   - `E:\ProjectWatashi\dist\ProjectWatashi-1.0.0-win64.zip`
+   - `E:\ProjectWatashi\dist\SHA256SUMS.txt`
+6. 发布后核对页面显示的 SHA-256 与 `da6f0c99…bd1c6` 一致。
+
+## 11. 发布后 P0 / Post-release P0
+
+1. ~~push `main` + `v1.0.0` tag，并 `git ls-remote` 验证~~ → **已完成（§10.1）**；
+2. ~~把 `dist/ProjectWatashi-1.0.0-win64.zip` + `SHA256SUMS.txt` 备份到第二个盘/外部存储~~ → **已完成（§10.2）**；
+3. GitHub Release 上传（§10.3，待办，需要 `gh` 或网页操作）；
+4. 真实模型：`watashi_fetch --check` → 实际 `--fetch` → `--ocr onnx` + `--translator nmt/hybrid`；
+5. 用最终 1.0.0 ZIP 做一次干净安装/运行/卸载；
+6. 只有 P0 暴露问题才发 v1.0.1；P0 通过才进入架构债/v1.1。
 
 详见 [docs/POST-V1.0.md](POST-V1.0.md)。
