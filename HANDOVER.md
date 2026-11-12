@@ -61,7 +61,7 @@ install 提示、fetch 的 HTTPS TLS 标志。真实 `--fetch`（26 s、12 下�
 | 项 | 状态 |
 | --- | --- |
 | 版本 | **v1.0.1**（本地 annotated tag；版本 commit `137ebd2`；`v1.0.0` tag 未移动） |
-| 远端 | **v1.0.0 已 push**：`origin/main` = `4ea7a2a`，tag `v1.0.0`（`50f5aab` → `a0ecccd`）；**v1.0.1 的 push 记录见 docs/POST-V1.0.md 同步记录（无 force）** |
+| 远端 | **v1.0.1 已 push**：`origin/main` = `22c0dde`；tag `v1.0.1` deref `b613b7b`；tag `v1.0.0` deref `a0ecccd` 未移动 |
 | 工作区 | clean；build-*/dist/ 已 gitignore |
 | 测试 | clean build（git archive `137ebd2`）**324/324 CTest**（installer 两例本机实际执行）；license/SBOM/soak 检查 |
 | 验收 | 1.0.1 VM 标准用户 install/run/uninstall PASS；真实 `--fetch` PASS；控制面 PASS |
@@ -73,7 +73,7 @@ install 提示、fetch 的 HTTPS TLS 标志。真实 `--fetch`（26 s、12 下�
 | 旧包 | `build-rc/archive/rc1/ProjectWatashi-1.0.0-rc1-win64.zip`（归档）；`dist/ProjectWatashi-1.0.0-win64.zip`（16,483,547 B） |
 | 托盘 | 本机/VM 通知区不可用；best-effort，不阻塞发布 |
 | 签名 | unsigned |
-| 下一步 | P0 收口：GitHub Release 页面（可选）、tray 实点、UEFI、签名；见 [docs/POST-V1.0.md](docs/POST-V1.0.md) |
+| 下一步 | P1 架构债（UI→core、版本单一来源、CMake/打包拆分）；GitHub Release、tray 实点、UEFI、签名仍是可选项；见 [docs/POST-V1.0.md](docs/POST-V1.0.md) |
 
 ## W0 交付记录（2026-10-28）
 

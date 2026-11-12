@@ -103,13 +103,13 @@ VM 内的证据由用户确认，截图未入库。
 
 ## 5. 模型 / Models
 
-未执行 `--fetch`（需要网络/体积确认）；以下为未验，不是失败：
+RC1 轮次未执行 `--fetch`；v1.0.1 轮次已执行，见 §9 R3–R5：
 
 | # | 步骤 | 状态 |
 | --- | --- | --- |
-| C1 | `watashi_fetch --check` 缺模型返回 1 | ✅ 通过（2026-11-12）：exit 1，14 个缺失项 |
-| C2 | `--offline` 拒绝网络 | ✅ 通过（2026-11-12）：13 个 http 资产被拒 |
-| C3 | 实际下载与哈希/原子改名 | ⛔ 未验：未联网执行 `--fetch`；`ppocr_keys_v1.txt` 也不在 lock 中 |
+| C1 | `watashi_fetch --check` 缺模型返回 1 | ✅ 通过（2026-11-12）：exit 1，15 个缺失项（含字符表） |
+| C2 | `--offline` 拒绝网络 | ✅ 通过（2026-11-12）：12 个 https 资产被拒 |
+| C3 | 实际下载与哈希/原子改名 | ⚠️ 部分通过：12 个文件下载并校验，3 个 ONNX 无 URL，手工从 PyPI 复制后核对哈希；未做到全自动 |
 | C4 | 包内无权重 | ✅ PASS（ZIP 审计） |
 | C5 | 许可阅读 | ✅ PASS（`licenses/MODEL_LICENSES.md`） |
 
@@ -158,6 +158,7 @@ VM 内的证据由用户确认，截图未入库。
 | R5 | 实际 `--fetch`（模型约 1.1 GB） | ✅ 通过（2026-11-12，1.0.1 轮次）：联网 exit 0，26 s，`downloaded=12 manual=3 failed=0`，12 个文件逐条 SHA-256/字节数校验后原子改名；根因是 `tools/fetch_core.cpp` 未传 `WINHTTP_FLAG_SECURE`（https 被当明文发到 443，代理回 502），已修 |
 | R6 | 真实 OCR + NMT 运行（非 fake/corpus） | ✅ 已修复（2026-11-12）：`backend="onnx, local-nmt/int8"`、`trace="ocr: onnx\nlocal-nmt/int8"` |
 | R7 | 最终 1.0.0 ZIP 干净安装/运行/卸载 | ⚠️ 安装/运行通过；卸载在 `%LOCALAPPDATA%` 被本机拦截，备用 prefix 通过 → 真实目录卸载未验。**已在 1.0.1 轮次用干净 VM 复核，见 §10** |
+| R8 | v1.0.1 push / tag / 备份 | ✅ 完成：远端 `main=22c0dde`，tag `v1.0.1` deref `b613b7b`；`dist` 校验和 OK；`D:\WatashiRelease\v1.0.1\` 副本 OK |
 
 **2026-11-12 发布后修复（未升版本、未重打包、未移动 tag）**：
 
