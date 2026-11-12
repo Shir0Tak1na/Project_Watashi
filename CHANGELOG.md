@@ -4,9 +4,29 @@ All notable changes to this project are recorded here.
 
 Earlier prototype phases used `0.0.x` on purpose: they were the Python validation
 prototype, not the C++ product described in `Project Watashi.md`. The C++ product
-now ships as **1.0.0** (below). Older entries stay as written and describe what
+now ships as **1.0.1** (below). Older entries stay as written and describe what
 they did or did not do at the time; "Known limitations" is part of the release
 rather than a footnote.
+
+## [1.0.1] -- 2026-11-12 -- post-release fixes
+
+产品行为与 1.0.0 相同，只有发布后暴露的四个缺陷修复，没有新功能：
+
+- `watashi_fetch` 对 https 下载未设置 `WINHTTP_FLAG_SECURE`，请求以明文发到
+  443，实际 `--fetch` 全部 502；修复后 12 个 https 资产全部下载并校验通过。
+- 事件与 `report.json` 的 `backend`/`trace` 之前写死为 `fake`；现在反映真实
+  路径（`onnx`、`corpus+rules`、`local-nmt/int8` 等），骨架路径仍报告 `fake`。
+- `ppocr_keys_v1.txt` 纳入 `models.lock.json`（`pp-ocrv4-charset`，26,249 B，
+  SHA-256 `28b2362a…c7f7`），`--check`/`--fetch` 覆盖，缺失项 14 → 15。
+- `install.ps1` 的 `--dest` 提示改为 `<prefix>\user`，避免 `user\models\models`。
+
+验证：clean build（`git archive 137ebd2`）**324/324 CTest**；实际 `--fetch`
+exit 0（26 s，`downloaded=12 manual=3 failed=0`）；干净 Win11 VM 标准用户
+install → 真实 PP-OCRv4 + NLLB（600 帧 / 600 字幕，`backend="onnx,
+local-nmt/int8"`）→ uninstall 全部通过。包
+`dist/ProjectWatashi-1.0.1-win64.zip`（16,485,503 B，SHA-256
+`88993790…a3976`），`SHA256SUMS.txt` 校验 OK。本地 tag `v1.0.1`，`v1.0.0`
+tag 未移动。详见 `docs/ACCEPTANCE.md` §10 与 `docs/RELEASE.md` §10.4。
 
 ## [1.0.0] -- 2026-11-11 -- final release
 

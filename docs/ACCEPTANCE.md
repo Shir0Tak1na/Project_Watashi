@@ -1,10 +1,14 @@
 # v1.0.0-rc1 人工验收 / Manual acceptance
 
-状态日期：**2026-11-11**。
+状态日期：**2026-11-12**。
 结论：**RC1 的 B 验收已完成**（Medium 桌面、干净 Win11 VM、控制面、安装/卸载）。
 **最终 v1.0.0 已发布并 push（2026-11-12，tag `v1.0.0` deref `a0ecccd`）**：本文档的
 RC1 验收结果作为最终 1.0.0 的**验收输入**沿用；历史结果不改写。最终包、clean
 build 与发布记录见 [docs/RELEASE.md](RELEASE.md)。
+
+**v1.0.1（2026-11-12）**：在干净 Win11 VM 的标准用户下，用最终 1.0.1 ZIP 完成
+安装 → 真实 PP-OCRv4 + NLLB 运行 → 卸载；实际 `--fetch` 也在本轮联网跑通。
+结果见 §10，历史 RC1/1.0.0 记录保持不变。
 
 > 规则：只有实际执行并留下证据的条目才写 PASS。没有执行或无法执行的条目写
 > **未验**，不得写成“通过”。skipped 不等于 passed。
@@ -151,9 +155,9 @@ VM 内的证据由用户确认，截图未入库。
 | R2 | ZIP + SHA256SUMS 备份到第二个盘/外部存储 | ✅ 完成：`D:\WatashiRelease\v1.0.0\`，`-c` OK |
 | R3 | `watashi_fetch --check` 缺模型返回 1 | ✅ 通过：exit 1，15 个缺失项（含 `ppocr_keys_v1.txt`） |
 | R4 | `--offline` 拒绝网络 | ✅ 通过：exit 1，12 个 https 资产被拒，3 个 ONNX 文件标 manual |
-| R5 | 实际 `--fetch`（模型约 1.1 GB） | ⚠️ 网络路径未验：本机 WinHTTP 为 direct access，系统代理在 WinINet（127.0.0.1:7891），`watashi_fetch` 走 WinHTTP 因此 `send failed`；字符表用 file:// 镜像跑通 fetch 校验 + 原子改名 |
+| R5 | 实际 `--fetch`（模型约 1.1 GB） | ✅ 通过（2026-11-12，1.0.1 轮次）：联网 exit 0，26 s，`downloaded=12 manual=3 failed=0`，12 个文件逐条 SHA-256/字节数校验后原子改名；根因是 `tools/fetch_core.cpp` 未传 `WINHTTP_FLAG_SECURE`（https 被当明文发到 443，代理回 502），已修 |
 | R6 | 真实 OCR + NMT 运行（非 fake/corpus） | ✅ 已修复（2026-11-12）：`backend="onnx, local-nmt/int8"`、`trace="ocr: onnx\nlocal-nmt/int8"` |
-| R7 | 最终 1.0.0 ZIP 干净安装/运行/卸载 | ⚠️ 安装/运行通过；卸载在 `%LOCALAPPDATA%` 被本机拦截，备用 prefix 通过 → 真实目录卸载未验 |
+| R7 | 最终 1.0.0 ZIP 干净安装/运行/卸载 | ⚠️ 安装/运行通过；卸载在 `%LOCALAPPDATA%` 被本机拦截，备用 prefix 通过 → 真实目录卸载未验。**已在 1.0.1 轮次用干净 VM 复核，见 §10** |
 
 **2026-11-12 发布后修复（未升版本、未重打包、未移动 tag）**：
 
@@ -167,3 +171,61 @@ VM 内的证据由用户确认，截图未入库。
 
 详见 [docs/POST-V1.0.md](POST-V1.0.md)。P0 通过前不开始 v1.1，
 也不把 tray/UEFI/签名/复现性当作新功能开发。
+
+## 10. v1.0.1 验收 / v1.0.1 acceptance（2026-11-12）
+
+对象：`dist/ProjectWatashi-1.0.1-win64.zip`（16,485,503 字节，SHA-256
+`88993790d47543167eb638538c513b1f0d31c1a1ae1ccf8ffc72f974177a3976`）。
+构建：`git archive 137ebd2` → `build-final/clean-src-1.0.1` →
+`build-final/clean-build-1.0.1`，**324/324 CTest**；`tools/make_sbom.py --check` OK。
+
+### 10.1 环境
+
+| 项 | 记录 |
+| --- | --- |
+| VM | VirtualBox 7.2.22，`Watashi-Win11`，Windows 11 企业评估版 build 26100，headless |
+| VM 账户 | 标准用户 `watashi-test`（非管理员组），全程无 UAC 提示 |
+| Guest Additions | **未安装**；文件传入用宿主 HTTP 服务（NAT `10.0.2.2:8000`）+ `WebClient`，回传用 HTTP PUT |
+| 宿主 | Windows 10 Home China；WinHTTP 系统代理 `127.0.0.1:7891`（Clash），验收后已 `netsh winhttp reset proxy` |
+
+### 10.2 模型获取（宿主 + VM）
+
+| # | 步骤 | 结果 |
+| --- | --- | --- |
+| F1 | `--check` 空目录 | exit **1**，15 个缺失项含 `ppocr_keys_v1.txt` |
+| F2 | `--fetch --offline` | exit **1**，12 个 https 资产被拒，3 个 ONNX 标 manual |
+| F3 | 实际 `--fetch`（联网） | exit **0**，**26 s**，`downloaded=12 manual=3 failed=0`；12 个文件逐条 `[ok] ... verified`；无 `.part` 残留 |
+| F4 | 3 个 ONNX（lock 无 URL） | 从 `rapidocr-onnxruntime 1.4.4` 复制，SHA-256/字节数与 lock 一致；`--check` → exit **0（ok=15）** |
+| F5 | 模型总量 | 15 个文件，**1,149,779,218 字节** |
+
+`--fetch` 之前全部 502：`WinHttpOpenRequest` 未传 `WINHTTP_FLAG_SECURE`，https
+被当明文发到 443。修复后同一请求 200（P/Invoke 探针复现：flags=0 → 502，
+flags=0x00800000 → 200）。
+
+### 10.3 VM 安装 / 真实运行 / 卸载
+
+| # | 步骤 | 结果 |
+| --- | --- | --- |
+| V10.1 | 标准用户 `install.ps1` | exit **0**；21 个 payload、`vcomp140.dll`、`user\`、HKCU `DisplayVersion=1.0.1`、快捷方式；无 UAC |
+| V10.2 | `--version` | `Project Watashi 1.0.1 / commit 137ebd2a5e14 / Release` |
+| V10.3 | 模型落盘 + `--check` | 15 个文件全部哈希/字节数匹配（40.4 s，1,149,779,218 B）；`--check` exit **0（ok=15）** |
+| V10.4 | 真实 OCR + NMT（60 s，`--capture window --window-title "watashi control" --ocr onnx --translator nmt`） | exit **0**；`frames=600`、`subtitles=600`、`malformed=0`；`backend="onnx, local-nmt/int8"`；`source="watashi control X / Pause Hide Exit"` → `target="瓦西控制 X / 暂停隐藏出口"`；NMT `loaded in 1974.14 ms (int8, 4 threads, beam 1)`；内存 9.86→11.87 MiB；无崩溃 |
+| V10.5 | 引擎直连 NDJSON（`--capture screen`，10 s） | `backend="onnx, corpus+rules, local-nmt/int8"`；`trace="ocr: onnx\ncorpus+rules (already complete)\nlocal-nmt/int8"`；32 行中 28 行 `used_model=true` |
+| V10.6 | `uninstall.ps1`（标准用户） | exit **0**；payload/`config\`/`licenses\`/HKCU/快捷方式全部移除；`user\` 保留（15 个模型文件，1,149,779,218 B） |
+| V10.7 | 目录残留 | `%LOCALAPPDATA%\ProjectWatashi` 只剩 `user\` 与 `logs\`（运行时环形日志，`docs/INSTALL.md` §4 归类为运行时数据，不在 payload 清单） |
+
+**诚实记录**：
+
+- `report.json` 不含 `trace` 字段（设计如此），`trace` 的证据取自 CLI 的 NDJSON
+  事件流（`build-final/vmshare/uploads/events.jsonl`）。
+- `--capture synthetic` 不经过 OCR，不能用于证明真实模型；本轮全部用真实像素
+  捕获（窗口/屏幕）。
+- VM 是 BIOS + LabConfig 绕过 TPM/SecureBoot 安装的老环境，不是 UEFI 验收；
+  Guest Additions 未装，NAT 文件传输是否等价于真实用户手工拷贝不影响安装/运行
+  结论（安装包与脚本完全在 guest 内执行）。
+- 1.0.0 ZIP 在本机 `%LOCALAPPDATA%` 卸载被沙箱拦截的问题，在 VM 标准用户下
+  **未复现**，判定为本机宿主限制。
+
+证据（`build-final/`、`build-rc/` 不进 git）：`build-rc/fetch-real.log`、
+`build-final/vmshare/uploads/{s1,s2,s3,s4}.log`、`report.json`、
+`events.jsonl`、`ui-err.log`、`cli-err.log`、`vm-s*.png` 截图。

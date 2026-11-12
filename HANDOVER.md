@@ -1,16 +1,18 @@
 # 交接说明 / Handover
 
 > 给接手的人或编码代理：**先读这一页，再读别的。**
-> 最后更新：**2026-11-12（v1.0.0 已 push/备份；P0 剩余实际 fetch、backend/trace、真实目录卸载）**
+> 最后更新：**2026-11-12（v1.0.1 已发布：真实 fetch、真实 OCR/NMT、VM 安装/卸载全部走通）**
 
 ## 一句话状态
 
-C++ 主线 **v1.0.0 已发布**：B 验收完成（Medium 桌面、干净 Win11 VM、控制面、
-安装/卸载、10 分钟与 8 小时 soak），clean build 318/318，最终包
-`dist/ProjectWatashi-1.0.0-win64.zip`（SHA-256 与审计见 docs/RELEASE.md），
-annotated tag `v1.0.0`（deref `a0ecccd`）**已 push**，包已备份到
-`D:\WatashiRelease\v1.0.0\`（副本校验通过）。托盘在本机不可用，为 best-effort，
-控制窗/热键是已验收的发布入口。
+C++ 主线 **v1.0.1 已发布**：B 验收完成（Medium 桌面、干净 Win11 VM、控制面、
+安装/卸载、10 分钟与 8 小时 soak），clean build **324/324**，最终包
+`dist/ProjectWatashi-1.0.1-win64.zip`（16,485,503 B，SHA-256 `88993790…a3976`，
+审计见 docs/RELEASE.md），annotated tag **`v1.0.1`**（`v1.0.0` tag 未移动）。
+1.0.1 相对 1.0.0 只含发布后缺陷修复：`backend`/`trace` 真实化、字符表入 lock、
+install 提示、fetch 的 HTTPS TLS 标志。真实 `--fetch`（26 s、12 下载/3 manual）
+与 VM 标准用户下的真实 PP-OCRv4 + NLLB 运行均已通过（ACCEPTANCE §10）。
+托盘在本机不可用，为 best-effort，控制窗/热键是已验收的发布入口。
 
 ## 必读顺序（约 30 分钟）
 
@@ -25,7 +27,9 @@ annotated tag `v1.0.0`（deref `a0ecccd`）**已 push**，包已备份到
 
 ## 什么是真的（可复现）
 
-- **C++ 测试**：clean build（git archive 版本 commit `7a2c1a0`）通过 **318/318 CTest**；低完整性宿主上 installer 两例会以 77 skip（本机实际执行通过）。
+- **C++ 测试**：clean build（git archive `137ebd2`）通过 **324/324 CTest**；低完整性宿主上 installer 两例会以 77 skip（本机实际执行通过）。
+- **真实模型**：1.0.1 ZIP 在 Win11 VM 标准用户上跑 60 s，600 帧/600 字幕，
+  `backend="onnx, local-nmt/int8"`，`瓦西控制 / 暂停隐藏出口`；trace 见 ACCEPTANCE §10.3。
 - **控制面**：`--control auto` 在 tray 不可用时自动显示 `watashi control`；Pause/Hide/Exit 已验。
 - **安装/卸载**：标准用户、无管理员；HKCU + 开始菜单；卸载默认保留 `user\`。
 - **8h soak**：28801.5 s，exit 0，handles 169→169，内存 15.0→13.8 MiB（peak 16.4），log_errors 0。
@@ -56,20 +60,20 @@ annotated tag `v1.0.0`（deref `a0ecccd`）**已 push**，包已备份到
 
 | 项 | 状态 |
 | --- | --- |
-| 版本 | **v1.0.0**（annotated tag 已 push；tag 前最后版本 commit `7a2c1a0`） |
-| 远端 | **已 push（2026-11-12）**：`origin/main` = `4ea7a2a`，tag `v1.0.0`（`50f5aab` → `a0ecccd`），**tag 未移动、无 force** |
+| 版本 | **v1.0.1**（本地 annotated tag；版本 commit `137ebd2`；`v1.0.0` tag 未移动） |
+| 远端 | **v1.0.0 已 push**：`origin/main` = `4ea7a2a`，tag `v1.0.0`（`50f5aab` → `a0ecccd`）；**v1.0.1 的 push 记录见 docs/POST-V1.0.md 同步记录（无 force）** |
 | 工作区 | clean；build-*/dist/ 已 gitignore |
-| 测试 | clean build（git archive 7a2c1a0）**318/318 CTest**（installer 两例本机实际执行）；license/SBOM/soak 检查 |
-| 验收 | Medium PASS；VM PASS（BIOS/TPM 绕过）；控制面 PASS；安装/运行 PASS；真实目录卸载未验（备用 prefix PASS） |
+| 测试 | clean build（git archive `137ebd2`）**324/324 CTest**（installer 两例本机实际执行）；license/SBOM/soak 检查 |
+| 验收 | 1.0.1 VM 标准用户 install/run/uninstall PASS；真实 `--fetch` PASS；控制面 PASS |
 | 长稳 | 10m PASS；8h PASS（`build-rc/soak-8h.json`） |
-| **最终包** | **`dist/ProjectWatashi-1.0.0-win64.zip`**，16,483,547 字节，SHA-256 `da6f0c99...`（完整值/审计见 docs/RELEASE.md §1；`dist/SHA256SUMS.txt` `sha256sum -c` OK） |
-| 备份 | **已备份（2026-11-12）**：`D:\WatashiRelease\v1.0.0\`（ZIP + SHA256SUMS，副本 `sha256sum -c` OK，哈希与 `dist/` 一致） |
+| **最终包** | **`dist/ProjectWatashi-1.0.1-win64.zip`**，16,485,503 字节，SHA-256 `88993790d47543167eb638538c513b1f0d31c1a1ae1ccf8ffc72f974177a3976`（完整值/审计见 docs/RELEASE.md §1；`dist/SHA256SUMS.txt` 逐文件校验 OK） |
+| 备份 | **`D:\WatashiRelease\v1.0.0\`** 已校验（历史）；1.0.1 备份目录 `D:\WatashiRelease\v1.0.1\` |
 | GitHub Release | 未创建（无 `gh`/token）；手工上传步骤见 docs/RELEASE.md §10.3 |
 | 验收包 | `build-rc/stage-vcomp.zip`（RC1 B 验收对象，16,943,345 bytes） |
-| 旧包 | `build-rc/archive/rc1/ProjectWatashi-1.0.0-rc1-win64.zip`（归档） |
+| 旧包 | `build-rc/archive/rc1/ProjectWatashi-1.0.0-rc1-win64.zip`（归档）；`dist/ProjectWatashi-1.0.0-win64.zip`（16,483,547 B） |
 | 托盘 | 本机/VM 通知区不可用；best-effort，不阻塞发布 |
 | 签名 | unsigned |
-| 下一步 | P0 剩余：实际 `--fetch`、`ppocr_keys_v1.txt`、`backend`/`trace` 写死、真实目录卸载、GitHub Release；见 [docs/POST-V1.0.md](docs/POST-V1.0.md) |
+| 下一步 | P0 收口：GitHub Release 页面（可选）、tray 实点、UEFI、签名；见 [docs/POST-V1.0.md](docs/POST-V1.0.md) |
 
 ## W0 交付记录（2026-10-28）
 

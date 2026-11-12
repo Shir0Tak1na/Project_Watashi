@@ -1,25 +1,23 @@
 # v1.0.0 之后 / Post-release plan
 
 状态日期：**2026-11-12**。
-当前发布：**v1.0.0 已 push 到远端**（`origin/main` = `4ea7a2a`，tag `v1.0.0`
-deref = `a0ecccd`，未移动）；最终包
-`dist/ProjectWatashi-1.0.0-win64.zip`（不进 git）已备份到
-`D:\WatashiRelease\v1.0.0\`，副本 `sha256sum -c` 通过。GitHub Release 尚未
-创建（本机无 `gh`）。2026-11-12 另有三个发布后缺陷修复（未升版本、未重打包、
-未移动 tag），见 §2.6。
+当前发布：**v1.0.1 已发布**（v1.0.0 的远端 tag 未移动）。1.0.0 的最终包
+`dist/ProjectWatashi-1.0.0-win64.zip` 已备份到 `D:\WatashiRelease\v1.0.0\`；
+1.0.1 的包与校验和见 `dist/`。GitHub Release 尚未创建（本机无 `gh`）。
+2026-11-12 的发布后缺陷（backend/trace、简报字符表、install 提示、fetch TLS）
+已在 1.0.1 收口，见 §2.6/§2.7。
 
 ## 0. 结论
 
-**先验证和修复，不继续开发新功能。**
-
-v1.0.0 已通过 RC1 的 B 验收（Medium、干净 VM、控制面、安装/卸载、8h soak），
-但还有三项“已发布但未证明”的 P0：
+**P0 收口完成；可以进入 v1.1。** 三项“已发布但未证明”的 P0 现状：
 
 1. ~~发布物没有远端备份/远端 tag~~ → **已完成 2026-11-12**（push + 本机第二卷备份；仍无异地副本）；
-2. 真实模型（PP-OCRv4 + NLLB）没有在最终包上跑通；
-3. 最终 1.0.0 ZIP 没有重新走一次安装验收（验收对象是 RC1 的 `stage-vcomp.zip`）。
+2. 真实模型（PP-OCRv4 + NLLB）没有在最终包上跑通 → **完成**：1.0.1 最终 ZIP
+   在干净 Win11 VM 的标准用户下跑通（§2.7）；
+3. 最终 ZIP 没有重新走安装验收 → **完成**：同一轮 VM 安装/运行/卸载。
 
-P0 完成前，不开 v1.1、不做大规模架构重构。
+仍未做（不阻塞 1.0.1）：tray 真实点击、UEFI、代码签名、构建可复现性、
+GitHub Release 页面。
 
 ## 1. P0 · 发布收口
 
@@ -36,10 +34,10 @@ P0 完成前，不开 v1.1、不做大规模架构重构。
 | --- | --- | --- | --- |
 | P0.5 | `watashi_fetch --check` 缺模型 | 退出码 1，打印缺失项，不联网 | **通过**：exit 1，列出 15 个缺失文件（含字符表） |
 | P0.6 | `--offline` | 拒绝 http，退出码 1 | **通过**：exit 1，12 个 https 资产被拒；3 个 ONNX 文件标记 manual |
-| P0.7 | 实际 `--fetch` | SHA-256/字节数/原子改名通过 | **未验（仅网络路径）**：本机 WinHTTP 为 direct access、系统代理在 WinINet，`watashi_fetch` 报 `send failed`；字符表已用 file:// 镜像跑通下载/校验/原子改名（§2.6） |
-| P0.8 | 真实 OCR + NMT 运行 | `--ocr onnx` + `--translator nmt/hybrid` 有字幕、有 backend、无崩溃 | **已修复（2026-11-12）**：真实路径报告 `backend="onnx, local-nmt/int8"`、`trace="ocr: onnx\nlocal-nmt/int8"`，见 §2.3/§2.6 |
-| P0.9 | 报告 | 记录模型加载、首帧/延迟、内存、失败原因 | **通过**：真实 backend/trace 已进入事件与 report；NMT 加载 707–816 ms、内存 10.9–11.7 MiB、exit 0 |
-| P0.10 | 最终 ZIP 安装后复跑 | 标准用户安装的 `watashi_ui.exe` 上同样通过 | **功能通过**：最终 1.0.0 ZIP 安装后跑通；安装进程为提升令牌，见 §2.1 |
+| P0.7 | 实际 `--fetch` | SHA-256/字节数/原子改名通过 | **通过（2026-11-12）**：修 TLS 标志后联网 exit 0，26 s，`downloaded=12 manual=3 failed=0`，12 个文件逐条 verified；3 个 ONNX 无 URL，从 PyPI 包复制并核对哈希 |
+| P0.8 | 真实 OCR + NMT 运行 | `--ocr onnx` + `--translator nmt/hybrid` 有字幕、有 backend、无崩溃 | **通过（VM 复核）**：`backend="onnx, local-nmt/int8"`，60 s 内 600 条字幕，见 §2.7 |
+| P0.9 | 报告 | 记录模型加载、首帧/延迟、内存、失败原因 | **通过**：VM 内 NMT 加载 1974.14 ms、内存 9.86–11.87 MiB、exit 0；trace 取自 NDJSON |
+| P0.10 | 最终 ZIP 安装后复跑 | 标准用户安装的 `watashi_ui.exe` 上同样通过 | **通过（2026-11-12）**：干净 Win11 VM 标准用户 `watashi-test`，install → 真实模型 → uninstall，无 UAC，见 §2.7 |
 
 模型下载约 1.1 GB（lock 合计 1,149,779,218 字节）；网络/体积需用户确认。不能用
 fake/corpus 冒充真实模型验收。
@@ -109,8 +107,9 @@ fake/corpus 冒充真实模型验收。
 对照实验（均在同一会话）：同文件 `exclusive-open` 成功（无句柄）、`Rename-Item`
 成功、复制到 `build-final` 后删除成功、在安装目录新建临时文件后删除成功；无进程
 映射该 exe。结论：**不是卸载脚本逻辑问题**，是 `%LOCALAPPDATA%\ProjectWatashi`
-在这一宿主上的删除被拦截（沙箱/EPP 层），根因未完全确认。因此“最终 ZIP 在真实
-用户目录卸载”记为 **未验**，需在干净 VM 复核；`%LOCALAPPDATA%` 残留需手工清理。
+在这一宿主上的删除被拦截（沙箱/EPP 层），根因未完全确认。**2026-11-12 在干净
+Win11 VM 的标准用户下复核：卸载 exit 0，payload/HKCU/快捷方式全部移除，
+`user\` 保留，该残留未复现**（§2.7）。
 
 ### 2.5 托盘观察
 
@@ -150,9 +149,31 @@ fake/corpus 冒充真实模型验收。
 导出的 26,250 字节版本，与新 lock 的 canonical 26,249 字节不一致；用新版
 `--check` 会把它判为哈希不符，需重新 `--fetch`（或替换为 canonical 文件）。
 
-**仍未验**：1.1 GB 模型的真实网络下载。本机 Windows 系统代理在 WinINet
-（`127.0.0.1:7891`），而 `watashi_fetch` 的 WinHTTP 为 direct access，
-因此报 `send failed`；这是宿主网络配置问题，不是本次三处修复的行为回归。
+**已解决（2026-11-12）**：真实 `--fetch` 的失败不是代理配置，而是
+`tools/fetch_core.cpp` 没给 `WinHttpOpenRequest` 传 `WINHTTP_FLAG_SECURE`——
+https 被当明文发到 443，代理返回 502。修复后同一请求 200，实际下载
+`downloaded=12 manual=3 failed=0`、26 s（§2.7）。
+
+### 2.7 v1.0.1 发布与 VM 验收（2026-11-12）
+
+版本统一为 **1.0.1**（CMake / `WATASHI_VERSION` / `config/install_manifest.json` /
+`tools/license_manifest.json` / `licenses/sbom.spdx.json` / `--version`），
+产品行为与 1.0.0 相同，只含 §2.6 与 fetch TLS 修复。
+
+| 步骤 | 结果 |
+| --- | --- |
+| clean build | `git archive 137ebd2` → `build-final/clean-src-1.0.1`，Release 构建通过 |
+| 回归 | `ctest` **324/324**（分块运行）；`make_sbom.py --check` OK |
+| 打包 | `dist/ProjectWatashi-1.0.1-win64.zip`，16,485,503 B，SHA-256 `88993790…a3976`；`SHA256SUMS.txt` UTF-8 无 BOM / LF，逐文件校验通过 |
+| 包内容 | 29 个条目；含 `vcomp140.dll`、`models.lock.json`；无权重、无 `.pdb` |
+| VM 安装 | Win11 企业评估版（VirtualBox，headless）标准用户 `watashi-test`：exit 0，21 个 payload，`DisplayVersion=1.0.1`，快捷方式，无 UAC |
+| 真实运行 | `--capture window --window-title "watashi control" --ocr onnx --translator nmt` 60 s：600 帧 / 600 条字幕，`backend="onnx, local-nmt/int8"`，`瓦西控制 / 暂停隐藏出口`，NMT 加载 1974 ms，退出码 0 |
+| trace | CLI NDJSON：`backend="onnx, corpus+rules, local-nmt/int8"`，`trace="ocr: onnx\ncorpus+rules (already complete)\nlocal-nmt/int8"` |
+| VM 卸载 | exit 0；payload/`config\`/`licenses\`/HKCU/快捷方式移除；`user\` 保留（1,149,779,218 B） |
+
+细节与证据见 [docs/ACCEPTANCE.md](ACCEPTANCE.md) §10、[docs/RELEASE.md](RELEASE.md) §10。
+VM 内 `logs\` 目录仍然保留（运行时环形日志，属于运行时数据而非 payload），
+已如实记录，不当作“目录完全为空”。
 
 ## 3. P1 · v1.0.1（仅修 P0 暴露的问题）
 
@@ -168,6 +189,10 @@ fake/corpus 冒充真实模型验收。
 - 不改事件 schema、模型、UI 行为；
 - 修复后重新出 1.0.1 包、更新 docs/RELEASE；
 - 不因为“顺手”加功能。
+
+**状态（2026-11-12）：已交付。** 触发项是真实 fetch 的 TLS 缺陷（§2.7）；
+包、校验和、VM 验收都已完成，tag `v1.0.1`，v1.0.0 tag 未移动。三项架构债
+（下面 §4）不在 1.0.1 范围内。
 
 ## 4. P1 · 架构债（v1.0.1 之后，v1.1 之前）
 
