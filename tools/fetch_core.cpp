@@ -138,6 +138,28 @@ bool parse_file(
         url != document.end() && url->is_string()) {
         file.url = url->get<std::string>();
     }
+    const auto archive_path = document.find("archive_path");
+    if (archive_path != document.end()) {
+        if (!archive_path->is_string() ||
+            !safe_relative_path(archive_path->get<std::string>(), &file.archive_path)) {
+            if (error != nullptr) *error = "file " + file.path + " has an unsafe archive_path";
+            return false;
+        }
+        const auto archive_sha = document.find("archive_sha256");
+        const auto archive_size = document.find("archive_size");
+        if (archive_sha == document.end() || !archive_sha->is_string()) {
+            if (error != nullptr) *error = "file " + file.path + " has no archive_sha256";
+            return false;
+        }
+        file.archive_sha256 = lower(trim(archive_sha->get<std::string>()));
+        if (file.archive_sha256.size() != 64 || archive_size == document.end() ||
+            !(archive_size->is_number_integer() || archive_size->is_number_unsigned()) ||
+            archive_size->get<double>() <= 0.0) {
+            if (error != nullptr) *error = "file " + file.path + " has bad archive metadata";
+            return false;
+        }
+        file.archive_size = archive_size->get<std::uint64_t>();
+    }
     return true;
 }
 
@@ -218,24 +240,95 @@ std::string decode_file_url(std::string url) {
     return decoded;
 }
 
+struct WinHttpHandle {
+    HINTERNET value = nullptr;
+    ~WinHttpHandle() {
+        if (value != nullptr) WinHttpCloseHandle(value);
+    }
+};
+
+std::string wide_to_utf8(const std::wstring& text) {
+    if (text.empty()) return {};
+    const int size = WideCharToMultiByte(
+        CP_UTF8, 0, text.data(), static_cast<int>(text.size()), nullptr, 0,
+        nullptr, nullptr);
+    std::string result(static_cast<std::size_t>(std::max(size, 0)), '\0');
+    if (size > 0) {
+        WideCharToMultiByte(
+            CP_UTF8, 0, text.data(), static_cast<int>(text.size()), result.data(),
+            size, nullptr, nullptr);
+    }
+    return result;
+}
+
+std::string winhttp_failure(
+    const char* operation,
+    const std::string& url,
+    DWORD code) {
+    char message[512]{};
+    const DWORD length = FormatMessageA(
+        FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_FROM_HMODULE |
+            FORMAT_MESSAGE_IGNORE_INSERTS,
+        GetModuleHandleW(L"winhttp.dll"), code, 0, message,
+        static_cast<DWORD>(sizeof(message)), nullptr);
+    const bool tls =
+        code == ERROR_WINHTTP_SECURE_FAILURE ||
+        code == ERROR_WINHTTP_SECURE_INVALID_CA ||
+        code == ERROR_WINHTTP_SECURE_CERT_CN_INVALID ||
+        code == ERROR_WINHTTP_SECURE_CERT_DATE_INVALID ||
+        code == ERROR_WINHTTP_SECURE_INVALID_CERT ||
+        code == ERROR_WINHTTP_SECURE_CERT_REVOKED ||
+        code == ERROR_WINHTTP_SECURE_CERT_REV_FAILED;
+    std::string result = std::string(operation) + " failed for " + url + " (" +
+                         (tls ? "TLS/HTTPS " : "WinHTTP ") + "error " +
+                         std::to_string(code);
+    if (length > 0) {
+        result += ": " + trim(std::string(message, length));
+    }
+    return result + ")";
+}
+
+bool retryable_http_status(DWORD status) {
+    return status == 429 || status >= 500;
+}
+
+std::string final_request_url(HINTERNET request) {
+    std::vector<wchar_t> buffer(32768);
+    DWORD size = static_cast<DWORD>(buffer.size() * sizeof(wchar_t));
+    if (!WinHttpQueryOption(
+            request, WINHTTP_OPTION_URL, buffer.data(), &size)) {
+        return {};
+    }
+    return wide_to_utf8(std::wstring(buffer.data(), size / sizeof(wchar_t)));
+}
+
+std::string http_status_text(HINTERNET request) {
+    wchar_t buffer[256]{};
+    DWORD size = sizeof(buffer);
+    if (!WinHttpQueryHeaders(
+            request, WINHTTP_QUERY_STATUS_TEXT, WINHTTP_HEADER_NAME_BY_INDEX,
+            buffer, &size, WINHTTP_NO_HEADER_INDEX)) {
+        return {};
+    }
+    return wide_to_utf8(std::wstring(buffer, size / sizeof(wchar_t)));
+}
+
 bool http_download(
     const std::string& url,
     const std::filesystem::path& target,
     const FileSpec& spec,
-    bool resume,
+    const DownloadOptions& options,
     std::string* error) {
     const std::filesystem::path temporary = target.string() + ".part";
     std::filesystem::create_directories(target.parent_path());
-    if (!resume) {
+    if (!options.resume) {
         std::filesystem::remove(temporary);
     }
     std::uint64_t offset = 0;
-    if (resume) {
+    if (options.resume) {
         std::error_code size_error;
         const auto size = std::filesystem::file_size(temporary, size_error);
-        if (!size_error) {
-            offset = size;
-        }
+        if (!size_error) offset = size;
     }
 
     const std::wstring wide_url(url.begin(), url.end());
@@ -252,125 +345,255 @@ bool http_download(
     const std::wstring host(components.lpszHostName, components.dwHostNameLength);
     std::wstring path(components.lpszUrlPath, components.dwUrlPathLength);
     if (components.dwExtraInfoLength > 0) {
-        path += std::wstring(
-            components.lpszExtraInfo, components.dwExtraInfoLength);
+        path += std::wstring(components.lpszExtraInfo, components.dwExtraInfoLength);
     }
-    // WinHTTP picks TLS from this flag, not from the port: without it an
-    // https:// URL goes out as a plaintext request to 443.
+    // WinHTTP picks TLS from this flag, not from the port.
     const DWORD request_flags =
         components.nScheme == INTERNET_SCHEME_HTTPS ? WINHTTP_FLAG_SECURE : 0;
-
-    HINTERNET session = WinHttpOpen(
+    WinHttpHandle session{WinHttpOpen(
         L"watashi-fetch/1.0", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
-        WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
-    if (session == nullptr) {
-        if (error != nullptr) *error = "WinHttpOpen failed";
+        WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0)};
+    if (session.value == nullptr) {
+        if (error != nullptr) *error = winhttp_failure("WinHttpOpen", url, GetLastError());
         return false;
     }
     const int timeout = 60000;
-    WinHttpSetTimeouts(session, timeout, timeout, timeout, timeout);
+    WinHttpSetTimeouts(session.value, timeout, timeout, timeout, timeout);
+    DWORD max_redirects = 5;
+    WinHttpSetOption(
+        session.value, WINHTTP_OPTION_MAX_HTTP_AUTOMATIC_REDIRECTS,
+        &max_redirects, sizeof(max_redirects));
 
-    HINTERNET connection = WinHttpConnect(
-        session, host.c_str(), static_cast<INTERNET_PORT>(components.nPort), 0);
-    HINTERNET request = nullptr;
-    bool success = false;
-    if (connection != nullptr) {
-        request = WinHttpOpenRequest(
-            connection, L"GET", path.c_str(), nullptr, WINHTTP_NO_REFERER,
-            WINHTTP_DEFAULT_ACCEPT_TYPES, request_flags);
-    }
-    if (request != nullptr) {
+    const int attempts = std::max(1, std::min(options.max_attempts, 5));
+    for (int attempt = 1; attempt <= attempts; ++attempt) {
+        WinHttpHandle connection{WinHttpConnect(
+            session.value, host.c_str(),
+            static_cast<INTERNET_PORT>(components.nPort), 0)};
+        if (connection.value == nullptr) {
+            if (error != nullptr) {
+                *error = winhttp_failure("connect", url, GetLastError());
+            }
+            return false;
+        }
+        WinHttpHandle request{WinHttpOpenRequest(
+            connection.value, L"GET", path.c_str(), nullptr, WINHTTP_NO_REFERER,
+            WINHTTP_DEFAULT_ACCEPT_TYPES, request_flags)};
+        if (request.value == nullptr) {
+            if (error != nullptr) {
+                *error = winhttp_failure("open request", url, GetLastError());
+            }
+            return false;
+        }
         if (offset > 0) {
-            const std::wstring range =
-                L"Range: bytes=" + std::to_wstring(offset) + L"-";
+            const std::wstring range = L"Range: bytes=" + std::to_wstring(offset) + L"-";
             WinHttpAddRequestHeaders(
-                request, range.c_str(), static_cast<DWORD>(-1),
+                request.value, range.c_str(), static_cast<DWORD>(-1),
                 WINHTTP_ADDREQ_FLAG_ADD | WINHTTP_ADDREQ_FLAG_REPLACE);
         }
-        if (WinHttpSendRequest(
-                request, WINHTTP_NO_ADDITIONAL_HEADERS, 0,
-                WINHTTP_NO_REQUEST_DATA, 0, 0, 0) &&
-            WinHttpReceiveResponse(request, nullptr)) {
-            DWORD status = 0;
-            DWORD status_size = sizeof(status);
-            WinHttpQueryHeaders(
-                request,
-                WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
+        if (!WinHttpSendRequest(
+                request.value, WINHTTP_NO_ADDITIONAL_HEADERS, 0,
+                WINHTTP_NO_REQUEST_DATA, 0, 0, 0)) {
+            if (error != nullptr) *error = winhttp_failure("send", url, GetLastError());
+            return false;
+        }
+        if (!WinHttpReceiveResponse(request.value, nullptr)) {
+            if (error != nullptr) *error = winhttp_failure("receive", url, GetLastError());
+            return false;
+        }
+
+        const std::string final_url = final_request_url(request.value);
+        if (!final_url.empty() && final_url != url && options.report) {
+            options.report("redirect: " + url + " -> " + final_url);
+        }
+        DWORD status = 0;
+        DWORD status_size = sizeof(status);
+        if (!WinHttpQueryHeaders(
+                request.value, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
                 WINHTTP_HEADER_NAME_BY_INDEX, &status, &status_size,
-                WINHTTP_NO_HEADER_INDEX);
-            if (status == 206) {
-                // append at offset
-            } else if (status == 200) {
-                offset = 0;
-                std::filesystem::remove(temporary);
-            } else {
-                if (error != nullptr) {
-                    *error = "HTTP " + std::to_string(status) + " for " + url;
+                WINHTTP_NO_HEADER_INDEX)) {
+            if (error != nullptr) *error = winhttp_failure("read HTTP status", url, GetLastError());
+            return false;
+        }
+        const std::string reason = http_status_text(request.value);
+        const std::string status_label =
+            "HTTP " + std::to_string(status) + (reason.empty() ? "" : " " + reason);
+        if (retryable_http_status(status) && attempt < attempts) {
+            const unsigned delay = options.retry_delay_ms * (1u << (attempt - 1));
+            if (options.report) {
+                options.report(
+                    "retry " + std::to_string(attempt + 1) + "/" +
+                    std::to_string(attempts) + " after " + status_label + " for " +
+                    url + "; backoff " + std::to_string(delay) + " ms");
+            }
+            Sleep(delay);
+            continue;
+        }
+        if (status != 200 && status != 206) {
+            if (error != nullptr) {
+                *error = status_label + " for " + url;
+                if (!final_url.empty() && final_url != url) {
+                    *error += " (redirected to " + final_url + ")";
+                }
+                if (retryable_http_status(status)) {
+                    *error += " after " + std::to_string(attempts) + " attempts";
                 }
             }
+            return false;
+        }
+        if (status == 200) {
+            offset = 0;
+            std::filesystem::remove(temporary);
+        }
 
-            if (status == 200 || status == 206) {
-                std::ofstream file(
-                    temporary,
-                    std::ios::binary |
-                        (offset > 0 ? std::ios::app : std::ios::trunc));
-                if (!file) {
-                    if (error != nullptr) {
-                        *error = "cannot write " + temporary.string();
-                    }
-                } else {
-                    std::vector<unsigned char> buffer(65536);
-                    success = true;
-                    while (true) {
-                        DWORD read = 0;
-                        if (!WinHttpReadData(
-                                request, buffer.data(),
-                                static_cast<DWORD>(buffer.size()), &read)) {
-                            if (error != nullptr) *error = "read failed for " + url;
-                            success = false;
-                            break;
-                        }
-                        if (read == 0) {
-                            break;
-                        }
-                        file.write(
-                            reinterpret_cast<const char*>(buffer.data()), read);
-                        if (!file) {
-                            if (error != nullptr) {
-                                *error = "write failed for " + temporary.string();
-                            }
-                            success = false;
-                            break;
-                        }
-                    }
+        std::ofstream file(
+            temporary,
+            std::ios::binary | (offset > 0 ? std::ios::app : std::ios::trunc));
+        if (!file) {
+            if (error != nullptr) *error = "cannot write " + temporary.string();
+            return false;
+        }
+        std::vector<unsigned char> buffer(65536);
+        while (true) {
+            DWORD read = 0;
+            if (!WinHttpReadData(
+                    request.value, buffer.data(), static_cast<DWORD>(buffer.size()), &read)) {
+                if (error != nullptr) *error = winhttp_failure("read", url, GetLastError());
+                return false;
+            }
+            if (read == 0) break;
+            file.write(reinterpret_cast<const char*>(buffer.data()), read);
+            if (!file) {
+                if (error != nullptr) *error = "write failed for " + temporary.string();
+                return false;
+            }
+        }
+        file.close();
+        if (!file) {
+            if (error != nullptr) *error = "write failed for " + temporary.string();
+            return false;
+        }
+
+        std::string verify_error;
+        if (!verify_file(temporary, spec, &verify_error)) {
+            DWORD delete_error = 0;
+            const bool deleted = remove_partial(temporary, &delete_error);
+            if (error != nullptr) {
+                *error = "downloaded file failed verification: " + verify_error;
+                if (!deleted) {
+                    *error += " (partial file could not be deleted, Win32 error " +
+                              std::to_string(delete_error) + ")";
                 }
             }
+            return false;
+        }
+        return replace_file(temporary, target, error);
+    }
+    if (error != nullptr) *error = "HTTP retry loop ended without a response for " + url;
+    return false;
+}
+
+std::wstring quote_process_argument(const std::wstring& value) {
+    std::wstring result = L"\"";
+    std::size_t backslashes = 0;
+    for (const wchar_t c : value) {
+        if (c == L'\\') {
+            ++backslashes;
+        } else if (c == L'"') {
+            result.append(backslashes * 2 + 1, L'\\');
+            result += c;
+            backslashes = 0;
         } else {
-            if (error != nullptr) *error = "send failed for " + url;
+            result.append(backslashes, L'\\');
+            backslashes = 0;
+            result += c;
         }
     }
-    if (request != nullptr) WinHttpCloseHandle(request);
-    if (connection != nullptr) WinHttpCloseHandle(connection);
-    WinHttpCloseHandle(session);
+    result.append(backslashes * 2, L'\\');
+    result += L'"';
+    return result;
+}
 
-    if (!success) {
+bool extract_zip_member(
+    const std::filesystem::path& archive,
+    const FileSpec& spec,
+    const std::filesystem::path& target,
+    std::string* error) {
+    wchar_t system_directory[32768];
+    const UINT length = GetSystemDirectoryW(
+        system_directory, static_cast<UINT>(std::size(system_directory)));
+    if (length == 0 || length >= std::size(system_directory)) {
+        if (error != nullptr) *error = "cannot locate the Windows system directory";
+        return false;
+    }
+    const std::filesystem::path tar =
+        std::filesystem::path(system_directory) / "tar.exe";
+    const std::filesystem::path staging = target.string() + ".extract";
+    std::error_code cleanup_error;
+    std::filesystem::remove_all(staging, cleanup_error);
+    cleanup_error.clear();
+    std::filesystem::create_directories(staging, cleanup_error);
+    if (cleanup_error) {
+        if (error != nullptr) *error = "cannot create extraction directory " + staging.string();
         return false;
     }
 
-    std::string verify_error;
-    if (!verify_file(temporary, spec, &verify_error)) {
-        DWORD delete_error = 0;
-        const bool deleted = remove_partial(temporary, &delete_error);
+    // Windows 10 1803+ and Windows 11 include bsdtar with ZIP/deflate support.
+    // Invoke it directly, never through a shell, and extract only the locked path.
+    std::wstring command = quote_process_argument(tar.wstring()) + L" -xf " +
+                           quote_process_argument(archive.wstring()) + L" -C " +
+                           quote_process_argument(staging.wstring()) + L" -- " +
+                           quote_process_argument(std::filesystem::path(spec.archive_path).wstring());
+    std::vector<wchar_t> mutable_command(command.begin(), command.end());
+    mutable_command.push_back(L'\0');
+    STARTUPINFOW startup{};
+    startup.cb = sizeof(startup);
+    PROCESS_INFORMATION process{};
+    if (!CreateProcessW(
+            tar.c_str(), mutable_command.data(), nullptr, nullptr, FALSE,
+            CREATE_NO_WINDOW, nullptr, nullptr, &startup, &process)) {
         if (error != nullptr) {
-            *error = "downloaded file failed verification: " + verify_error;
-            if (!deleted) {
-                *error += " (partial file could not be deleted, Win32 error " +
-                          std::to_string(delete_error) + ")";
+            *error = "cannot start Windows tar.exe for ZIP extraction (Win32 error " +
+                     std::to_string(GetLastError()) + ")";
+        }
+        std::filesystem::remove_all(staging, cleanup_error);
+        return false;
+    }
+    const DWORD waited = WaitForSingleObject(process.hProcess, INFINITE);
+    DWORD exit_code = 1;
+    const DWORD wait_error = waited == WAIT_FAILED ? GetLastError() : ERROR_SUCCESS;
+    const bool have_exit_code = waited == WAIT_OBJECT_0 &&
+                                GetExitCodeProcess(process.hProcess, &exit_code);
+    const DWORD exit_error = waited == WAIT_OBJECT_0 && !have_exit_code
+        ? GetLastError() : ERROR_SUCCESS;
+    CloseHandle(process.hThread);
+    CloseHandle(process.hProcess);
+    if (waited != WAIT_OBJECT_0 || !have_exit_code || exit_code != 0) {
+        if (error != nullptr) {
+            *error = "Windows tar.exe could not extract " + spec.archive_path;
+            if (waited != WAIT_OBJECT_0) {
+                *error += " (wait failed, Win32 error " + std::to_string(wait_error) + ")";
+            } else if (!have_exit_code) {
+                *error += " (exit status unavailable, Win32 error " +
+                          std::to_string(exit_error) + ")";
+            } else {
+                *error += " (exit code " + std::to_string(exit_code) + ")";
             }
         }
+        std::filesystem::remove_all(staging, cleanup_error);
         return false;
     }
-    return replace_file(temporary, target, error);
+
+    const std::filesystem::path extracted = staging / std::filesystem::path(spec.archive_path);
+    std::string verify_error;
+    if (!verify_file(extracted, spec, &verify_error)) {
+        if (error != nullptr) *error = "extracted file failed verification: " + verify_error;
+        std::filesystem::remove_all(staging, cleanup_error);
+        return false;
+    }
+    std::filesystem::create_directories(target.parent_path());
+    const bool replaced = replace_file(extracted, target, error);
+    std::filesystem::remove_all(staging, cleanup_error);
+    return replaced;
 }
 
 }  // namespace
@@ -437,12 +660,12 @@ bool load_lock(const std::filesystem::path& path, Lock& lock, std::string* error
             return false;
         }
         for (const auto& file_json : *files) {
-            FileSpec file;
-            if (!parse_file(file_json, file, error)) {
+            FileSpec file_spec;
+            if (!parse_file(file_json, file_spec, error)) {
                 return false;
             }
-            lock.total_bytes += file.size;
-            model.files.push_back(std::move(file));
+            lock.total_bytes += file_spec.size;
+            model.files.push_back(std::move(file_spec));
         }
         lock.models.push_back(std::move(model));
     }
@@ -671,21 +894,43 @@ bool download_file(
         if (error != nullptr) *error = "no download URL";
         return false;
     }
-    if (lower_starts_with(url, "file://")) {
-        return copy_local_file(
-            decode_file_url(url), target, spec, options.resume, error);
+    const bool local = lower_starts_with(url, "file://");
+    const bool network = lower_starts_with(url, "http://") || lower_starts_with(url, "https://");
+    if (!local && !network) {
+        if (error != nullptr) *error = "unsupported URL scheme: " + url;
+        return false;
     }
-    if (lower_starts_with(url, "http://") || lower_starts_with(url, "https://")) {
-        if (options.offline) {
-            if (error != nullptr) {
-                *error = "offline: refusing to download " + url;
+    if (network && options.offline) {
+        if (error != nullptr) *error = "offline: refusing to download " + url;
+        return false;
+    }
+
+    if (!spec.archive_path.empty()) {
+        FileSpec archive_spec;
+        archive_spec.path = spec.archive_path;
+        archive_spec.sha256 = spec.archive_sha256;
+        archive_spec.size = spec.archive_size;
+        const bool shared_cache = !options.archive_cache.empty();
+        const std::filesystem::path archive = shared_cache
+            ? options.archive_cache / (spec.archive_sha256 + ".zip")
+            : std::filesystem::path(target.string() + ".archive");
+        std::string archive_error;
+        if (!verify_file(archive, archive_spec, &archive_error)) {
+            if (!download_file(url, archive, archive_spec, options, error)) {
+                return false;
             }
-            return false;
         }
-        return http_download(url, target, spec, options.resume, error);
+        const bool extracted = extract_zip_member(archive, spec, target, error);
+        if (!shared_cache) {
+            std::error_code cleanup_error;
+            std::filesystem::remove(archive, cleanup_error);
+        }
+        return extracted;
     }
-    if (error != nullptr) *error = "unsupported URL scheme: " + url;
-    return false;
+    if (local) {
+        return copy_local_file(decode_file_url(url), target, spec, options.resume, error);
+    }
+    return http_download(url, target, spec, options, error);
 }
 
 }  // namespace watashi::fetch

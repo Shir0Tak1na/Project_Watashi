@@ -13,6 +13,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -25,6 +26,12 @@ struct FileSpec {
     std::uint64_t size = 0;
     /// Optional explicit URL; otherwise it is derived from the model's source.
     std::string url;
+    /// Optional member inside a ZIP/wheel at url. The archive has its own
+    /// integrity metadata; the extracted bytes are still checked against this
+    /// file's size and SHA-256 before installation.
+    std::string archive_path;
+    std::string archive_sha256;
+    std::uint64_t archive_size = 0;
 };
 
 struct ModelSpec {
@@ -78,6 +85,15 @@ struct DownloadOptions {
     bool resume = false;
     /// Never open a network connection. A file:// source is still local.
     bool offline = false;
+    /// Total attempts for a retryable HTTP response; backoff is bounded by the
+    /// finite attempt count. Tests use a near-zero base delay.
+    int max_attempts = 3;
+    unsigned retry_delay_ms = 1000;
+    /// Shared, verified wheel/ZIP cache for one CLI run. The caller removes it
+    /// after a fully successful fetch; .part files survive failed runs.
+    std::filesystem::path archive_cache;
+    /// Local progress only: redirects and retry/backoff messages. No telemetry.
+    std::function<void(const std::string&)> report;
 };
 
 /// Downloads one file to ``target`` through ``target.part`` and renames it

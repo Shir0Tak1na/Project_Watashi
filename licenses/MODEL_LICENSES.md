@@ -2,7 +2,7 @@
 
 > 这些模型**不随安装包分发**，也没有被打进 SBOM 的 payload。`models.lock.json`
 > 记录每个文件的 SHA-256 与字节数；`watashi_fetch` 只在显式 `--fetch` 时下载。
-> 复核日期：2026-11-01。
+> 复核日期：2026-11-12。
 
 ## NLLB-200-distilled-600M（CTranslate2 int8）
 
@@ -24,10 +24,18 @@
 ## PP-OCRv4（ONNX）
 
 - 许可：**Apache-2.0**
-- 来源：`rapidocr-onnxruntime` 1.4.4 包内模型（https://github.com/RapidAI/RapidOCR）
-- 用途：屏幕 OCR
-- 分发：从该 wheel 中取出三个 ONNX 文件放入用户模型目录；获取器把它们标为
-  `[manual]`（`models.lock.json#pp-ocrv4-onnx`），安装包内没有 `.onnx`。
+- 来源：`rapidocr-onnxruntime` 1.4.4 官方 PyPI wheel（项目主页：
+  https://github.com/RapidAI/RapidOCR ；发布元数据：
+  https://pypi.org/pypi/rapidocr-onnxruntime/1.4.4/json ）。PyPI 与 wheel 的
+  `METADATA` 均声明 `License: Apache-2.0`。
+- wheel：`rapidocr_onnxruntime-1.4.4-py3-none-any.whl`，14,915,192 字节，
+  SHA-256 `971d7d5f223a7a808662229df1ef69893809d8457d834e6373d3854bc1782cbf`；
+  不可变下载 URL 记录在 `models.lock.json#pp-ocrv4-onnx` 的三个文件条目中。
+- 用途：屏幕 OCR。
+- 分发：`watashi_fetch --fetch` 下载并校验官方 wheel，从
+  `rapidocr_onnxruntime/models/` 自动提取 det/rec/cls 三个 ONNX；每个提取文件再按
+  lock 中的大小和 SHA-256 独立校验。wheel 仅为运行期临时缓存，成功后清理；
+  安装包内没有 `.onnx` 或 wheel。
 
 ## 代码许可
 

@@ -107,6 +107,7 @@ struct Counts {
     int downloaded = 0;
     int manual = 0;
     int failed = 0;
+    std::uint64_t bytes = 0;
 };
 
 }  // namespace
@@ -170,6 +171,10 @@ int main(int argc, char** argv) {
     watashi::fetch::DownloadOptions options;
     options.resume = resume;
     options.offline = offline;
+    options.archive_cache = dest / ".fetch-cache";
+    options.report = [](const std::string& message) {
+        std::cout << "  " << message << "\n";
+    };
 
     Counts counts;
     for (const auto& model : lock.models) {
@@ -201,6 +206,7 @@ int main(int argc, char** argv) {
             const std::string label = model.id + "/" + file.path;
             if (present) {
                 ++counts.ok;
+                counts.bytes += file.size;
                 if (check) {
                     std::cout << "  [ok] " << label << "\n";
                 }
@@ -228,14 +234,26 @@ int main(int argc, char** argv) {
                 std::cerr << "  [FAIL] " << label << ": " << download_error << "\n";
             } else {
                 ++counts.downloaded;
+                counts.bytes += file.size;
                 std::cout << "  [ok] " << label << " verified\n";
             }
         }
     }
 
+    if (fetch && counts.failed == 0 && !options.archive_cache.empty()) {
+        std::error_code cleanup_error;
+        std::filesystem::remove_all(options.archive_cache, cleanup_error);
+        if (cleanup_error || std::filesystem::exists(options.archive_cache)) {
+            ++counts.failed;
+            std::cerr << "watashi_fetch: cannot clean temporary archive cache "
+                      << options.archive_cache.string() << "\n";
+        }
+    }
+
     std::cout << "summary: ok=" << counts.ok << " missing=" << counts.missing
               << " downloaded=" << counts.downloaded
-              << " manual=" << counts.manual << " failed=" << counts.failed << "\n";
+              << " manual=" << counts.manual << " failed=" << counts.failed
+              << " bytes=" << counts.bytes << "\n";
     if (counts.manual > 0) {
         std::cout << "manual models have no direct URL in models.lock.json; see "
                      "docs/INSTALL.md\n";

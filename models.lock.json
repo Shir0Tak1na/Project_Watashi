@@ -82,17 +82,29 @@
         {
           "path": "models/ch_PP-OCRv4_det_infer.onnx",
           "sha256": "d2a7720d45a54257208b1e13e36a8479894cb74155a5efe29462512d42f49da9",
-          "size": 4745517
+          "size": 4745517,
+          "url": "https://files.pythonhosted.org/packages/ba/12/1e5497183bdbe782dbb91bad1d0d2297dba4d2831b2652657f7517bfc6df/rapidocr_onnxruntime-1.4.4-py3-none-any.whl",
+          "archive_path": "rapidocr_onnxruntime/models/ch_PP-OCRv4_det_infer.onnx",
+          "archive_sha256": "971d7d5f223a7a808662229df1ef69893809d8457d834e6373d3854bc1782cbf",
+          "archive_size": 14915192
         },
         {
           "path": "models/ch_PP-OCRv4_rec_infer.onnx",
           "sha256": "48fc40f24f6d2a207a2b1091d3437eb3cc3eb6b676dc3ef9c37384005483683b",
-          "size": 10857958
+          "size": 10857958,
+          "url": "https://files.pythonhosted.org/packages/ba/12/1e5497183bdbe782dbb91bad1d0d2297dba4d2831b2652657f7517bfc6df/rapidocr_onnxruntime-1.4.4-py3-none-any.whl",
+          "archive_path": "rapidocr_onnxruntime/models/ch_PP-OCRv4_rec_infer.onnx",
+          "archive_sha256": "971d7d5f223a7a808662229df1ef69893809d8457d834e6373d3854bc1782cbf",
+          "archive_size": 14915192
         },
         {
           "path": "models/ch_ppocr_mobile_v2.0_cls_infer.onnx",
           "sha256": "e47acedf663230f8863ff1ab0e64dd2d82b838fceb5957146dab185a89d6215c",
-          "size": 585532
+          "size": 585532,
+          "url": "https://files.pythonhosted.org/packages/ba/12/1e5497183bdbe782dbb91bad1d0d2297dba4d2831b2652657f7517bfc6df/rapidocr_onnxruntime-1.4.4-py3-none-any.whl",
+          "archive_path": "rapidocr_onnxruntime/models/ch_ppocr_mobile_v2.0_cls_infer.onnx",
+          "archive_sha256": "971d7d5f223a7a808662229df1ef69893809d8457d834e6373d3854bc1782cbf",
+          "archive_size": 14915192
         }
       ],
       "id": "pp-ocrv4-onnx",

@@ -15,11 +15,11 @@ if(NOT DEFINED CMAKE_TOOLCHAIN_FILE)
     endforeach()
 endif()
 
-project(ProjectWatashi VERSION 1.0.1 LANGUAGES CXX)
+project(ProjectWatashi VERSION 1.0.2 LANGUAGES CXX)
 
 # project() only accepts numeric components, so the release label lives here and
 # flows into --version, the CPack archive name and the SBOM.
-set(WATASHI_VERSION "1.0.1")
+set(WATASHI_VERSION "1.0.2")
 
 # The version stamp is compiled into the binaries and printed by --version, so
 # a report reader can tell which build produced it. A missing git (source
