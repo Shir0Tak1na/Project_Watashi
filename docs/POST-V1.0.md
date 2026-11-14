@@ -29,7 +29,7 @@ GitHub Release 页面。
 | 包 | `dist/ProjectWatashi-1.0.2-win64.zip`，16,499,376 B，SHA-256 `59a5005a…b3151a` |
 | 远端 | push `main` + `v1.0.2` 完成；`git ls-remote`：`main = 4da2042`，`v1.0.2` deref `4da2042`，`v1.0.0`/`v1.0.1` tag 未移动（RELEASE §10.5） |
 | 备份 | `D:\WatashiRelease\v1.0.2\`（ZIP + SHA256SUMS，副本校验通过） |
-| 下一步 | 仍是不新增功能的 P1 架构债（UI→core、版本单一来源、CMake/打包拆分）；1.0.2 未开始 P1 |
+| 下一步 | P1 架构债已于 2026-11-14 收口（§4.1）；v1.1 未开始 |
 
 ## 1. P0 · 发布收口
 
@@ -226,6 +226,23 @@ VM 内 `logs\` 目录仍然保留（运行时环形日志，属于运行时数�
 5. tests 拆分（可选）。
 
 预计 15–25 h；不赶在 v1.0.0 发布窗口做。
+
+### 4.1 P1 交付（2026-11-14，v1.0.2 tag 之后）
+
+不新增功能、不改事件 schema、不动 `v1.0.2` tag。全部在 `build-rc`（源码树
+`E:\ProjectWatashi`）验证：**332 CTest：331 passed + 1 skipped，0 failed**。
+
+| 项 | 结果 |
+| --- | --- |
+| P1-A report 一致性 | `watashi_ui` 的 `--report` 在 `stream` 里新增最终帧的 `trace`（此前只有 CLI NDJSON 有）；`tests/test_session.cpp` 用一张表钉住 fake / fake+corpus / onnx+corpus / onnx+nmt 四条路径的 `backend` 与 `trace` 组合；`control_surface_test.py` 断言 report 的 `stream.backend`/`trace` 与真实输出一致。事件 payload 未改。 |
+| P1-B 版本单一来源 | 新增 `version.txt`（`1.0.2`）与 `cmake/Version.cmake`（`project()` 之前读取，含 git commit）；`tests/version_test.py` 对 CMake、`config/install_manifest.json`、`tools/license_manifest.json`、`licenses/sbom.spdx.json`、README/CHANGELOG/HANDOVER/RELEASE/ACCEPTANCE/POST、`watashi_ui/cli/fetch --version` 全部对齐；`dist/` 只允许当前版本一个 ZIP。 |
+| P1-B CMake 拆分 | 顶层 `CMakeLists.txt` 只保留 toolchain/版本/编译选项/模块 include；依赖、目标、安装与 CPack 分到 `cmake/Dependencies.cmake`、`cmake/Targets.cmake`、`cmake/Packaging.cmake`。 |
+| P1-B 单一打包路径 | 删除 `tools/package_rc.ps1`；只保留 CPack：`cmake --build <build> --config Release --target dist_checksums` → `<build>/dist/ProjectWatashi-1.0.2-win64.zip` + LF-only `SHA256SUMS.txt`（`file(WRITE)` 在 Windows 会写 CRLF，改用 `cmake -E echo` 的 `OUTPUT_FILE`）。仓库 `dist/` 只放已发布包，例行构建不会覆盖它。 |
+| P1-C UI 边界 | 新增 `watashi_contract`（`src/core/events.cpp`）与 `watashi_win32`（`src/win32/dpi.cpp`，声明移到 `include/watashi/win32/dpi.hpp`）；`watashi_ui_core` 不再链接 `watashi_core`。`dumpbin /dependents watashi_ui.exe` 只有 USER32/GDI32/SHELL32/dbghelp/KERNEL32 + CRT，无 onnxruntime/ctranslate2/dnnl/sentencepiece；`ui_dependencies` 测试固化该检查。 |
+| P1-D 清理 | 仓库 `dist/` 只留 `ProjectWatashi-1.0.2-win64.zip`（16,499,376 B，SHA-256 `59a5005a…b3151a`），1.0.1 包只留在 `D:\WatashiRelease\v1.0.1\`；旧 `build/` 与 `.tmpbuild/` 移到 `build-final/archive-pre-p1/`；`v1.0.1` 空目录删除。P1 验证包在 `build-rc/dist/`（非发布物）。 |
+| 安装验证 | `installer_install` / `installer_remove_user_data` / `installer_manifest` 等 13 项版本+安装+许可测试全部通过；CPack 包审计 29 条目、`vcomp140.dll`、`models.lock.json`，无权重、无 `.pdb`。 |
+| 只记录、未做 | GitHub Release（无 `gh`/token）、tray 实点（通知区不可用）、UEFI、代码签名；均不阻塞 P1，也不并入 v1.1。 |
+| 未做（可选项） | `watashi_nmt_probe` 默认关闭、tests 目录拆分；不属于本次三项债，留待 v1.1 前评估。 |
 
 ## 5. P2 · v1.1
 

@@ -13,6 +13,7 @@
 | SHA-256 | `59a5005a1f2f0b64185dcb052c7a5c5b8cc21f005421d9f7fe6c806d02b3151a` |
 | checksum | `dist/SHA256SUMS.txt`（UTF-8 无 BOM、LF）；`sha256sum -c` → **OK** |
 | clean build | `git archive f1a349e` → `build-final/clean-src-1.0.2` → **329 CTest：328 passed + 1 skipped（#91，宿主删除拦截），0 failed**；`tools/make_sbom.py --check` OK |
+| P1 架构债（tag 之后） | **已完成（2026-11-14，§10.6）**：源码树 332 CTest（331 passed + 1 skipped）；report 带 trace；`version.txt` 单一来源；UI 不链接 core（dumpbin）；单一 CPack 路径 |
 | 10 分钟 UI soak | PASS（1.0.1 记录，未受 1.0.2 fetch 改动影响）：`build-rc/soak-10m.json`，602.5 s，exit 0 |
 | 8 小时 UI soak | PASS（1.0.1 记录）：`build-rc/soak-8h.json`，28801.5 s，exit 0，handles 169→169 |
 | 干净 Win11 VM 安装/运行/卸载 | **PASS（2026-11-14，1.0.2 最终 ZIP）**，标准用户、无 UAC；VM 为 **BIOS + LabConfig 绕过 TPM/SecureBoot**，不是 UEFI 验收 |
@@ -52,10 +53,11 @@
     包内 exe `--version` 实测
     `Project Watashi 1.0.2 / commit f1a349e92bff / build Release`
   - 禁含核对：无 `.pdb`、无 `.onnx`、无 `.bin`、无 `models/` 权重目录（0 项命中）
-- 历史包（证据，不再分发）：`dist/ProjectWatashi-1.0.1-win64.zip`
-  （16,485,503 B，SHA-256 `88993790…a3976`）、`build-rc/stage-vcomp.zip`
-  （RC1 B 验收对象）、`build-rc/archive/rc1/ProjectWatashi-1.0.0-rc1-win64.zip`、
-  `dist/ProjectWatashi-1.0.0-win64.zip`（16,483,547 B）
+- 历史包（证据，不再分发）：`D:\WatashiRelease\v1.0.1\ProjectWatashi-1.0.1-win64.zip`
+  （16,485,503 B，SHA-256 `88993790…a3976`）、`D:\WatashiRelease\v1.0.0\`
+  （16,483,547 B）、`build-rc/stage-vcomp.zip`（RC1 B 验收对象）、
+  `build-rc/archive/rc1/ProjectWatashi-1.0.0-rc1-win64.zip`。
+  仓库 `dist/` 自 2026-11-14 起只保留当前版本 1.0.2 的包。
 
 ## 2. clean-room / reproducibility
 
@@ -301,6 +303,34 @@ Release**，也未伪造任何 Release URL。手工上传步骤（当前发布 =
   `v1.0.1`（对象 `dde1a67`）deref `b613b7b`、
   `v1.0.0`（对象 `50f5aab`）deref `a0ecccd` **均未移动**。
 
+### 10.6 P1 架构债（2026-11-14，v1.0.2 tag 之后）
+
+不新增功能、不改事件 schema、不移动 `v1.0.2` tag、不升 v1.1。源码树
+（`E:\ProjectWatashi`，`build-rc`）全量 **332 CTest：331 passed + 1 skipped，
+0 failed**。细节见 [POST-V1.0.md](POST-V1.0.md) §4.1。
+
+- **report**：`watashi_ui --report` 的 `stream` 新增最终 `trace`；四条引擎路径
+  （fake / fake+corpus / onnx+corpus / onnx+nmt）的 `backend`、`trace` 由
+  `test_session.cpp` 一张表钉住；CLI NDJSON 与事件 payload 未改。
+- **版本**：`version.txt` 是唯一来源，`cmake/Version.cmake` 在 `project()` 前
+  读取；`tests/version_test.py` 对齐 CMake、manifest、SBOM、docs 与三个
+  `--version`。
+- **CMake**：拆为 `cmake/Dependencies|Targets|Packaging.cmake`；删除
+  `tools/package_rc.ps1`，只留 CPack。发布包命令：
+  `cmake --build build-rc --config Release --target dist_checksums`，输出
+  `build-rc/dist/ProjectWatashi-1.0.2-win64.zip` 与 LF-only `SHA256SUMS.txt`。
+  仓库 `dist/` 的已发布包不在例行构建中改写。
+- **UI 边界**：新增 `watashi_contract`（事件）与 `watashi_win32`（DPI）；
+  `watashi_ui_core` 不再链接 `watashi_core`。`dumpbin /dependents
+  watashi_ui.exe` 无 onnxruntime/ctranslate2/dnnl/sentencepiece，
+  `ui_dependencies` 测试固化。
+- **清理**：`dist/` 只留 1.0.2；旧 `build/`、`.tmpbuild/` 移到
+  `build-final/archive-pre-p1/`。P1 验证包在 `build-rc/dist/`，不是发布物。
+- **仍未做（只记录）**：GitHub Release、tray 实点、UEFI、签名、可复现构建。
+- **提交**：`36b4dfd`（report trace）、`23b2fa2`（version/CMake/CPack）、
+  `2de33f4`（UI 边界，单独 commit）、文档提交；**只在本地 `main`，未 push**，
+  `v1.0.2` tag 仍指向 `4da2042`（对象 `683cad4`），未移动。
+
 ## 11. 发布后 P0 / Post-release P0
 
 1. ~~push `main` + `v1.0.0` tag，并 `git ls-remote` 验证~~ → **已完成（§10.1）**；
@@ -312,7 +342,7 @@ Release**，也未伪造任何 Release URL。手工上传步骤（当前发布 =
 5. ~~用最终 ZIP 做一次干净安装/运行/卸载~~ → **已完成（2026-11-12，VM 标准用户）**：
    install → 真实模型 → uninstall 全部通过（§3.2、§4.2、§5.2）；
 6. 1.0.2 已发版（§10.5）：3 个 OCR ONNX 由 `--fetch` 自动获取，`manual=0`；
-   P0 收口后可进入架构债/v1.1（1.0.2 未开始 P1）。
+   **P1 架构债已于 2026-11-14 收口（§10.6），未升 v1.1、未加功能。**
 
 仍未做（不阻塞 1.0.2）：GitHub Release 页面、tray 实点、UEFI、签名、可复现构建。
 

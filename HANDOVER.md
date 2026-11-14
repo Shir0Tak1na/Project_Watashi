@@ -1,7 +1,7 @@
 # 交接说明 / Handover
 
 > 给接手的人或编码代理：**先读这一页，再读别的。**
-> 最后更新：**2026-11-14（v1.0.2 已发布：一次 `--fetch` 拿全 15 个模型文件，含 3 个 OCR ONNX）**
+> 最后更新：**2026-11-14（v1.0.2 已发布；P1 架构债已收口：report trace、版本单一来源、UI 不链接引擎、单一打包路径）**
 
 ## 一句话状态
 
@@ -15,6 +15,13 @@ OCR/NMT → uninstall 全流程。最终包
 `--fetch` 从 RapidOCR wheel 自动解压 3 个 OCR ONNX，`manual=0`。真实 PP-OCRv4 +
 NLLB 在干净 VM 上以 `backend="onnx, local-nmt/int8"` 跑通（ACCEPTANCE §11）。
 托盘仍不可用，为 best-effort，控制窗/热键是已验收的发布入口。
+
+**发布后 P1 已收口（2026-11-14，不改产品行为、不升版本）**：UI report 现在带
+最终 trace 摘要；`version.txt` 成为唯一版本来源，CMake/manifest/SBOM/docs/
+`--version` 由 `tests/version_test.py` 对齐；CMake 拆为
+`cmake/Dependencies|Targets|Packaging`；`watashi_ui.exe` 不再链接
+`watashi_core`，dumpbin 导入表无 onnxruntime/ctranslate2/dnnl/sentencepiece；
+打包只剩 CPack 一条路径。详见 [docs/POST-V1.0.md](docs/POST-V1.0.md) §4.1。
 
 ## 必读顺序（约 30 分钟）
 
@@ -31,7 +38,15 @@ NLLB 在干净 VM 上以 `backend="onnx, local-nmt/int8"` 跑通（ACCEPTANCE §
 
 - **C++ 测试**：clean build（git archive `f1a349e`）通过 **329 CTest：328
   passed + 1 skipped，0 failed**；唯一 skip 是 `#91`（宿主代理把删除重定向，
-  `remove_all` 返回 145，按既有 `deletion_works()` 约定条件断言）。
+  `remove_all` 返回 145，按既有 `deletion_works()` 约定条件断言）。P1 后在
+  `build-rc` 全量 **332 CTest：331 passed + 1 skipped，0 failed**（新增
+  `version_consistency`、`ui_dependencies` 与四路径 backend/trace 用例）。
+- **P1 边界检查**：`watashi_ui_core` 只链接 `watashi_contract`（事件）与
+  `watashi_win32`（DPI），`watashi_ui.exe` 导入表只有 USER32/GDI32/SHELL32/
+  dbghelp/KERNEL32 与 CRT，无推理 DLL（`dumpbin /dependents` 实测）。
+- **P1 版本/打包**：`version.txt` 是唯一版本来源；`cmake/Version.cmake` 在
+  `project()` 前读取；CPack 输出到构建树 `dist/`，`dist_checksums` 目标写
+  LF-only `SHA256SUMS.txt`；仓库 `dist/` 只保留已发布的 1.0.2 包。
 - **全自动 fetch**：空模型目录一次 `--fetch` → `downloaded=15 manual=0 failed=0
   bytes=1149779218`，3 个 OCR ONNX 由 RapidOCR wheel 自动解压；逐文件 SHA-256
   校验；VM 内 exit 0（宿主因删除拦截 exit 1，见 ACCEPTANCE §11.3）。
@@ -53,7 +68,7 @@ NLLB 在干净 VM 上以 `backend="onnx, local-nmt/int8"` 跑通（ACCEPTANCE §
 | 旧 README 状态/W3.3 | W3.4/W4 未开始 | 已发布 v1.0.0；以本页和 ACCEPTANCE 为准 |
 | docs/RELEASE 旧段 | RC1 未验收/无 VM | 已于 2026-11-11 完成 B 验收并发布 v1.0.0 |
 | config/app.yaml | C++ 主配置 | C++ 不读它；设置页从 config/settings_ui.json 读取 |
-| docs/architecture.md | UI 不链接 engine | 当前 CMake 仍为取事件解码/DPI 链接 `watashi_core`；这是待偿还的架构债，不要当成已实现边界 |
+| docs/architecture.md | UI 不链接 engine | **2026-11-14 已实现**：`watashi_ui_core` 只链接 `watashi_contract` + `watashi_win32`，`watashi_ui.exe` 无推理 DLL 导入；`docs/architecture.md` 的历史段落按日期读 |
 
 ## 硬约束（违反即返工）
 
@@ -62,26 +77,27 @@ NLLB 在干净 VM 上以 `backend="onnx, local-nmt/int8"` 跑通（ACCEPTANCE §
 3. 语料命中即权威；未命中落模型必须报告兜底原因。
 4. v1.0 只允许本地后端；外部/局域网默认关闭，需先有 ADR。
 5. 模型权重不进 git、不进安装包。
-6. UI 只消费 watashi_cli --json-lines，命令只走 stdin；当前 CMake 的 UI→core 链接是待还债，不是新许可。
+6. UI 只消费 watashi_cli --json-lines，命令只走 stdin；边界现在是链接层面的：UI 不链接 `watashi_core`（P1，2026-11-14）。
 
 ## 当前状态（2026-11-14）
 
 | 项 | 状态 |
 | --- | --- |
 | 版本 | **v1.0.2**（版本 commit `f1a349e` + 文档收口 commit；annotated tag `v1.0.2`；`v1.0.0`/`v1.0.1` tag 未移动） |
-| 远端 | **v1.0.2 已 push**：`origin/main` = `4da2042`；tag `v1.0.2`（对象 `683cad4`）deref `4da2042`；`v1.0.1` deref `b613b7b`、`v1.0.0` deref `a0ecccd` 未移动（`git ls-remote` 实测） |
-| 工作区 | clean；build-*/dist/ 已 gitignore |
-| 测试 | clean build（git archive `f1a349e`）**329 CTest：328 passed + 1 skipped，0 failed**；license/SBOM 检查 |
+| 远端 | **v1.0.2 已 push**：`origin/main` = `680305a`；tag `v1.0.2`（对象 `683cad4`）deref `4da2042`；`v1.0.1` deref `b613b7b`、`v1.0.0` deref `a0ecccd` 未移动（`git ls-remote` 实测） |
+| P1 提交 | `36b4dfd`（report trace）、`23b2fa2`（版本/CMake/CPack）、`2de33f4`（UI 边界，单独 commit）、文档提交；**本地 main，未 push**；`v1.0.2` tag 仍指向 `4da2042`，未移动 |
+| 工作区 | clean；build-*/dist/ 已 gitignore；旧 build/.tmpbuild 已移到 `build-final/archive-pre-p1/` |
+| 测试 | 发布 clean build（`f1a349e`）**329 CTest：328 passed + 1 skipped**；P1 后 `build-rc` **332 CTest：331 passed + 1 skipped，0 failed**；license/SBOM/版本一致性检查 |
 | 验收 | 1.0.2 VM 标准用户 install → 空模型 fetch（15/15、manual=0）→ 真实 OCR/NMT → uninstall PASS |
 | 长稳 | 10m PASS；8h PASS（1.0.1 记录，`build-rc/soak-8h.json`；1.0.2 未改运行路径） |
 | **最终包** | **`dist/ProjectWatashi-1.0.2-win64.zip`**，16,499,376 字节，SHA-256 `59a5005a1f2f0b64185dcb052c7a5c5b8cc21f005421d9f7fe6c806d02b3151a`（完整值/审计见 docs/RELEASE.md §1；`dist/SHA256SUMS.txt` `sha256sum -c` OK） |
 | 备份 | **`D:\WatashiRelease\v1.0.2\`**（ZIP + SHA256SUMS，副本校验通过）；1.0.0/1.0.1 备份保留 |
 | GitHub Release | 未创建（无 `gh`/token）；手工上传步骤见 docs/RELEASE.md §10.3 |
 | VM 证据 | `build-final/evidence-1.0.2-vm/`（s1–s4 日志、report.json、events.jsonl、截图；build-final 不进 git） |
-| 旧包 | `dist/ProjectWatashi-1.0.1-win64.zip`（16,485,503 B）、`dist/ProjectWatashi-1.0.0-win64.zip`（16,483,547 B） |
+| 旧包 | 已从仓库 `dist/` 移走，仅保留在 `D:\WatashiRelease\v1.0.0|v1.0.1\`；`dist/` 只有 1.0.2 |
 | 托盘 | 本机/VM 通知区不可用；best-effort，不阻塞发布 |
 | 签名 | unsigned |
-| 下一步 | P1 架构债（UI→core、版本单一来源、CMake/打包拆分）；1.0.2 明确未开始 P1；GitHub Release、tray 实点、UEFI、签名仍是可选项；见 [docs/POST-V1.0.md](docs/POST-V1.0.md) |
+| 下一步 | P1 架构债已收口；GitHub Release、tray 实点、UEFI、签名只记录、未做；v1.1 未开始；见 [docs/POST-V1.0.md](docs/POST-V1.0.md) §4.1 |
 
 ## W0 交付记录（2026-10-28）
 
@@ -153,4 +169,5 @@ exit_reason、tray.added、hotkeys 实测值。当前会话 raw `Shell_NotifyIco
 - [x] W4 安装包/模型获取/SBOM/日志/10 分钟与 8 小时 soak（8h 报告
       `build-rc/soak-8h.json` PASS；vcomp140 打包已修；unsigned）
 - [x] 人工验收：Medium 桌面、干净 Win11 VM、安装/卸载（2026-11-11 PASS）
+- [x] P1 架构债：report trace、version.txt 单一来源、CMake 拆分、UI 不链接引擎、单一 CPack 路径（2026-11-14；332 CTest + dumpbin 检查 PASS）
 - [ ] 托盘实点：本机/VM 通知区不可用；control surface 已 PASS，tray 仍为 best-effort

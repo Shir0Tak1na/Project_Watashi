@@ -108,9 +108,9 @@ come from the RapidOCR wheel); VM install → real OCR/NMT → uninstall passed.
 | UI, floating overlay | Working: native Win32 layered, click-through/topmost/no-focus; tray has its own owner | Working (Tk bar + panel) |
 | Desktop control window | Working: settings window (W3.4) + control window fallback | Working (--desktop) |
 | Plugins | Not implemented (v1.1) | v1 extension points + 2 examples |
-| UI architecture | Working: CLI JSONL + stdin commands; watashi_ui currently links watashi_core for envelope/DPI (tracked architecture debt) | Working: CLI / overlay / desktop share one schema |
+| UI architecture | Working: CLI JSONL + stdin commands; watashi_ui links only watashi_contract (events) and watashi_win32 (DPI), not the engine (P1, 2026-11-14) | Working: CLI / overlay / desktop share one schema |
 | Customization | Working: declarative presentation + 400 ms hot reload; settings page (W3.4) | Working: 7 presets, live switching |
-| Tests | 318 C++ cases; NMT 120/120 differential; OCR 1.0000 | --selftest + 21 self-check scripts |
+| Tests | 332 C++ cases (331 ran + 1 host-conditional skip); NMT 120/120 differential; OCR 1.0000 | --selftest + 21 self-check scripts |
 
 ## Runtime requirements
 
