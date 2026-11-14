@@ -72,6 +72,29 @@ if(Python3_Interpreter_FOUND)
     set_tests_properties(settings_ui_schema PROPERTIES
         WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 
+    # version.txt is the single source of truth. This checks CMake, the install
+    # manifest, the licence manifest, the committed SBOM, the docs and (on
+    # Windows) the three binaries' compiled --version stamp. 77 means the build
+    # tree had no binaries: ctest shows that as skipped, never as a pass.
+    if(WIN32)
+        add_test(
+            NAME version_consistency
+            COMMAND ${Python3_EXECUTABLE}
+                    ${CMAKE_SOURCE_DIR}/tests/version_test.py
+                    --build ${CMAKE_BINARY_DIR}
+                    --config $<CONFIG>)
+        set_tests_properties(version_consistency PROPERTIES
+            WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+            SKIP_RETURN_CODE 77)
+    else()
+        add_test(
+            NAME version_consistency
+            COMMAND ${Python3_EXECUTABLE}
+                    ${CMAKE_SOURCE_DIR}/tests/version_test.py)
+        set_tests_properties(version_consistency PROPERTIES
+            WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+    endif()
+
     # Per-user install/uninstall, the manifest and the unsigned signing path.
     # Each case stages cmake --install into its own temporary prefix and uses a
     # test-only HKCU key and Start-menu directory.
