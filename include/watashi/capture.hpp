@@ -179,12 +179,6 @@ private:
     int tick_ = 0;
 };
 
-/// Turn this process PerMonitorV2 DPI aware, falling back to system-DPI
-/// awareness on older Windows. Call once, before any geometry is read: after
-/// the first window is created Windows locks the awareness in.
-/// Returns true when at least one path succeeded.
-bool enable_per_monitor_dpi();
-
 /// Window whose title contains ``needle`` (case-insensitive). Returns 0 when
 /// none matches. Prefers the shortest match, so "notepad" finds the editor
 /// rather than a browser tab that happens to mention it.

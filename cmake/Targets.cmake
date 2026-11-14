@@ -3,6 +3,31 @@
 # two DLL-copy helpers used below.
 
 # --------------------------------------------------------------------------- #
+# contract (the engine/UI boundary)
+# --------------------------------------------------------------------------- #
+#
+# Event encoding is the only thing the overlay shares with the engine. It is its
+# own library so the UI can link the wire contract without linking the engine
+# and, through it, ONNX Runtime and CTranslate2.
+add_library(watashi_contract STATIC src/core/events.cpp)
+target_include_directories(watashi_contract
+    PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(watashi_contract PUBLIC nlohmann_json::nlohmann_json)
+target_compile_features(watashi_contract PUBLIC cxx_std_17)
+
+# --------------------------------------------------------------------------- #
+# Win32 helpers (DPI)
+# --------------------------------------------------------------------------- #
+#
+# enable_per_monitor_dpi() has no engine dependency at all. Keeping it here is
+# what lets watashi_ui drop watashi_core from its link line; tests/ui_dependency_test.py
+# checks that the resulting EXE does not import the inference DLLs.
+add_library(watashi_win32 STATIC src/win32/dpi.cpp)
+target_include_directories(watashi_win32
+    PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_compile_features(watashi_win32 PUBLIC cxx_std_17)
+
+# --------------------------------------------------------------------------- #
 # engine
 # --------------------------------------------------------------------------- #
 #
@@ -14,7 +39,6 @@ add_library(watashi_core STATIC
     src/capture/change_detector.cpp
     src/capture/synthetic_capture.cpp
     src/core/commands.cpp
-    src/core/events.cpp
     src/core/pipeline.cpp
     src/core/session.cpp
     src/io/jsonl.cpp
@@ -33,7 +57,7 @@ target_include_directories(watashi_core
     PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src ${sentencepiece_SOURCE_DIR}/src
 )
 target_link_libraries(watashi_core
-    PUBLIC nlohmann_json::nlohmann_json
+    PUBLIC nlohmann_json::nlohmann_json watashi_contract
     PRIVATE watashi_onnxruntime ctranslate2 sentencepiece
 )
 target_compile_features(watashi_core PUBLIC cxx_std_17)
@@ -59,7 +83,7 @@ if(WIN32)
 endif()
 
 add_executable(watashi_cli src/cli/main.cpp)
-target_link_libraries(watashi_cli PRIVATE watashi_core watashi_obs)
+target_link_libraries(watashi_cli PRIVATE watashi_core watashi_obs watashi_win32)
 watashi_copy_onnxruntime(watashi_cli)
 watashi_copy_ctranslate2(watashi_cli)
 
@@ -94,12 +118,12 @@ if(WIN32)
     )
     target_link_libraries(watashi_ui_core
         PUBLIC nlohmann_json::nlohmann_json
-        PRIVATE watashi_core user32 gdi32 psapi shell32
+        PRIVATE watashi_contract user32 gdi32 psapi shell32
     )
     target_compile_features(watashi_ui_core PUBLIC cxx_std_17)
 
     add_executable(watashi_ui src/ui/main.cpp)
-    target_link_libraries(watashi_ui PRIVATE watashi_ui_core watashi_obs)
+    target_link_libraries(watashi_ui PRIVATE watashi_ui_core watashi_obs watashi_win32)
 endif()
 
 # Phase 0 verification: load the CTranslate2 model from C++ and translate the

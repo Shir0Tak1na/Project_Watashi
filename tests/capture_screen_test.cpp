@@ -16,6 +16,7 @@
 #include <string>
 
 #include "watashi/capture.hpp"
+#include "watashi/win32/dpi.hpp"
 
 namespace {
 

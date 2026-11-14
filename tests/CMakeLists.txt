@@ -33,7 +33,7 @@ catch_discover_tests(watashi_tests PROPERTIES SKIP_RETURN_CODE 77)
 # never looked at a screen must not look green.
 if(WIN32)
     add_executable(watashi_screen_tests capture_screen_test.cpp)
-    target_link_libraries(watashi_screen_tests PRIVATE watashi_core)
+    target_link_libraries(watashi_screen_tests PRIVATE watashi_core watashi_win32)
     watashi_copy_onnxruntime(watashi_screen_tests)
     add_test(NAME capture_screen COMMAND watashi_screen_tests)
 
@@ -43,8 +43,11 @@ if(WIN32)
 
     # The overlay against the real compositor. Exits 3 without a desktop, so
     # ctest does not treat an unexercised window path as green.
+    # The window test places its probe window on the primary monitor, so it
+    # needs the capture helpers as well as the overlay core.
     add_executable(watashi_ui_window_tests ui_window_test.cpp)
-    target_link_libraries(watashi_ui_window_tests PRIVATE watashi_ui_core)
+    target_link_libraries(watashi_ui_window_tests
+        PRIVATE watashi_ui_core watashi_core watashi_win32)
     add_test(NAME overlay_window COMMAND watashi_ui_window_tests)
 
     # W4.3: --version is a build stamp, not a window. It must answer before the
@@ -84,6 +87,18 @@ if(Python3_Interpreter_FOUND)
                     --build ${CMAKE_BINARY_DIR}
                     --config $<CONFIG>)
         set_tests_properties(version_consistency PROPERTIES
+            WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+            SKIP_RETURN_CODE 77)
+
+        # The overlay must not import the inference DLLs it sits beside. Reads
+        # watashi_ui.exe's import table with dumpbin; 77 without a toolchain.
+        add_test(
+            NAME ui_dependencies
+            COMMAND ${Python3_EXECUTABLE}
+                    ${CMAKE_SOURCE_DIR}/tests/ui_dependency_test.py
+                    --build ${CMAKE_BINARY_DIR}
+                    --config $<CONFIG>)
+        set_tests_properties(ui_dependencies PROPERTIES
             WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
             SKIP_RETURN_CODE 77)
     else()

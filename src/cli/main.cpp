@@ -36,6 +36,7 @@
 #include "watashi/pipeline.hpp"
 #include "watashi/session.hpp"
 #include "watashi/translator.hpp"
+#include "watashi/win32/dpi.hpp"
 
 namespace {
 

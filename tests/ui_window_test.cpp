@@ -23,6 +23,7 @@
 #include <string>
 
 #include "watashi/capture.hpp"
+#include "watashi/win32/dpi.hpp"
 #include "watashi/ui/layered_window.hpp"
 #include "watashi/ui/layout.hpp"
 #include "watashi/ui/renderer.hpp"
