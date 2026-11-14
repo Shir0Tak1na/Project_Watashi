@@ -69,7 +69,7 @@ NLLB 在干净 VM 上以 `backend="onnx, local-nmt/int8"` 跑通（ACCEPTANCE §
 | 项 | 状态 |
 | --- | --- |
 | 版本 | **v1.0.2**（版本 commit `f1a349e` + 文档收口 commit；annotated tag `v1.0.2`；`v1.0.0`/`v1.0.1` tag 未移动） |
-| 远端 | **v1.0.2 已 push**：`origin/main` 与 tag 的 `git ls-remote` 实测值见 docs/RELEASE.md §10.5 |
+| 远端 | **v1.0.2 已 push**：`origin/main` = `4da2042`；tag `v1.0.2`（对象 `683cad4`）deref `4da2042`；`v1.0.1` deref `b613b7b`、`v1.0.0` deref `a0ecccd` 未移动（`git ls-remote` 实测） |
 | 工作区 | clean；build-*/dist/ 已 gitignore |
 | 测试 | clean build（git archive `f1a349e`）**329 CTest：328 passed + 1 skipped，0 failed**；license/SBOM 检查 |
 | 验收 | 1.0.2 VM 标准用户 install → 空模型 fetch（15/15、manual=0）→ 真实 OCR/NMT → uninstall PASS |

@@ -296,8 +296,10 @@ Release**，也未伪造任何 Release URL。手工上传步骤（当前发布 =
   `59a5005a1f2f0b64185dcb052c7a5c5b8cc21f005421d9f7fe6c806d02b3151a`），
   `dist/SHA256SUMS.txt` 已同步（`sha256sum -c` OK）。
 - 备份：`D:\WatashiRelease\v1.0.2\`（ZIP + SHA256SUMS，副本校验通过）。
-- 远端：push `main` + `v1.0.2`（无 force）；`git ls-remote` 实测结果记录在
-  `docs/POST-V1.0.md` 的同步记录与 HANDOVER 的“当前状态”表。
+- 远端：push `main` + `v1.0.2`（无 force）成功；`git ls-remote` 实测
+  `main = 4da2042`，`v1.0.2`（对象 `683cad4`）deref `4da2042`；
+  `v1.0.1`（对象 `dde1a67`）deref `b613b7b`、
+  `v1.0.0`（对象 `50f5aab`）deref `a0ecccd` **均未移动**。
 
 ## 11. 发布后 P0 / Post-release P0
 

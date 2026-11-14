@@ -27,7 +27,7 @@ GitHub Release 页面。
 | 全自动 fetch | 宿主与 VM 均 `downloaded=15 manual=0 failed=0 bytes=1149779218`；VM 一次成功、33.1 s、无残留 |
 | VM 全流程 | 标准用户 install → 空模型 fetch → 真实 OCR/NMT（`onnx, local-nmt/int8`，600 帧/600 字幕；CLI 300 条真实 NMT 事件）→ uninstall（`user\` 保留） |
 | 包 | `dist/ProjectWatashi-1.0.2-win64.zip`，16,499,376 B，SHA-256 `59a5005a…b3151a` |
-| 远端 | push `main` + `v1.0.2`，`git ls-remote` 实测见 `docs/RELEASE.md` §10.5 |
+| 远端 | push `main` + `v1.0.2` 完成；`git ls-remote`：`main = 4da2042`，`v1.0.2` deref `4da2042`，`v1.0.0`/`v1.0.1` tag 未移动（RELEASE §10.5） |
 | 备份 | `D:\WatashiRelease\v1.0.2\`（ZIP + SHA256SUMS，副本校验通过） |
 | 下一步 | 仍是不新增功能的 P1 架构债（UI→core、版本单一来源、CMake/打包拆分）；1.0.2 未开始 P1 |
 
