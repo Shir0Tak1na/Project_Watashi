@@ -2,8 +2,10 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <memory>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include "watashi/events.hpp"
@@ -62,6 +64,49 @@ public:
         return result;
     }
 };
+
+/// A translator whose provenance is chosen by the test, so the four engine
+/// paths can be compared without a corpus file or a model.
+class StubTranslator final : public watashi::Translator {
+public:
+    StubTranslator(std::string backend, std::string trace)
+        : backend_(std::move(backend)), trace_(std::move(trace)) {}
+
+    [[nodiscard]] watashi::Translation translate(
+        std::string_view source,
+        const watashi::TranslateContext&) const override {
+        (void)source;
+        watashi::Translation result;
+        result.target = "你好";
+        result.backend = backend_;
+        result.trace = trace_;
+        return result;
+    }
+
+private:
+    std::string backend_;
+    std::string trace_;
+};
+
+struct PathResult {
+    std::string backend;
+    std::string trace;
+};
+
+PathResult first_subtitle_provenance(std::unique_ptr<watashi::OcrSource> ocr,
+                                     std::unique_ptr<watashi::Translator> translator) {
+    watashi::Session session({1.0, 1.0}, *ocr, *translator);
+    std::vector<watashi::Envelope> events;
+    session.run([&events](const watashi::Envelope& envelope) {
+        events.push_back(envelope);
+    });
+    const auto subtitle = std::find_if(
+        events.begin(), events.end(),
+        [](const watashi::Envelope& event) { return event.type == "subtitle"; });
+    REQUIRE(subtitle != events.end());
+    return PathResult{subtitle->data.at("backend").get<std::string>(),
+                      subtitle->data.at("trace").get<std::string>()};
+}
 
 }  // namespace
 
@@ -294,4 +339,35 @@ TEST_CASE("an empty real frame still names the OCR layer") {
     REQUIRE(subtitle != events.end());
     REQUIRE(subtitle->data.at("backend") == "onnx");
     REQUIRE(subtitle->data.at("trace") == "ocr: onnx");
+}
+
+TEST_CASE("backend and trace are composed the same way on all four engine paths") {
+    // One table pins the contract: ``backend`` names the layers that answered,
+    // ``trace`` starts with the OCR layer and then lists each distinct
+    // translator trace once. The fake skeleton keeps its historical values.
+    const std::string corpus_trace = "\"hello\"->\"你好\"[corpus 0.90]";
+
+    const auto fake_fake = first_subtitle_provenance(
+        std::make_unique<watashi::FakeOcr>(),
+        std::make_unique<watashi::FakeTranslator>());
+    REQUIRE(fake_fake.backend == "fake");
+    REQUIRE(fake_fake.trace == "fake: skeleton path, no OCR and no model");
+
+    const auto fake_corpus = first_subtitle_provenance(
+        std::make_unique<watashi::FakeOcr>(),
+        std::make_unique<StubTranslator>("corpus+rules", corpus_trace));
+    REQUIRE(fake_corpus.backend == "fake, corpus+rules");
+    REQUIRE(fake_corpus.trace == "ocr: fake\n" + corpus_trace);
+
+    const auto onnx_corpus = first_subtitle_provenance(
+        std::make_unique<StubOcr>(),
+        std::make_unique<StubTranslator>("corpus+rules", corpus_trace));
+    REQUIRE(onnx_corpus.backend == "onnx, corpus+rules");
+    REQUIRE(onnx_corpus.trace == "ocr: onnx\n" + corpus_trace);
+
+    const auto onnx_nmt = first_subtitle_provenance(
+        std::make_unique<StubOcr>(),
+        std::make_unique<StubTranslator>("local-nmt/int8", "local-nmt/int8"));
+    REQUIRE(onnx_nmt.backend == "onnx, local-nmt/int8");
+    REQUIRE(onnx_nmt.trace == "ocr: onnx\nlocal-nmt/int8");
 }

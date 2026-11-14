@@ -63,7 +63,20 @@ def check(control: str, expected_surface: str, build: Path, config: str) -> None
         raise SystemExit(f"--control {control} unexpectedly added a tray icon")
     if data.get("exit_reason") != "duration":
         raise SystemExit(f"--control {control}: exit_reason {data.get('exit_reason')!r}")
-    log(f"--control {control}: control_surface={surface} tray.added=false exit=duration")
+    # The report must carry the final frame's provenance, not just the backend
+    # label: a reader has to be able to tell which layer answered without
+    # keeping the NDJSON stream. This run is fake OCR plus the corpus
+    # translator (which falls back to literal pass-through), so both are pinned.
+    stream = data.get("stream", {})
+    if stream.get("backend") != "fake, corpus+rules":
+        raise SystemExit(f"--control {control}: stream.backend "
+                         f"{stream.get('backend')!r}, expected 'fake, corpus+rules'")
+    trace = stream.get("trace") or ""
+    if not trace.startswith("ocr: fake\n") or "literal" not in trace:
+        raise SystemExit(f"--control {control}: stream.trace {trace!r} "
+                         "does not start with 'ocr: fake' and name the corpus layer")
+    log(f"--control {control}: control_surface={surface} tray.added=false "
+        f"backend=fake+corpus trace=report exit=duration")
 
 
 def main() -> int:

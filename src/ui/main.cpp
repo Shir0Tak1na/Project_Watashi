@@ -53,6 +53,7 @@
 #include "watashi/ui/settings.hpp"
 #include "watashi/ui/settings_window.hpp"
 #include "watashi/ui/tray.hpp"
+#include "watashi/win32/dpi.hpp"
 
 namespace {
 
@@ -834,6 +835,11 @@ void write_report(
         {"source", snapshot.frame.source},
         {"target", snapshot.frame.target},
         {"backend", snapshot.frame.backend},
+        // The final frame's provenance. It used to exist only in the CLI's
+        // NDJSON stream, which left a report reader unable to tell which layer
+        // answered. The event payload is unchanged; this is the report's own
+        // summary of the last subtitle it consumed.
+        {"trace", snapshot.frame.trace},
     };
     payload["memory_mib"] = nlohmann::json{
         {"first", run.memory.first},
