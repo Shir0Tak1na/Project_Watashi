@@ -10,6 +10,10 @@ build 与发布记录见 [docs/RELEASE.md](RELEASE.md)。
 安装 → 真实 PP-OCRv4 + NLLB 运行 → 卸载；实际 `--fetch` 也在本轮联网跑通。
 结果见 §10，历史 RC1/1.0.0 记录保持不变。
 
+**v1.0.2（2026-11-14）**：候选 `f1a349e` 完成 clean build（**329 CTest**）、
+SBOM、宿主与干净 Win11 VM 的全自动 fetch（**15/15、manual=0**）以及 VM
+install → fetch → 真实 OCR/NMT → uninstall 全流程。结果见 §11。
+
 > 规则：只有实际执行并留下证据的条目才写 PASS。没有执行或无法执行的条目写
 > **未验**，不得写成“通过”。skipped 不等于 passed。
 >
@@ -230,3 +234,61 @@ flags=0x00800000 → 200）。
 证据（`build-final/`、`build-rc/` 不进 git）：`build-rc/fetch-real.log`、
 `build-final/vmshare/uploads/{s1,s2,s3,s4}.log`、`report.json`、
 `events.jsonl`、`ui-err.log`、`cli-err.log`、`vm-s*.png` 截图。
+
+## 11. v1.0.2 验收 / v1.0.2 acceptance（2026-11-14）
+
+对象：`dist/ProjectWatashi-1.0.2-win64.zip`（**16,499,376 字节**，SHA-256
+`59a5005a1f2f0b64185dcb052c7a5c5b8cc21f005421d9f7fe6c806d02b3151a`）。
+构建：`git archive f1a349e` → `build-final/clean-src-1.0.2` →
+`build-final/clean-build-1.0.2`（VS 2022 x64 Release），
+**CTest 329：328 passed + 1 skipped（#91，宿主删除拦截），0 failed**，79.36 s；
+`tools/make_sbom.py --check` → **OK**。
+
+### 11.1 环境
+
+| 项 | 记录 |
+| --- | --- |
+| VM | VirtualBox 7.2.22，`Watashi-Win11`，Windows 11 企业评估版 build 26100 |
+| VM 账户 | 标准用户 `watashi-test`；install/run/uninstall 全程无 UAC |
+| Guest Additions | **未安装**；宿主 HTTP 服务 `10.0.2.2:8000` 传包，guest 用 `WebClient` PUT 回传 |
+| 宿主 | Windows 10 Home China；WinHTTP 系统代理 `127.0.0.1:7891`（Clash） |
+| VM 网络 | 宿主直连 `huggingface.co:443` 被阻断。VM 为 NAT，先 `Test-NetConnection 10.0.2.2 -Port 7891` = True（NAT 把 10.0.2.2 映射到宿主回环），再以管理员执行一次 `netsh winhttp set proxy 10.0.2.2:7891`（机器级 WinHTTP 代理），之后回到标准用户执行全部产品步骤 |
+
+### 11.2 全自动 fetch（VM 空模型目录，一次成功）
+
+| # | 步骤 | 结果 |
+| --- | --- | --- |
+| F11.1 | `--check` 空目录 | exit **1**，列出 **15** 个缺失项（含 `ppocr_keys_v1.txt`） |
+| F11.2 | `--fetch --offline` | exit **1**，15 条 `offline: refusing`，`failed=15`，未联网 |
+| F11.3 | 实际 `--fetch`（联网） | exit **0**，**33.1 s**，`downloaded=15 manual=0 failed=0 bytes=1149779218` |
+| F11.4 | 3 个 OCR ONNX | **由 fetch 自动获得**（`rapidocr-onnxruntime` wheel 的 `archive_path` 解压 + SHA-256 校验），`manual=0`，未手工复制 |
+| F11.5 | 逐文件校验 | 15/15 SHA-256 与字节数匹配，合计 **1,149,779,218 B**；`.part` / `.extract` / `.fetch-cache` 残留 **0** |
+| F11.6 | 事后 `--check` | exit **0**，`ok=15 failed=0` |
+
+### 11.3 VM 安装 / 真实运行 / 卸载（1.0.2 最终 ZIP）
+
+| # | 步骤 | 结果 |
+| --- | --- | --- |
+| V11.1 | 标准用户 `install.ps1` | exit **0**；payload 缺失 0、`vcomp140.dll` 存在、HKCU `DisplayVersion=1.0.2`、快捷方式存在、`user\` 初始为空；无 UAC |
+| V11.2 | `--version` | `Project Watashi 1.0.2 / commit f1a349e92bff / build Release` |
+| V11.3 | 空模型 fetch | F11.1–F11.6 全部通过（标准用户执行） |
+| V11.4 | 真实 OCR + NMT（60 s，`--capture window --window-title "watashi ocr target" --control none --ocr onnx --translator nmt`） | exit **0**；`frames=600`、`subtitles=600`、`malformed=0`、`ignored=602`；`backend="onnx, local-nmt/int8"`；`source="The curious astronomer measures distant stars before sunrise."` → `target="好奇的天文学家在太阳升起之前测量遥远的恒星."`；NMT `loaded in 3125.25 ms (int8, 4 threads, beam 1)`；`click_through.passes=true`；内存 8.77→10.34 MiB |
+| V11.5 | 引擎直连 NDJSON（`--capture window`，30 s） | `cli exit=0`；`subtitle_events=300`、`real_nmt_events=300`；`backend="onnx, local-nmt/int8"`、`trace="ocr: onnx / local-nmt/int8"` |
+| V11.6 | `uninstall.ps1`（标准用户） | exit **0**；payload/config/licenses/HKCU/快捷方式全部移除；`user\` 保留 15 个模型文件（1,149,779,218 B），根目录只剩 `user\`、`logs\` |
+
+**诚实记录**：
+
+- 宿主 fetch 在 1.0.2 也做到 `downloaded=15 manual=0 failed=0`，但宿主代理环境把
+  删除重定向，`remove_all(.fetch-cache)` 返回 145，进程最终 exit 1；判定为宿主
+  沙箱限制，VM 标准用户下 exit 0（F11.3）。CTest #91 同样因该限制以 77 skip。
+- 首轮 VM fetch 时误留了一个未加代理的 s2 进程并发写同一模型目录，出现过一次
+  `0xC0000409`（ucrtbase）；终止并发进程、清空模型目录后单进程重跑即 15/15、
+  exit 0，最终证据取自这次干净重跑。
+- 一次 s3 的 CLI 段因 VM 显示器休眠超时被中止；之后在等待期间发送无害按键保持
+  唤醒并重跑，V11.5 为通过结果。
+- macOS/Linux 未验收；VM 仍是 BIOS + LabConfig，不是 UEFI/TPM 验收；unsigned。
+
+证据（`build-final/` 不进 git）：`build-final/evidence-1.0.2-vm/`
+（`s1.log`、`s2.log`、`s3.log`、`s4.log`、`report.json`、`events.jsonl`、
+`s3-ocr.png`、`final.bmp`、`ui-err.log`、`cli-err.log`、`check.log`）；
+clean build 日志 `build-final/ctest-1.0.2b.log`。

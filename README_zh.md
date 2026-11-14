@@ -51,9 +51,9 @@ Project Watashi（渡）是一款桌面工具：持续识别用户在屏幕上�
 
 Python 原型仍在 `prototype/`，是行为参考与当前可运行的完整实现。
 
-C++ 主线已发布 **v1.0.1**（tag 与 main 已同步；1.0.0 包已备份）：本地捕获、PP-OCRv4、分层语料/规则、CTranslate2 NLLB、原生 Win32 悬浮窗、声明式呈现、stdin 命令通道、全局热键、设置页、per-user 安装包、模型获取器、SBOM/soak 工具，以及可选控制面（通知区可用时走托盘，否则控制窗/热键）。托盘是 best-effort：在验收环境不可用，不是发布阻塞项。
+C++ 主线已发布 **v1.0.2**（tag 与 main 已同步；1.0.0/1.0.1 包已备份）：本地捕获、PP-OCRv4、分层语料/规则、CTranslate2 NLLB、原生 Win32 悬浮窗、声明式呈现、stdin 命令通道、全局热键、设置页、per-user 安装包、模型获取器、SBOM/soak 工具，以及可选控制面（通知区可用时走托盘，否则控制窗/热键）。托盘是 best-effort：在验收环境不可用，不是发布阻塞项。
 
-**发布后 P0 已在 v1.0.1 收口（2026-11-12）**：真实 `--fetch`、`backend`/`trace` 写死、OCR 字符表入 lock、干净 Win11 VM 标准用户的真实目录卸载均已验证。见 [docs/POST-V1.0.md](docs/POST-V1.0.md) §2.7。**2026-11-11 已在 Medium 桌面和干净 Win11 VM 通过 RC1 的 B 验收；最终包为 `dist/ProjectWatashi-1.0.1-win64.zip`**（见 `docs/RELEASE.md`）。
+**发布后 P0 已在 v1.0.1 收口（2026-11-12）**：真实 `--fetch`、`backend`/`trace` 写死、OCR 字符表入 lock、干净 Win11 VM 标准用户的真实目录卸载均已验证。见 [docs/POST-V1.0.md](docs/POST-V1.0.md) §2.7。**v1.0.2（2026-11-14）** 让一次 `--fetch` 拿全 15 个锁定文件、`manual=0`（3 个 OCR ONNX 由 RapidOCR wheel 自动解压），并在干净 VM 标准用户下通过 install → 真实 OCR/NMT → uninstall。**最终包为 `dist/ProjectWatashi-1.0.2-win64.zip`**（见 `docs/RELEASE.md` §1 与 `docs/ACCEPTANCE.md` §11）。
 
 | 模块 | C++ 主干（src/） | Python 原型（prototype/） |
 | --- | --- | --- |

@@ -89,10 +89,11 @@ acceptance hosts and is not a release blocker.
 **Post-release P0 closed in v1.0.1:** real `--fetch`, the real
 `backend`/`trace` values, the OCR key file in `models.lock.json`, and a real
 directory uninstall on a clean Win11 VM were all verified on 2026-11-12. See
-[docs/POST-V1.0.md](docs/POST-V1.0.md) §2.7.
-**RC1 B acceptance passed on a Medium desktop and a clean Win11 VM on
-2026-11-11; the final package is `dist/ProjectWatashi-1.0.1-win64.zip`**
-(see `docs/RELEASE.md`).
+[docs/POST-V1.0.md](docs/POST-V1.0.md) §2.7. **v1.0.2 (2026-11-14)** makes one
+`--fetch` obtain all 15 locked files with `manual=0` (the three OCR ONNX files
+come from the RapidOCR wheel); VM install → real OCR/NMT → uninstall passed.
+**The final package is `dist/ProjectWatashi-1.0.2-win64.zip`**
+(see `docs/RELEASE.md` §1 and `docs/ACCEPTANCE.md` §11).
 
 | Area | C++ tree (src/) | Python prototype (prototype/) |
 | --- | --- | --- |

@@ -4,9 +4,30 @@ All notable changes to this project are recorded here.
 
 Earlier prototype phases used `0.0.x` on purpose: they were the Python validation
 prototype, not the C++ product described in `Project Watashi.md`. The C++ product
-now ships as **1.0.1** (below). Older entries stay as written and describe what
+now ships as **1.0.2** (below). Older entries stay as written and describe what
 they did or did not do at the time; "Known limitations" is part of the release
 rather than a footnote.
+
+## [1.0.2] -- 2026-11-14 -- one-pass fetch of all locked models
+
+产品功能与 1.0.1 相同，只修一处发布缺陷：全新安装后一次 `--fetch` 拿全 15 个
+锁定文件，不再有 manual 项。
+
+- `watashi_fetch --fetch` 现在从 `rapidocr-onnxruntime` wheel 的 `archive_path`
+  解压 3 个 OCR ONNX（det/rec/cls），逐个 SHA-256 与字节数校验；summary 变为
+  `downloaded=15 manual=0 failed=0 bytes=1149779218`。
+- `--offline` 仍拒绝联网（exit 1，`failed=15`），`--check` 空目录 exit 1 列出
+  15 项缺失。
+
+验证：clean build（`git archive f1a349e`）**329 CTest：328 passed + 1 skipped，
+0 failed**（#91 为宿主删除拦截的条件 skip）；`tools/make_sbom.py --check` OK；
+宿主与干净 Win11 VM 的空模型目录一次 `--fetch` 均 15/15、`manual=0`；VM 标准
+用户 install → 真实 PP-OCRv4 + NLLB（`backend="onnx, local-nmt/int8"`，
+600 帧 / 600 字幕；CLI 300 条真实 NMT 事件）→ uninstall 全部通过。包
+`dist/ProjectWatashi-1.0.2-win64.zip`（16,499,376 B，SHA-256
+`59a5005a…b3151a`），`SHA256SUMS.txt` 校验 OK。本地 tag `v1.0.2`，
+`v1.0.0`/`v1.0.1` tag 未移动。详见 `docs/ACCEPTANCE.md` §11 与
+`docs/RELEASE.md` §10.5。
 
 ## [1.0.1] -- 2026-11-12 -- post-release fixes
 

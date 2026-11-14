@@ -1,11 +1,11 @@
 # v1.0.0 之后 / Post-release plan
 
-状态日期：**2026-11-12**。
-当前发布：**v1.0.1 已发布**（v1.0.0 的远端 tag 未移动）。1.0.0 的最终包
-`dist/ProjectWatashi-1.0.0-win64.zip` 已备份到 `D:\WatashiRelease\v1.0.0\`；
-1.0.1 的包与校验和见 `dist/`。GitHub Release 尚未创建（本机无 `gh`）。
-2026-11-12 的发布后缺陷（backend/trace、简报字符表、install 提示、fetch TLS）
-已在 1.0.1 收口，见 §2.6/§2.7。
+状态日期：**2026-11-14**。
+当前发布：**v1.0.2 已发布**（v1.0.0/v1.0.1 的远端 tag 未移动）。1.0.2 的包与
+校验和见 `dist/`；干净 Win11 VM 全流程见 `docs/ACCEPTANCE.md` §11。GitHub
+Release 尚未创建（本机无 `gh`）。
+1.0.2 只修一处发布缺陷：`--fetch` 一次拿全 15 个锁定文件（3 个 OCR ONNX 由
+wheel 自动解压），`manual=0`；产品功能未变。
 
 ## 0. 结论
 
@@ -16,8 +16,20 @@
    在干净 Win11 VM 的标准用户下跑通（§2.7）；
 3. 最终 ZIP 没有重新走安装验收 → **完成**：同一轮 VM 安装/运行/卸载。
 
-仍未做（不阻塞 1.0.1）：tray 真实点击、UEFI、代码签名、构建可复现性、
+仍未做（不阻塞 1.0.2）：tray 真实点击、UEFI、代码签名、构建可复现性、
 GitHub Release 页面。
+
+### 0.1 v1.0.2 同步（2026-11-14）
+
+| 项 | 结果 |
+| --- | --- |
+| clean build | `git archive f1a349e` → CTest 329（328 passed + 1 skipped，宿主删除拦截），SBOM `--check` OK |
+| 全自动 fetch | 宿主与 VM 均 `downloaded=15 manual=0 failed=0 bytes=1149779218`；VM 一次成功、33.1 s、无残留 |
+| VM 全流程 | 标准用户 install → 空模型 fetch → 真实 OCR/NMT（`onnx, local-nmt/int8`，600 帧/600 字幕；CLI 300 条真实 NMT 事件）→ uninstall（`user\` 保留） |
+| 包 | `dist/ProjectWatashi-1.0.2-win64.zip`，16,499,376 B，SHA-256 `59a5005a…b3151a` |
+| 远端 | push `main` + `v1.0.2`，`git ls-remote` 实测见 `docs/RELEASE.md` §10.5 |
+| 备份 | `D:\WatashiRelease\v1.0.2\`（ZIP + SHA256SUMS，副本校验通过） |
+| 下一步 | 仍是不新增功能的 P1 架构债（UI→core、版本单一来源、CMake/打包拆分）；1.0.2 未开始 P1 |
 
 ## 1. P0 · 发布收口
 

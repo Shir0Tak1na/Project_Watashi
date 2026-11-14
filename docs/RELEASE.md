@@ -1,30 +1,31 @@
 # 发布验收清单 / Release checklist
 
-状态日期：**2026-11-12**（**v1.0.1 已发布**；v1.0.0 tag 未移动；包已备份到第二个盘；1.0.1 最终 ZIP 在干净 Win11 VM 的标准用户下完成安装 + 真实 OCR/NMT + 卸载）。
+状态日期：**2026-11-14**（**v1.0.2 已发布**；v1.0.0/v1.0.1 tag 未移动；1.0.2
+最终 ZIP 在干净 Win11 VM 的标准用户下完成空模型全自动 fetch + 真实 OCR/NMT +
+卸载，`downloaded=15 manual=0`）。
 
 ## 0. 当前状态 / Status
 
 | 项目 | 状态 |
 | --- | --- |
-| 版本 | **1.0.1**（CMake/manifest/SBOM/--version 统一；相对 1.0.0 只含发布后缺陷修复） |
-| 最终包 | `dist/ProjectWatashi-1.0.1-win64.zip`，16,485,503 字节 |
-| SHA-256 | `88993790d47543167eb638538c513b1f0d31c1a1ae1ccf8ffc72f974177a3976` |
-| checksum | `dist/SHA256SUMS.txt`（UTF-8 无 BOM、LF）；逐文件校验 → **OK** |
-| clean build | `git archive 137ebd2` → `build-final/clean-src-1.0.1` → **324/324 CTest 通过** |
-| 10 分钟 UI soak | **PASS**：`build-rc/soak-10m.json`，602.5 s，exit 0，log_errors 0 |
-| 8 小时 UI soak | **PASS**：`build-rc/soak-8h.json`，28801.5 s，exit 0，handles 169→169，内存 15.0→13.8 MiB（peak 16.4），log_errors 0 |
-| Medium 桌面安装/运行/卸载 | **PASS（用户 2026-11-11）**，对象为 RC1 验收包 |
-| 干净 Win11 VM 安装/运行/卸载 | **PASS（2026-11-12，1.0.1 最终 ZIP）**，标准用户、无 UAC；VM 为 **BIOS + LabConfig 绕过 TPM/SecureBoot**，不是 UEFI 验收 |
-| 控制面 | **PASS**：`control_surface=window`，Pause/Hide/Exit，`exit_reason=control-exit` |
+| 版本 | **1.0.2**（CMake/manifest/SBOM/`--version` 统一；相对 1.0.1 修正一次 `--fetch` 拿全 15 个锁定文件，含 3 个 OCR ONNX） |
+| 最终包 | `dist/ProjectWatashi-1.0.2-win64.zip`，**16,499,376 字节** |
+| SHA-256 | `59a5005a1f2f0b64185dcb052c7a5c5b8cc21f005421d9f7fe6c806d02b3151a` |
+| checksum | `dist/SHA256SUMS.txt`（UTF-8 无 BOM、LF）；`sha256sum -c` → **OK** |
+| clean build | `git archive f1a349e` → `build-final/clean-src-1.0.2` → **329 CTest：328 passed + 1 skipped（#91，宿主删除拦截），0 failed**；`tools/make_sbom.py --check` OK |
+| 10 分钟 UI soak | PASS（1.0.1 记录，未受 1.0.2 fetch 改动影响）：`build-rc/soak-10m.json`，602.5 s，exit 0 |
+| 8 小时 UI soak | PASS（1.0.1 记录）：`build-rc/soak-8h.json`，28801.5 s，exit 0，handles 169→169 |
+| 干净 Win11 VM 安装/运行/卸载 | **PASS（2026-11-14，1.0.2 最终 ZIP）**，标准用户、无 UAC；VM 为 **BIOS + LabConfig 绕过 TPM/SecureBoot**，不是 UEFI 验收 |
+| 控制面 | PASS（1.0.1 记录）：`control_surface=hotkeys`，Pause/Hide/Exit；1.0.2 VM 报告 `rendered=true`、热键 5/5 注册 |
 | 托盘 | **不可用**（本机/VM 均无正常通知区）；best-effort，不是 release blocker，**未声称 PASS** |
-| 模型下载 | **PASS（2026-11-12）**：`--check`/`--offline` 退出码正确；实际 `--fetch` exit 0、26 s、`downloaded=12 manual=3 failed=0` |
-| 最终 1.0.1 ZIP 安装 | **PASS**：VM 标准用户，21 个 payload、`vcomp140.dll`、HKCU 1.0.1、快捷方式（§3.2） |
-| 真实 PP-OCRv4 + NLLB（最终包） | **PASS**：`backend="onnx, local-nmt/int8"`，600 帧 / 600 条字幕，`瓦西控制 / 暂停隐藏出口`，trace 见 §4.2 |
-| 最终 1.0.1 ZIP 卸载 | **PASS（VM）**：exit 0，payload/HKCU/快捷方式移除，`user\` 保留；`logs\` 为运行时日志（§5.2） |
+| 模型下载 | **PASS（2026-11-14）**：`--check`/`--offline` 退出码正确；VM 空目录一次 `--fetch` → exit 0、33.1 s、`downloaded=15 manual=0 failed=0 bytes=1149779218`，无残留 |
+| 最终 1.0.2 ZIP 安装 | **PASS**：VM 标准用户，payload 缺失 0、`vcomp140.dll`、HKCU 1.0.2、快捷方式（§11.3） |
+| 真实 PP-OCRv4 + NLLB（最终包） | **PASS**：`backend="onnx, local-nmt/int8"`，600 帧 / 600 条字幕；CLI 300 条字幕事件全部 `used_model`（§11.3） |
+| 最终 1.0.2 ZIP 卸载 | **PASS（VM）**：exit 0，payload/config/licenses/HKCU/快捷方式移除，`user\` 保留（15 文件 / 1,149,779,218 B） |
 | 签名 | **unsigned**；无证书 |
-| 远端 | **v1.0.1**：`origin/main` = `22c0dde`，tag `v1.0.1` deref `b613b7b`；`v1.0.0` deref `a0ecccd` 未移动（详见 §10.4） |
-| 备份 | **已备份**：`D:\WatashiRelease\v1.0.0\`（ZIP + SHA256SUMS），副本 `sha256sum -c` → OK；1.0.1 备份在 §10.4 |
-| GitHub Release | **未创建**（本机无 `gh`/token）；手工步骤见 §10.2 |
+| 远端 | **v1.0.2**：见 §10.5（push `main` + tag 后由 `git ls-remote` 实测回填） |
+| 备份 | **已备份**：`D:\WatashiRelease\v1.0.2\`（ZIP + SHA256SUMS，副本校验见 §10.5）；1.0.0/1.0.1 备份保留 |
+| GitHub Release | **未创建**（本机无 `gh`/token）；手工步骤见 §10.3 |
 
 > **人工验收与最终包的关系**：RC1 的 B 验收（见 `docs/ACCEPTANCE.md`）是对
 > `stage-vcomp.zip` 完成的；最终 1.0.0 包与验收包的 payload 文件列表一致
@@ -37,27 +38,37 @@
 
 ## 1. 最终发布产物 / Final release artefact
 
-- `dist/ProjectWatashi-1.0.1-win64.zip`，**16,485,503 字节**
-- SHA-256：`88993790d47543167eb638538c513b1f0d31c1a1ae1ccf8ffc72f974177a3976`
+- `dist/ProjectWatashi-1.0.2-win64.zip`，**16,499,376 字节**
+- SHA-256：`59a5005a1f2f0b64185dcb052c7a5c5b8cc21f005421d9f7fe6c806d02b3151a`
 - `dist/SHA256SUMS.txt`：UTF-8 无 BOM、LF-only、`<hash>  <filename>` 两空格；
-  逐文件重算 SHA-256 → **OK**（本机 PATH 无 `sha256sum`，用 Python 复算等价命令）
+  `sha256sum -c SHA256SUMS.txt` → **OK**
 - ZIP 审计（29 项）：
   - 必含：`vcomp140.dll`、`onnxruntime.dll`、`ctranslate2.dll`、`dnnl.dll`、
-    VC runtime（msvcp140*/vcruntime140*/concrt140，8 个）、`licenses/`（4 份
-    许可 + SBOM）、`config/`（presentation/settings_ui/install_manifest）、
+    VC runtime（msvcp140*/vcruntime140*/concrt140）、`licenses/`（许可 + SBOM）、
+    `config/`（presentation/settings_ui/install_manifest）、
     `install.ps1`/`uninstall.ps1`/`install_manifest.json`、三个 exe、
-    `models.lock.json`
-  - 版本：`install_manifest.json` 与 `licenses/sbom.spdx.json` 内均为 1.0.1，
-    无 rc1/1.0.0 残留；包内三个 exe `--version` 输出
-    `Project Watashi 1.0.1 / commit 137ebd2a5e14 / build Release`
-  - 禁含核对：无 `.pdb`、无 `.onnx`、无 `.bin`、无 `models/` 目录（0 项命中）
-- 历史包（证据，不再分发）：`build-rc/stage-vcomp.zip`（RC1 B 验收对象）、
-  `build-rc/archive/rc1/ProjectWatashi-1.0.0-rc1-win64.zip`、
+    `models.lock.json`（**4 个模型 / 15 个文件 / 1,149,779,218 B**）
+  - 版本：`install_manifest.json`、`licenses/sbom.spdx.json` 内均为 1.0.2；
+    包内 exe `--version` 实测
+    `Project Watashi 1.0.2 / commit f1a349e92bff / build Release`
+  - 禁含核对：无 `.pdb`、无 `.onnx`、无 `.bin`、无 `models/` 权重目录（0 项命中）
+- 历史包（证据，不再分发）：`dist/ProjectWatashi-1.0.1-win64.zip`
+  （16,485,503 B，SHA-256 `88993790…a3976`）、`build-rc/stage-vcomp.zip`
+  （RC1 B 验收对象）、`build-rc/archive/rc1/ProjectWatashi-1.0.0-rc1-win64.zip`、
   `dist/ProjectWatashi-1.0.0-win64.zip`（16,483,547 B）
 
 ## 2. clean-room / reproducibility
 
-- 最终 clean-room：`git archive 137ebd2`（含 fetch TLS 修复）→
+- 最终 clean-room（1.0.2）：`git archive f1a349e` →
+  `build-final/clean-src-1.0.2`，独立 configure/build 于
+  `build-final/clean-build-1.0.2`（VS 2022 x64 Release）；
+  **CTest 329：328 passed + 1 skipped，0 failed**（79.36 s，日志
+  `build-final/ctest-1.0.2b.log`）；`tools/make_sbom.py --check` 通过。
+  唯一 skip 是 `#91 a hash mismatch deletes the partial file`：宿主代理把删除
+  重定向到回收站，`remove_all` 返回 145；按仓库既有的 `deletion_works()` 宿主
+  过滤约定，`tests/test_fetch.cpp` 对该条改为条件断言，提取/缓存复用断言仍无条件
+  执行。这是 tests/ 的宿主适配，不改产品代码。
+- 历史 clean-room（1.0.1）：`git archive 137ebd2`（含 fetch TLS 修复）→
   `build-final/clean-src-1.0.1`，独立 configure/build 于
   `build-final/clean-build-1.0.1`；**324/324 CTest 通过**（分块运行，规避
   宿主 shell 沙箱偶发 `sandbox backend failed`）；`tools/make_sbom.py --check` 通过；
@@ -206,8 +217,9 @@
 
 1. 本机/VM 无可用通知区，tray 为 best-effort；控制窗/热键是发布必需项；tray 实点未验。
 2. VM 为 BIOS + TPM/SecureBoot 绕过安装；UEFI/安全启动未验收。
-3. 3 个 ONNX 权重在 `models.lock.json` 中没有 URL，`--fetch` 只标记 manual；
-   需要按 `docs/INSTALL.md` 从 PyPI 包获取（1.0.1 未变）。
+3. ~~3 个 ONNX 权重在 `models.lock.json` 中没有 URL，`--fetch` 只标记 manual~~
+   → **1.0.2 已修**：`--fetch` 自动下载 `rapidocr-onnxruntime` wheel 并解压
+   `archive_path`，`manual=0`（F11.3/F11.4）。
 4. ~~事件 `backend`/`trace` 写死~~ → 1.0.1 已修（§4.2）。
 5. ~~`ppocr_keys_v1.txt` 不在 lock~~ → 1.0.1 已纳入（§6）。
 6. ~~最终 ZIP 在 `%LOCALAPPDATA%` 卸载未验~~ → 1.0.1 VM 标准用户通过（§5.2）；
@@ -276,6 +288,17 @@ Release**，也未伪造任何 Release URL。手工上传步骤（当前发布 =
   `main` = `22c0dde`，`v1.0.1`（对象 `dde1a67`）deref `b613b7b`，
   `v1.0.0`（对象 `50f5aab`）deref `a0ecccd` **未移动**。
 
+### 10.5 v1.0.2 发布（2026-11-14）
+
+- 版本 commit：`f1a349e`（fix: fetch all locked models in one pass）；文档收口
+  commit 紧随其后；**annotated tag `v1.0.2`**；`v1.0.0`/`v1.0.1` tag 未移动。
+- 包：`dist/ProjectWatashi-1.0.2-win64.zip`（16,499,376 B，SHA-256
+  `59a5005a1f2f0b64185dcb052c7a5c5b8cc21f005421d9f7fe6c806d02b3151a`），
+  `dist/SHA256SUMS.txt` 已同步（`sha256sum -c` OK）。
+- 备份：`D:\WatashiRelease\v1.0.2\`（ZIP + SHA256SUMS，副本校验通过）。
+- 远端：push `main` + `v1.0.2`（无 force）；`git ls-remote` 实测结果记录在
+  `docs/POST-V1.0.md` 的同步记录与 HANDOVER 的“当前状态”表。
+
 ## 11. 发布后 P0 / Post-release P0
 
 1. ~~push `main` + `v1.0.0` tag，并 `git ls-remote` 验证~~ → **已完成（§10.1）**；
@@ -286,8 +309,9 @@ Release**，也未伪造任何 Release URL。手工上传步骤（当前发布 =
    VM 上 `backend="onnx, local-nmt/int8"`；`backend`/`trace` 写死已在 1.0.1 修复（§4.2、§6）；
 5. ~~用最终 ZIP 做一次干净安装/运行/卸载~~ → **已完成（2026-11-12，VM 标准用户）**：
    install → 真实模型 → uninstall 全部通过（§3.2、§4.2、§5.2）；
-6. 1.0.1 已发版（§10.4）；P0 收口后可进入架构债/v1.1。
+6. 1.0.2 已发版（§10.5）：3 个 OCR ONNX 由 `--fetch` 自动获取，`manual=0`；
+   P0 收口后可进入架构债/v1.1（1.0.2 未开始 P1）。
 
-仍未做（不阻塞 1.0.1）：GitHub Release 页面、tray 实点、UEFI、签名、可复现构建。
+仍未做（不阻塞 1.0.2）：GitHub Release 页面、tray 实点、UEFI、签名、可复现构建。
 
 详见 [docs/POST-V1.0.md](POST-V1.0.md)。
