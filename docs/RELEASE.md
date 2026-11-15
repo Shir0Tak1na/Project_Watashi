@@ -356,5 +356,11 @@ Release**，也未伪造任何 Release URL。手工上传步骤（当前发布 =
   `aca7acbfad08435b041facc0c49696c01a07f069f83299cec3c542e40374bbcf`；
   `dist/SHA256SUMS.txt` 校验 OK；tag `v1.0.3`。
 - 注：tray 修复在候选 exe 上完成 VM 真实点击验收；最终 1.0.3 包只在版本/打包层变化，
-  尚未单独做一次 VM 安装复验。
+  尚未单独做一次 VM 安装复验。最终包已 push，GitHub Release 已创建并上传 ZIP/SHA256SUMS。
 - 历史包与 v1.0.2 记录保持不变。
+
+- 远端：`main=5d28be3`，`v1.0.3` tag 已 push（对象 `6385aed` → `5d28be3`）；
+  GitHub Release: https://github.com/Shir0Tak1na/Project_Watashi/releases/tag/v1.0.3
+  （ZIP/SHA256SUMS 的 GitHub digest 与本地 SHA-256 一致）。
+- 备份：`D:\WatashiRelease\v1.0.3\`，副本校验通过。
+- 待办：最终 1.0.3 ZIP 在 VM 标准用户下再装一次，做 tray 快速复验。

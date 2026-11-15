@@ -309,4 +309,5 @@ clean build 日志 `build-final/ctest-1.0.2b.log`。
 
 证据：VM 桌面截图与 `tray-stderr.log`；候选 exe SHA-256
 `83f19e251d8fcf87d25b767a914d9cf4886914a26a713c609fb04176624d782d`。
-最终 `v1.0.3` 包的独立安装复验见发布记录；历史 1.0.2 记录不改写。
+最终 `v1.0.3` 包的独立 VM 安装复验仍待做；候选 exe 与最终包使用同一 tray 代码，
+最终包已 push 并上传 GitHub Release。历史 1.0.2 记录不改写。

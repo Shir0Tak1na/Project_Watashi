@@ -27,7 +27,8 @@ NLLB 在干净 VM 上以 `backend="onnx, local-nmt/int8"` 跑通（ACCEPTANCE §
 **v1.0.3（2026-11-15）**：tray 修复为可用。根因是 overlay 作为 icon owner 时
 Shell 接受 `NIM_ADD` 但不回调；改用普通 `menu-owner`，并启用
 `NIF_SHOWTIP | NIF_TIP`。Win11 VM 真实点击、三个按钮、tooltip 全 PASS。
-tag `v1.0.3`；v1.0.0/v1.0.1/v1.0.2 tag 未移动。详见 ACCEPTANCE §12。
+tag `v1.0.3`；v1.0.0/v1.0.1/v1.0.2 tag 未移动。远端 `main=5d28be3`，
+GitHub Release 已创建；详见 ACCEPTANCE §12 与 RELEASE §12。
 
 ## 必读顺序（约 30 分钟）
 
@@ -89,8 +90,8 @@ tag `v1.0.3`；v1.0.0/v1.0.1/v1.0.2 tag 未移动。详见 ACCEPTANCE §12。
 
 | 项 | 状态 |
 | --- | --- |
-| 版本 | **v1.0.2**（版本 commit `f1a349e` + 文档收口 commit；annotated tag `v1.0.2`；`v1.0.0`/`v1.0.1` tag 未移动） |
-| 远端 | **v1.0.2 已 push**：`origin/main` = `680305a`；tag `v1.0.2`（对象 `683cad4`）deref `4da2042`；`v1.0.1` deref `b613b7b`、`v1.0.0` deref `a0ecccd` 未移动（`git ls-remote` 实测） |
+| 版本 | **v1.0.3**（tray 修复；annotated tag `v1.0.3`；`v1.0.0`/`v1.0.1`/`v1.0.2` tag 未移动） |
+| 远端 | **v1.0.3 已 push**：`origin/main` = `5d28be3`；tag `v1.0.3`（对象 `6385aed`）deref `5d28be3`；`v1.0.2`/`v1.0.1`/`v1.0.0` tag 未移动 |
 | P1 提交 | `36b4dfd`（report trace）、`23b2fa2`（版本/CMake/CPack）、`2de33f4`（UI 边界，单独 commit）、文档提交；**本地 main，未 push**；`v1.0.2` tag 仍指向 `4da2042`，未移动 |
 | 工作区 | clean；build-*/dist/ 已 gitignore；旧 build/.tmpbuild 已移到 `build-final/archive-pre-p1/` |
 | 测试 | 发布 clean build（`f1a349e`）**329 CTest：328 passed + 1 skipped**；P1 后 `build-rc` **332 CTest：331 passed + 1 skipped，0 failed**；license/SBOM/版本一致性检查 |
@@ -98,12 +99,12 @@ tag `v1.0.3`；v1.0.0/v1.0.1/v1.0.2 tag 未移动。详见 ACCEPTANCE §12。
 | 长稳 | 10m PASS；8h PASS（1.0.1 记录，`build-rc/soak-8h.json`；1.0.2 未改运行路径） |
 | **最终包** | **`dist/ProjectWatashi-1.0.2-win64.zip`**，16,499,376 字节，SHA-256 `59a5005a1f2f0b64185dcb052c7a5c5b8cc21f005421d9f7fe6c806d02b3151a`（完整值/审计见 docs/RELEASE.md §1；`dist/SHA256SUMS.txt` `sha256sum -c` OK） |
 | 备份 | **`D:\WatashiRelease\v1.0.2\`**（ZIP + SHA256SUMS，副本校验通过）；1.0.0/1.0.1 备份保留 |
-| GitHub Release | 未创建（无 `gh`/token）；手工上传步骤见 docs/RELEASE.md §10.3 |
+| GitHub Release | **已创建**：https://github.com/Shir0Tak1na/Project_Watashi/releases/tag/v1.0.3（ZIP + SHA256SUMS，GitHub digest 与本地一致） |
 | VM 证据 | `build-final/evidence-1.0.2-vm/`（s1–s4 日志、report.json、events.jsonl、截图；build-final 不进 git） |
 | 旧包 | 已从仓库 `dist/` 移走，仅保留在 `D:\WatashiRelease\v1.0.0|v1.0.1\`；`dist/` 只有 1.0.2 |
 | 托盘 | 本机/VM 通知区不可用；best-effort，不阻塞发布 |
 | 签名 | unsigned |
-| 下一步 | P1 架构债已收口；GitHub Release、tray 实点、UEFI、签名只记录、未做；v1.1 未开始；见 [docs/POST-V1.0.md](docs/POST-V1.0.md) §4.1 |
+| 下一步 | 最终 1.0.3 ZIP 在 VM 标准用户下再装一次做 tray 快速复验；之后可进入 v1.1（UEFI/签名/复现性仍只记录） |
 
 ## W0 交付记录（2026-10-28）
 
