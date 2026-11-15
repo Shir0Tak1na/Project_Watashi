@@ -64,6 +64,8 @@ public:
     [[nodiscard]] HWND icon_hwnd() const noexcept { return icon_owner_; }
     /// The window that owns the popup menu; always different from icon_hwnd().
     [[nodiscard]] HWND menu_hwnd() const noexcept { return menu_owner_; }
+    /// Diagnostic: which window the shell accepted for the icon.
+    [[nodiscard]] const char* owner_name() const noexcept { return owner_name_; }
 
     /// Builds the menu from the current state, shows it at the cursor and
     /// returns the chosen command id, or 0 when dismissed.
@@ -81,6 +83,7 @@ private:
     bool added_ = false;
     bool version4_ = false;
     DWORD last_error_ = 0;
+    const char* owner_name_ = "none";
 };
 
 }  // namespace watashi::ui

@@ -860,7 +860,10 @@ void write_report(
         {"all_registered", run.hotkey_successes == hotkey_count},
     };
     payload["control_surface"] = run.control_surface;
-    payload["tray"] = nlohmann::json{{"added", run.tray_added}};
+    payload["tray"] = nlohmann::json{
+        {"added", run.tray_added},
+        {"owner", run.tray.owner_name()},
+    };
     payload["commands"] = nlohmann::json{
         {"paused", run.paused},
         {"hidden", run.hidden_by_user},

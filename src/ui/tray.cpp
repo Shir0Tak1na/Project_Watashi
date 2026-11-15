@@ -146,6 +146,7 @@ bool TrayIcon::add(HWND icon_owner) {
     }
     icon_owner_ = icon_owner;
     overlay_owner_ = icon_owner;
+    owner_name_ = "none";
     if (menu_owner_ == nullptr) {
         menu_owner_ = create_menu_owner(this);
     }
@@ -157,34 +158,47 @@ bool TrayIcon::add(HWND icon_owner) {
         icon_ = LoadIconW(nullptr, MAKEINTRESOURCEW(32512));  // IDI_APPLICATION
     }
 
-    // The icon belongs to the window that already exists (the overlay). A
-    // separate 1x1 owner made the shell refuse NIM_ADD with error 5 on the
-    // bisect machine; the overlay owner is the path that was accepted.
-    auto try_add = [&](HWND owner) -> bool {
+    // Prefer the normal hidden menu owner for the icon: a dedicated top-level
+    // window is the reliable path for callbacks and tooltips. The layered
+    // no-activate overlay is the fallback because one shell historically
+    // refused the separate owner with error 5.
+    auto try_add = [&](HWND owner, const char* name) -> bool {
         NOTIFYICONDATAW data = make_icon(owner, icon_);
         SetLastError(0);
         if (Shell_NotifyIconW(NIM_ADD, &data)) {
             icon_owner_ = owner;
+            owner_name_ = name;
             added_ = true;
             last_error_ = 0;
+            std::cerr << "tray: icon added owner=" << name << " hwnd="
+                      << hex_pointer(owner) << "\n";
             return true;
         }
         last_error_ = GetLastError();
-        std::cerr << "tray: NIM_ADD failed owner=" << hex_pointer(owner)
-                  << " hIcon=" << hex_pointer(icon_) << " error=" << last_error_
-                  << "\n";
+        std::cerr << "tray: NIM_ADD failed owner=" << name << " hwnd="
+                  << hex_pointer(owner) << " hIcon=" << hex_pointer(icon_)
+                  << " error=" << last_error_ << "\n";
         return false;
     };
 
-    if (!try_add(icon_owner_) && menu_owner_ != nullptr) {
-        // Some shells reject an icon owned by the layered no-activate overlay.
-        // Retry with the normal hidden menu window; its window procedure
-        // forwards the callback to the overlay.
-        std::cerr << "tray: retrying registration with the menu owner\n";
-        if (!try_add(menu_owner_)) {
-            return false;
-        }
-    } else if (!added_) {
+    // A normal top-level owner is the reliable path for callbacks and
+    // tooltips. The layered no-activate overlay is kept as a fallback because
+    // some shells historically refused the dedicated owner with error 5.
+    wchar_t force_overlay[8]{};
+    const bool overlay_only =
+        GetEnvironmentVariableW(L"WATASHI_TRAY_OVERLAY", force_overlay, 8) != 0 &&
+        force_overlay[0] == L'1';
+    bool chose = false;
+    if (!overlay_only && menu_owner_ != nullptr) {
+        chose = try_add(menu_owner_, "menu-owner");
+    }
+    if (!chose) {
+        chose = try_add(icon_owner_, "overlay");
+    }
+    if (!chose && !overlay_only && menu_owner_ != nullptr) {
+        chose = try_add(menu_owner_, "menu-owner");
+    }
+    if (!chose) {
         return false;
     }
 
@@ -199,10 +213,12 @@ bool TrayIcon::add(HWND icon_owner) {
         std::cerr << "tray: version " << NOTIFYICON_VERSION_4 << " enabled\n";
         // Enable the standard tooltip only after version 4 is active.
         NOTIFYICONDATAW showtip = make_icon(icon_owner_, icon_);
-        showtip.uFlags = NIF_SHOWTIP;
+        showtip.uFlags = NIF_SHOWTIP | NIF_TIP;
         if (!Shell_NotifyIconW(NIM_MODIFY, &showtip)) {
             std::cerr << "tray: NIF_SHOWTIP enable failed error "
                       << GetLastError() << "\n";
+        } else {
+            std::cerr << "tray: NIF_SHOWTIP enabled\n";
         }
     } else {
         // The shell keeps the default (legacy) event convention. The callback
@@ -220,12 +236,14 @@ void TrayIcon::remove() {
         NOTIFYICONDATAW data = make_icon(icon_owner_, icon_);
         Shell_NotifyIconW(NIM_DELETE, &data);
         added_ = false;
+        owner_name_ = "none";
     }
     if (menu_owner_ != nullptr) {
         DestroyWindow(menu_owner_);
         menu_owner_ = nullptr;
     }
     icon_owner_ = nullptr;
+    owner_name_ = "none";
 }
 
 void TrayIcon::forward_callback(WPARAM wparam, LPARAM lparam) {
