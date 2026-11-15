@@ -1,14 +1,14 @@
 {
   "manifest_version": 1,
   "sbom": {
-    "name": "ProjectWatashi-1.0.2",
-    "namespace": "https://github.com/Shir0Tak1na/ProjectWatashi/spdx/1.0.2",
+    "name": "ProjectWatashi-1.0.3",
+    "namespace": "https://github.com/Shir0Tak1na/ProjectWatashi/spdx/1.0.3",
     "created": "2026-11-12T00:00:00Z"
   },
   "components": [
     {
       "name": "Project Watashi",
-      "version": "1.0.2",
+      "version": "1.0.3",
       "license": "MIT",
       "source": "https://github.com/Shir0Tak1na/ProjectWatashi",
       "type": "application",

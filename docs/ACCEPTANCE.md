@@ -292,3 +292,21 @@ flags=0x00800000 → 200）。
 （`s1.log`、`s2.log`、`s3.log`、`s4.log`、`report.json`、`events.jsonl`、
 `s3-ocr.png`、`final.bmp`、`ui-err.log`、`cli-err.log`、`check.log`）；
 clean build 日志 `build-final/ctest-1.0.2b.log`。
+
+## 12. v1.0.3 tray 验收（2026-11-15）
+
+对象：v1.0.2 安装目录中替换 tray 候选 `watashi_ui.exe`（源 commit
+`550f222`，后续 `v1.0.3`）。Win11 VM、标准用户、真实鼠标，非 Remote Desktop。
+
+| # | 项目 | 结果 |
+| --- | --- | --- |
+| T12.1 | 图标出现 | PASS：`tray.added=true`，`tray.owner=menu-owner` |
+| T12.2 | 左/右键 | PASS：真实点击能打开菜单 |
+| T12.3 | Pause / Continue | PASS |
+| T12.4 | Hide / Show | PASS |
+| T12.5 | Exit | PASS：`exit_reason=tray-exit`，`exit_code=0` |
+| T12.6 | tooltip | PASS：悬停显示 `watashi overlay` |
+
+证据：VM 桌面截图与 `tray-stderr.log`；候选 exe SHA-256
+`83f19e251d8fcf87d25b767a914d9cf4886914a26a713c609fb04176624d782d`。
+最终 `v1.0.3` 包的独立安装复验见发布记录；历史 1.0.2 记录不改写。

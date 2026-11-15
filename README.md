@@ -78,7 +78,7 @@ system audio / microphone / WAV file
 The Python prototype in `prototype/` remains the behavioural reference and a
 complete runnable implementation.
 
-The C++ mainline is released as **v1.0.0** (tag and main pushed; ZIP backed up): local capture,
+The C++ mainline is released as **v1.0.3** (tag and main pushed; ZIP backed up): local capture,
 PP-OCRv4, layered corpora/rules, CTranslate2 NLLB, a native Win32 overlay,
 declarative presentation, a stdin command channel, global hotkeys, a settings
 page, a per-user installer, a model fetcher, SBOM/soak tooling and an optional
@@ -92,8 +92,10 @@ directory uninstall on a clean Win11 VM were all verified on 2026-11-12. See
 [docs/POST-V1.0.md](docs/POST-V1.0.md) §2.7. **v1.0.2 (2026-11-14)** makes one
 `--fetch` obtain all 15 locked files with `manual=0` (the three OCR ONNX files
 come from the RapidOCR wheel); VM install → real OCR/NMT → uninstall passed.
-**The final package is `dist/ProjectWatashi-1.0.2-win64.zip`**
-(see `docs/RELEASE.md` §1 and `docs/ACCEPTANCE.md` §11).
+**The final package is `dist/ProjectWatashi-1.0.3-win64.zip`**
+(see `docs/RELEASE.md` §12 and `docs/ACCEPTANCE.md` §12). The tray is now
+verified in a Win11 VM: real clicks, Pause/Continue, Hide/Show, Exit and the
+standard tooltip all work.
 
 | Area | C++ tree (src/) | Python prototype (prototype/) |
 | --- | --- | --- |

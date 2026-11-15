@@ -1,7 +1,7 @@
 # v1.0.0 之后 / Post-release plan
 
 状态日期：**2026-11-14**。
-当前发布：**v1.0.2 已发布**（v1.0.0/v1.0.1 的远端 tag 未移动）。1.0.2 的包与
+当前发布：**v1.0.3 已发布**；v1.0.2 为历史（v1.0.0/v1.0.1 的远端 tag 未移动）。1.0.2 的包与
 校验和见 `dist/`；干净 Win11 VM 全流程见 `docs/ACCEPTANCE.md` §11。GitHub
 Release 尚未创建（本机无 `gh`）。
 1.0.2 只修一处发布缺陷：`--fetch` 一次拿全 15 个锁定文件（3 个 OCR ONNX 由
@@ -30,6 +30,14 @@ GitHub Release 页面。
 | 远端 | push `main` + `v1.0.2` 完成；`git ls-remote`：`main = 4da2042`，`v1.0.2` deref `4da2042`，`v1.0.0`/`v1.0.1` tag 未移动（RELEASE §10.5） |
 | 备份 | `D:\WatashiRelease\v1.0.2\`（ZIP + SHA256SUMS，副本校验通过） |
 | 下一步 | P1 架构债已于 2026-11-14 收口（§4.1）；v1.1 未开始 |
+
+
+### 0.2 v1.0.3 tray（2026-11-15）
+
+- tray icon owner 改为 `menu-owner`，overlay 仅回退；
+- tooltip 用 `NIF_SHOWTIP | NIF_TIP`；
+- VM 真实点击 PASS，三个菜单项 PASS，`exit_reason=tray-exit`；
+- tag `v1.0.3`；P0/1.0.2 历史记录不变。
 
 ## 1. P0 · 发布收口
 

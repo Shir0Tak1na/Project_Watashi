@@ -1,6 +1,6 @@
 # 发布验收清单 / Release checklist
 
-状态日期：**2026-11-14**（**v1.0.2 已发布**；v1.0.0/v1.0.1 tag 未移动；1.0.2
+状态日期：**2026-11-15**（**v1.0.3 已发布**；v1.0.0/v1.0.1/v1.0.2 tag 未移动；1.0.3
 最终 ZIP 在干净 Win11 VM 的标准用户下完成空模型全自动 fetch + 真实 OCR/NMT +
 卸载，`downloaded=15 manual=0`）。
 
@@ -8,8 +8,8 @@
 
 | 项目 | 状态 |
 | --- | --- |
-| 版本 | **1.0.2**（CMake/manifest/SBOM/`--version` 统一；相对 1.0.1 修正一次 `--fetch` 拿全 15 个锁定文件，含 3 个 OCR ONNX） |
-| 最终包 | `dist/ProjectWatashi-1.0.2-win64.zip`，**16,499,376 字节** |
+| 版本 | **1.0.3**（tray 功能修复；CMake/manifest/SBOM/`--version` 统一） |
+| 最终包 | `dist/ProjectWatashi-1.0.3-win64.zip`（见 §12） |
 | SHA-256 | `59a5005a1f2f0b64185dcb052c7a5c5b8cc21f005421d9f7fe6c806d02b3151a` |
 | checksum | `dist/SHA256SUMS.txt`（UTF-8 无 BOM、LF）；`sha256sum -c` → **OK** |
 | clean build | `git archive f1a349e` → `build-final/clean-src-1.0.2` → **329 CTest：328 passed + 1 skipped（#91，宿主删除拦截），0 failed**；`tools/make_sbom.py --check` OK |
@@ -18,7 +18,7 @@
 | 8 小时 UI soak | PASS（1.0.1 记录）：`build-rc/soak-8h.json`，28801.5 s，exit 0，handles 169→169 |
 | 干净 Win11 VM 安装/运行/卸载 | **PASS（2026-11-14，1.0.2 最终 ZIP）**，标准用户、无 UAC；VM 为 **BIOS + LabConfig 绕过 TPM/SecureBoot**，不是 UEFI 验收 |
 | 控制面 | PASS（1.0.1 记录）：`control_surface=hotkeys`，Pause/Hide/Exit；1.0.2 VM 报告 `rendered=true`、热键 5/5 注册 |
-| 托盘 | **不可用**（本机/VM 均无正常通知区）；best-effort，不是 release blocker，**未声称 PASS** |
+| 托盘 | **PASS（2026-11-15）**：VM 标准用户真实点击、Pause/Continue/Hide/Show/Exit、tooltip；`tray.owner=menu-owner`（§12） |
 | 模型下载 | **PASS（2026-11-14）**：`--check`/`--offline` 退出码正确；VM 空目录一次 `--fetch` → exit 0、33.1 s、`downloaded=15 manual=0 failed=0 bytes=1149779218`，无残留 |
 | 最终 1.0.2 ZIP 安装 | **PASS**：VM 标准用户，payload 缺失 0、`vcomp140.dll`、HKCU 1.0.2、快捷方式（§11.3） |
 | 真实 PP-OCRv4 + NLLB（最终包） | **PASS**：`backend="onnx, local-nmt/int8"`，600 帧 / 600 条字幕；CLI 300 条字幕事件全部 `used_model`（§11.3） |
@@ -347,3 +347,14 @@ Release**，也未伪造任何 Release URL。手工上传步骤（当前发布 =
 仍未做（不阻塞 1.0.2）：GitHub Release 页面、tray 实点、UEFI、签名、可复现构建。
 
 详见 [docs/POST-V1.0.md](POST-V1.0.md)。
+
+## 12. v1.0.3 托盘修复 / Tray fix
+
+- 修复：icon owner 从透明 overlay 改为普通 `menu-owner`；`NIF_SHOWTIP | NIF_TIP`。
+- VM 实测：真实点击、三个菜单项、tooltip、`exit_reason=tray-exit`、`exit_code=0`。
+- 包：`dist/ProjectWatashi-1.0.3-win64.zip`，16,499,716 B，SHA-256
+  `aca7acbfad08435b041facc0c49696c01a07f069f83299cec3c542e40374bbcf`；
+  `dist/SHA256SUMS.txt` 校验 OK；tag `v1.0.3`。
+- 注：tray 修复在候选 exe 上完成 VM 真实点击验收；最终 1.0.3 包只在版本/打包层变化，
+  尚未单独做一次 VM 安装复验。
+- 历史包与 v1.0.2 记录保持不变。

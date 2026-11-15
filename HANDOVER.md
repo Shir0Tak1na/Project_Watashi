@@ -1,7 +1,7 @@
 # 交接说明 / Handover
 
 > 给接手的人或编码代理：**先读这一页，再读别的。**
-> 最后更新：**2026-11-14（v1.0.2 已发布；P1 架构债已收口：report trace、版本单一来源、UI 不链接引擎、单一打包路径）**
+> 最后更新：**2026-11-15（v1.0.3 已发布：tray 真实点击 + tooltip PASS）**
 
 ## 一句话状态
 
@@ -22,6 +22,12 @@ NLLB 在干净 VM 上以 `backend="onnx, local-nmt/int8"` 跑通（ACCEPTANCE §
 `cmake/Dependencies|Targets|Packaging`；`watashi_ui.exe` 不再链接
 `watashi_core`，dumpbin 导入表无 onnxruntime/ctranslate2/dnnl/sentencepiece；
 打包只剩 CPack 一条路径。详见 [docs/POST-V1.0.md](docs/POST-V1.0.md) §4.1。
+
+
+**v1.0.3（2026-11-15）**：tray 修复为可用。根因是 overlay 作为 icon owner 时
+Shell 接受 `NIM_ADD` 但不回调；改用普通 `menu-owner`，并启用
+`NIF_SHOWTIP | NIF_TIP`。Win11 VM 真实点击、三个按钮、tooltip 全 PASS。
+tag `v1.0.3`；v1.0.0/v1.0.1/v1.0.2 tag 未移动。详见 ACCEPTANCE §12。
 
 ## 必读顺序（约 30 分钟）
 

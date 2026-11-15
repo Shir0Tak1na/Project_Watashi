@@ -4,9 +4,23 @@ All notable changes to this project are recorded here.
 
 Earlier prototype phases used `0.0.x` on purpose: they were the Python validation
 prototype, not the C++ product described in `Project Watashi.md`. The C++ product
-now ships as **1.0.2** (below). Older entries stay as written and describe what
+now ships as **1.0.3** (below). Older entries stay as written and describe what
 they did or did not do at the time; "Known limitations" is part of the release
 rather than a footnote.
+
+## [1.0.3] -- 2026-11-15 -- tray callbacks and tooltip
+
+托盘从“图标能出现但点不动”修到可用。根因是 `Shell_NotifyIcon` 的 icon owner
+用了 `WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_NOACTIVATE` 的 overlay：Shell
+接受 `NIM_ADD`，但不把鼠标回调和 tooltip 送回来。现在优先用普通顶层
+`menu-owner` 作为 icon owner，overlay 仅作回退；`NIF_SHOWTIP | NIF_TIP` 启用
+标准 tooltip，`report.tray.owner` 记录实际 owner。
+
+VM 实测（Win11，标准用户，真实鼠标）：图标出现，左/右键打开菜单，
+Pause / Continue / Hide / Show / Exit 全部可用，`exit_reason=tray-exit`、
+`exit_code=0`，悬停显示 `watashi overlay`。最终包
+`dist/ProjectWatashi-1.0.3-win64.zip`，tag `v1.0.3`；v1.0.0/v1.0.1/v1.0.2
+tag 不移动。详见 `docs/ACCEPTANCE.md` §12 与 `docs/RELEASE.md` §12。
 
 ## [1.0.2] -- 2026-11-14 -- one-pass fetch of all locked models
 
